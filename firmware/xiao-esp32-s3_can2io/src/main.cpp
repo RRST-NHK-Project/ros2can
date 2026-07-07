@@ -1,6 +1,6 @@
 /*====================================================================
-Project: esp32_s3_serial_bridge
-Target board: RRST-ESP32-S3 Rev.1
+Project: xiao-esp32-s3_can2io
+Target board: XIAO ESP32-S3 with can2io board
 
 Description:
   ROS 2・マイコン間の通信を行うserial_bridgeパッケージのマイコン側プログラム。
@@ -10,11 +10,10 @@ Description:
 Copyright (c) 2025 RRST-NHK-Project. All rights reserved.
 ====================================================================*/
 
+#include "can_task.hpp"
 #include "config.hpp"
 #include "defs.hpp"
-#include "pid_task.hpp"
 #include "pin_ctrl_task.hpp"
-#include "robomas.hpp"
 #include "serial_task.hpp"
 #include <Arduino.h>
 // ================= SETUP =================
@@ -40,6 +39,7 @@ void setup() {
     // ledcSetup(1, 20000, 8);
     // ledcAttachPin(LED, 1);
 
+#if defined(MODE_CAN_HOST) || defined(MODE_IO) || defined(MODE_DEBUG)
     xTaskCreate(
         serialTask,   // タスク関数
         "serialTask", // タスク名
@@ -47,6 +47,18 @@ void setup() {
         NULL,
         10, // 優先度
         NULL);
+#endif
+
+#if defined(MODE_CAN) || defined(MODE_CAN_HOST) || defined(MODE_CAN_MONITOR)
+    canInit();
+    xTaskCreate(
+        canTask,   // タスク関数
+        "canTask", // タスク名
+        4096,      // スタックサイズ（words）
+        NULL,
+        10, // 優先度
+        NULL);
+#endif
 
     // モードに応じた初期化
     // #if defined(MODE_OUTPUT)
@@ -79,70 +91,23 @@ void setup() {
         11, // 優先度
         NULL);
 
-#elif defined(MODE_ROBOMAS)
-    // ロボマスモード初期化
-
-    robomas_init();
-
-    // xTaskCreate(
-    //     M3508_Task,   // タスク関数
-    //     "M3508_Task", // タスク名
-    //     2048,         // スタックサイズ（words）
-    //     NULL,
-    //     9, // 優先度
-    //     NULL);
-
-    // xTaskCreate(
-    //     PID_Task,   // タスク関数
-    //     "PID_Task", // タスク名
-    //     2048,       // スタックサイズ（words）
-    //     NULL,
-    //     11, // 優先度
-    //     NULL);
-
+#elif defined(MODE_CAN)
+    // CANノードモード初期化
     xTaskCreate(
-        M2006_Task,   // タスク関数
-        "M2006_Task", // タスク名
-        2048,         // スタックサイズ（words）
+        IO_Task,   // タスク関数
+        "IO_Task", // タスク名
+        2048,      // スタックサイズ（words）
         NULL,
-        9, // 優先度
-        NULL);
-#elif defined(MODE_ROBOMAS_AD)
-    // ロボマスモード初期化
-
-    robomas_init();
-
-    xTaskCreate(
-        M3508_Task,   // タスク関数
-        "M3508_Task", // タスク名
-        2048,         // スタックサイズ（words）
-        NULL,
-        9, // 優先度
+        11, // 優先度
         NULL);
 
-    // xTaskCreate(
-    //     PID_Task,   // タスク関数
-    //     "PID_Task", // タスク名
-    //     2048,       // スタックサイズ（words）
-    //     NULL,
-    //     11, // 優先度
-    //     NULL);
-
-    // 出力モード初期化
+#elif defined(MODE_CAN_HOST)
+    // CANホストモード初期化
+    // HOSTも1バス4マイコンの一台としてIO_Taskを回す
     xTaskCreate(
-        Output_Task,   // タスク関数
-        "Output_Task", // タスク名
-        2048,          // スタックサイズ（words）
-        NULL,
-        8, // 優先度
-        NULL);
-
-#elif defined(MODE_SDM15)
-    // 出力モード初期化
-    xTaskCreate(
-        SDM15_Task,   // タスク関数
-        "SDM15_Task", // タスク名
-        2048,         // スタックサイズ（words）
+        IO_Task,   // タスク関数
+        "IO_Task", // タスク名
+        2048,      // スタックサイズ（words）
         NULL,
         11, // 優先度
         NULL);
@@ -174,12 +139,16 @@ void setup() {
         11, // 優先度
         NULL);
 
+#elif defined(MODE_CAN_MONITOR)
+    // CANモニタモード初期化
+    // シリアルモニタへ受信したCAN IDと生データだけを表示する
+    // 追加のIOタスクは起動しない
+
 #else
 #error "No mode defined. Please define one mode in config.hpp."
 #endif
 
-#if (defined(MODE_OUTPUT) + defined(MODE_INPUT) + defined(MODE_IO) + \
-     defined(MODE_ROBOMAS) + defined(MODE_ROBOMAS_AD) + defined(MODE_SDM15) + defined(MODE_DEBUG)) != 1
+#if (defined(MODE_IO) + defined(MODE_CAN) + defined(MODE_CAN_HOST) + defined(MODE_DEBUG) + defined(MODE_CAN_MONITOR)) != 1
 #error "Invalid mode configuration. Please define exactly *one mode* in config.hpp."
 #endif
 }

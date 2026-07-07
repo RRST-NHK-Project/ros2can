@@ -125,6 +125,81 @@ def make_generic_raw_profile() -> DeviceProfile:
     )
 
 
+def _append_generic_io_node_channels(
+    tx: List[ChannelDef], rx: List[ChannelDef],
+    node: int, slots_per_node: int,
+    servo_min_deg: int, servo_max_deg: int,
+) -> None:
+    """汎用IOノード (xiao_esp32_s3_smd_serial_bridge 系, ENCx2/SWx3/SERVOx3) の
+    1ノード分のチャンネルを tx/rx に追加する。SERVOn と SWn はピン共有
+    (ファームウェア config.hpp の MULTIn で入出力を切替、n=1..3、0=スイッチ入力/1=サーボ出力)。
+    """
+    base = node * slots_per_node
+    node_no = node + 1
+    can_id = 100 + node_no
+    group_cmd = f"ノード{node_no} (CAN_ID={can_id}) 指令"
+    group_fb = f"ノード{node_no} (CAN_ID={can_id}) 帰還"
+
+    servo_slots = min(3, slots_per_node)
+    for s in range(servo_slots):
+        tx.append(ChannelDef(base + s, f"N{node_no} SERVO{s + 1}", SERVO,
+                              group=group_cmd, min=servo_min_deg, max=servo_max_deg, unit="deg",
+                              note=f"SW{s + 1} とピン共有。MULTI{s + 1}=1(サーボ)のときのみ有効"))
+
+    sw_slots = min(3, slots_per_node)
+    for s in range(sw_slots):
+        rx.append(ChannelDef(base + s, f"N{node_no} SW{s + 1}", DIGITAL_IN, group=group_fb,
+                              note=f"SERVO{s + 1} とピン共有。MULTI{s + 1}=0(スイッチ)のときのみ有効"))
+    if slots_per_node > 3:
+        rx.append(ChannelDef(base + 3, f"N{node_no} ENC1", COUNTER, group=group_fb, unit="count"))
+    if slots_per_node > 4:
+        rx.append(ChannelDef(base + 4, f"N{node_no} ENC2", COUNTER, group=group_fb, unit="count"))
+
+
+# b-g431-esc1_can2io の RX_MODE/TX_MODE (0=velocity, 1=angle, 2=torque) と一致させること。
+_FOC_MODE_OPTIONS = [(0, "速度"), (1, "角度"), (2, "トルク")]
+
+
+def _append_foc_motor_node_channels(
+    tx: List[ChannelDef], rx: List[ChannelDef],
+    node: int, slots_per_node: int,
+) -> None:
+    """b-g431-esc1_can2io (SimpleFOC, 速度/角度/トルク切替) の1ノード分のチャンネルを追加する。
+
+    firmware/b-g431-esc1_can2io/src/config.hpp のスロット割当 (CAN_SLOTS_PER_NODE=5) と
+    一致させること。ゲイン類はCAN経由では送れず、ファーム側のコンパイル時定数固定。
+    """
+    base = node * slots_per_node
+    node_no = node + 1
+    can_id = 100 + node_no
+    group_cmd = f"ノード{node_no} (CAN_ID={can_id}, FOCモータ) 指令"
+    group_fb = f"ノード{node_no} (CAN_ID={can_id}, FOCモータ) 帰還"
+
+    tx.append(ChannelDef(base + 0, f"N{node_no} enable", DIGITAL_OUT, group=group_cmd))
+    tx.append(ChannelDef(base + 1, f"N{node_no} mode", ENUM_OUT, group=group_cmd,
+                          options=list(_FOC_MODE_OPTIONS)))
+    tx.append(ChannelDef(base + 2, f"N{node_no} target_velocity", RAW_OUT, group=group_cmd,
+                          scale=0.1, unit="rad/s", decimals=1,
+                          note="mode=速度のときのみ有効"))
+    tx.append(ChannelDef(base + 3, f"N{node_no} target_angle", RAW_OUT, group=group_cmd,
+                          scale=0.1, unit="deg", decimals=1,
+                          note="mode=角度のときのみ有効"))
+    tx.append(ChannelDef(base + 4, f"N{node_no} target_torque", RAW_OUT, group=group_cmd,
+                          scale=0.001, unit="A", decimals=3,
+                          note="mode=トルクのときのみ有効。電流指令(ファーム側でCURRENT_LIMITにクランプ)"))
+
+    rx.append(ChannelDef(base + 0, f"N{node_no} angle", READOUT, group=group_fb,
+                          scale=0.1, unit="deg", decimals=1))
+    rx.append(ChannelDef(base + 1, f"N{node_no} velocity", READOUT, group=group_fb,
+                          scale=0.1, unit="rad/s", decimals=1))
+    rx.append(ChannelDef(base + 2, f"N{node_no} current_q", READOUT, group=group_fb,
+                          scale=0.001, unit="A", decimals=3))
+    rx.append(ChannelDef(base + 3, f"N{node_no} mode", ENUM_IN, group=group_fb,
+                          options=list(_FOC_MODE_OPTIONS)))
+    rx.append(ChannelDef(base + 4, f"N{node_no} status", RAW_IN, group=group_fb,
+                          note="bit0=CAN受信生存 bit1=overspeed guard作動 bit2=enable状態"))
+
+
 def make_can_host_profile(
     key: str = "xiao_smd_can_host",
     name: str = "XIAO ESP32S3 SMD (CAN Host)",
@@ -149,26 +224,7 @@ def make_can_host_profile(
     rx: List[ChannelDef] = []
 
     for node in range(node_count):
-        base = node * slots_per_node
-        node_no = node + 1
-        can_id = 100 + node_no
-        group_cmd = f"ノード{node_no} (CAN_ID={can_id}) 指令"
-        group_fb = f"ノード{node_no} (CAN_ID={can_id}) 帰還"
-
-        servo_slots = min(3, slots_per_node)
-        for s in range(servo_slots):
-            tx.append(ChannelDef(base + s, f"N{node_no} SERVO{s + 1}", SERVO,
-                                  group=group_cmd, min=servo_min_deg, max=servo_max_deg, unit="deg",
-                                  note=f"SW{s + 1} とピン共有。MULTI{s + 1}=1(サーボ)のときのみ有効"))
-
-        sw_slots = min(3, slots_per_node)
-        for s in range(sw_slots):
-            rx.append(ChannelDef(base + s, f"N{node_no} SW{s + 1}", DIGITAL_IN, group=group_fb,
-                                  note=f"SERVO{s + 1} とピン共有。MULTI{s + 1}=0(スイッチ)のときのみ有効"))
-        if slots_per_node > 3:
-            rx.append(ChannelDef(base + 3, f"N{node_no} ENC1", COUNTER, group=group_fb, unit="count"))
-        if slots_per_node > 4:
-            rx.append(ChannelDef(base + 4, f"N{node_no} ENC2", COUNTER, group=group_fb, unit="count"))
+        _append_generic_io_node_channels(tx, rx, node, slots_per_node, servo_min_deg, servo_max_deg)
 
     tx = _fill_remaining(tx, _raw_out)
     rx = _fill_remaining(rx, _raw_in)
@@ -189,9 +245,53 @@ def make_can_host_profile(
     )
 
 
+def make_can_host_with_foc_node_profile(
+    key: str = "xiao_can2io_with_foc",
+    name: str = "xiao-esp32-s3_can2io + b-g431-esc1_can2io (FOCモータ)",
+    node_count: int = DEFAULT_CAN_NODE_COUNT,
+    slots_per_node: int = DEFAULT_CAN_SLOTS_PER_NODE,
+    foc_node_index: int = 0,
+    servo_min_deg: int = 0,
+    servo_max_deg: int = 270,
+) -> DeviceProfile:
+    """xiao-esp32-s3_can2io (MODE_CAN_HOST) 配下に b-g431-esc1_can2io (SimpleFOCの
+    CANノード、速度/角度/トルク切替) を1台混在させたプロファイル。
+
+    foc_node_index 番目のノードだけFOCモータ用チャンネルにし、それ以外は
+    make_can_host_profile と同じ汎用IOノード(SERVO/SW/ENC)のまま扱う。
+    """
+    tx: List[ChannelDef] = []
+    rx: List[ChannelDef] = []
+
+    for node in range(node_count):
+        if node == foc_node_index:
+            _append_foc_motor_node_channels(tx, rx, node, slots_per_node)
+        else:
+            _append_generic_io_node_channels(tx, rx, node, slots_per_node, servo_min_deg, servo_max_deg)
+
+    tx = _fill_remaining(tx, _raw_out)
+    rx = _fill_remaining(rx, _raw_in)
+
+    return DeviceProfile(
+        key=key,
+        name=name,
+        description=(
+            f"MODE_CAN_HOST 用。ノード{foc_node_index + 1}を b-g431-esc1_can2io "
+            "(SimpleFOC, 速度/角度/トルク切替) に割り当て、残りは汎用IOノード "
+            "(SERVO1-3指令 / SW1-3+ENC1-2帰還) として扱う。FOCノードのゲインはCAN経由では "
+            "変更できず、ファーム側config.hppのコンパイル時定数固定。"
+        ),
+        tx=tx,
+        rx=rx,
+        node_count=node_count,
+        slots_per_node=slots_per_node,
+    )
+
+
 def _build_builtin_profiles() -> "dict[str, DeviceProfile]":
     profiles: List[DeviceProfile] = [
         make_can_host_profile(),
+        make_can_host_with_foc_node_profile(),
         make_generic_raw_profile(),
     ]
     return {p.key: p for p in profiles}
