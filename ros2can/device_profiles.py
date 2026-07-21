@@ -156,18 +156,16 @@ def _append_generic_io_node_channels(
         rx.append(ChannelDef(base + 4, f"N{node_no} ENC2", COUNTER, group=group_fb, unit="count"))
 
 
-# b-g431-esc1_can2io の RX_MODE/TX_MODE (0=velocity, 1=angle, 2=torque) と一致させること。
-_FOC_MODE_OPTIONS = [(0, "速度"), (1, "角度"), (2, "トルク")]
-
-
 def _append_foc_motor_node_channels(
     tx: List[ChannelDef], rx: List[ChannelDef],
     node: int, slots_per_node: int,
 ) -> None:
-    """b-g431-esc1_can2io (SimpleFOC, 速度/角度/トルク切替) の1ノード分のチャンネルを追加する。
+    """b-g431-esc1_can2io (SimpleFOC, 速度制御のみ) の1ノード分のチャンネルを追加する。
 
-    firmware/b-g431-esc1_can2io/src/config.hpp のスロット割当 (CAN_SLOTS_PER_NODE=5) と
-    一致させること。ゲイン類はCAN経由では送れず、ファーム側のコンパイル時定数固定。
+    firmware/b-g431-esc1_can2io/src/config.hpp のスロット割当 (CAN_SLOTS_PER_NODE=5、
+    実使用は指令1/帰還3スロットのみ) と一致させること。xiao-esp32-s3_can2io の
+    MODE_ROBOMAS と同じデータモデル(target_velocityは生rpm値、angleは0.1deg、
+    currentは0.001A)。ゲイン類はCAN経由では送れず、ファーム側のコンパイル時定数固定。
     """
     base = node * slots_per_node
     node_no = node + 1
@@ -175,29 +173,15 @@ def _append_foc_motor_node_channels(
     group_cmd = f"ノード{node_no} (CAN_ID={can_id}, FOCモータ) 指令"
     group_fb = f"ノード{node_no} (CAN_ID={can_id}, FOCモータ) 帰還"
 
-    tx.append(ChannelDef(base + 0, f"N{node_no} enable", DIGITAL_OUT, group=group_cmd))
-    tx.append(ChannelDef(base + 1, f"N{node_no} mode", ENUM_OUT, group=group_cmd,
-                          options=list(_FOC_MODE_OPTIONS)))
-    tx.append(ChannelDef(base + 2, f"N{node_no} target_velocity", RAW_OUT, group=group_cmd,
-                          scale=0.1, unit="rad/s", decimals=1,
-                          note="mode=速度のときのみ有効"))
-    tx.append(ChannelDef(base + 3, f"N{node_no} target_angle", RAW_OUT, group=group_cmd,
-                          scale=0.1, unit="deg", decimals=1,
-                          note="mode=角度のときのみ有効"))
-    tx.append(ChannelDef(base + 4, f"N{node_no} target_torque", RAW_OUT, group=group_cmd,
-                          scale=0.001, unit="A", decimals=3,
-                          note="mode=トルクのときのみ有効。電流指令(ファーム側でCURRENT_LIMITにクランプ)"))
+    tx.append(ChannelDef(base + 0, f"N{node_no} target_velocity", MOTOR, group=group_cmd,
+                          unit="rpm", note="出力軸rpm、スケール無し(robomas互換)"))
 
     rx.append(ChannelDef(base + 0, f"N{node_no} angle", READOUT, group=group_fb,
                           scale=0.1, unit="deg", decimals=1))
     rx.append(ChannelDef(base + 1, f"N{node_no} velocity", READOUT, group=group_fb,
-                          scale=0.1, unit="rad/s", decimals=1))
+                          unit="rpm", decimals=0))
     rx.append(ChannelDef(base + 2, f"N{node_no} current_q", READOUT, group=group_fb,
                           scale=0.001, unit="A", decimals=3))
-    rx.append(ChannelDef(base + 3, f"N{node_no} mode", ENUM_IN, group=group_fb,
-                          options=list(_FOC_MODE_OPTIONS)))
-    rx.append(ChannelDef(base + 4, f"N{node_no} status", RAW_IN, group=group_fb,
-                          note="bit0=CAN受信生存 bit1=overspeed guard作動 bit2=enable状態"))
 
 
 def make_can_host_profile(
@@ -247,7 +231,7 @@ def make_can_host_profile(
 
 def make_can_host_with_foc_node_profile(
     key: str = "xiao_can2io_with_foc",
-    name: str = "xiao-esp32-s3_can2io + b-g431-esc1_can2io (FOCモータ)",
+    name: str = "xiao-esp32-s3_can2io + b-g431-esc1_can2io (FOCモータ, robomas互換)",
     node_count: int = DEFAULT_CAN_NODE_COUNT,
     slots_per_node: int = DEFAULT_CAN_SLOTS_PER_NODE,
     foc_node_index: int = 0,
@@ -255,7 +239,7 @@ def make_can_host_with_foc_node_profile(
     servo_max_deg: int = 270,
 ) -> DeviceProfile:
     """xiao-esp32-s3_can2io (MODE_CAN_HOST) 配下に b-g431-esc1_can2io (SimpleFOCの
-    CANノード、速度/角度/トルク切替) を1台混在させたプロファイル。
+    CANノード、速度制御のみ) を1台混在させたプロファイル。
 
     foc_node_index 番目のノードだけFOCモータ用チャンネルにし、それ以外は
     make_can_host_profile と同じ汎用IOノード(SERVO/SW/ENC)のまま扱う。
@@ -277,9 +261,10 @@ def make_can_host_with_foc_node_profile(
         name=name,
         description=(
             f"MODE_CAN_HOST 用。ノード{foc_node_index + 1}を b-g431-esc1_can2io "
-            "(SimpleFOC, 速度/角度/トルク切替) に割り当て、残りは汎用IOノード "
-            "(SERVO1-3指令 / SW1-3+ENC1-2帰還) として扱う。FOCノードのゲインはCAN経由では "
-            "変更できず、ファーム側config.hppのコンパイル時定数固定。"
+            "(SimpleFOC, 速度制御のみ、xiao-esp32-s3_can2io の MODE_ROBOMAS と互換の"
+            "データモデル) に割り当て、残りは汎用IOノード (SERVO1-3指令 / SW1-3+ENC1-2帰還) "
+            "として扱う。FOCノードのゲインはCAN経由では変更できず、ファーム側config.hppの"
+            "コンパイル時定数固定。"
         ),
         tx=tx,
         rx=rx,

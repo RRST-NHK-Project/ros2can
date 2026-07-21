@@ -21,18 +21,16 @@ Copyright (c) 2026.
 
 extern volatile int16_t Tx_16Data[Tx16NUM];
 /*
+robomas (xiao-esp32-s3_can2io MODE_ROBOMAS) 互換のスロット構成。
 0: angle (0.1 deg, エンコーダ連続角)
-1: velocity (0.1 rad/s, FOC推定)
+1: velocity (生rpm値, FOC推定)
 2: current_q (0.001 A, 実測電流)
-3: mode echo (0=velocity, 1=angle, 2=torque)
-4: status bits (bit0=CAN受信生存, bit1=overspeed guard作動, bit2=enable状態)
+3-4: 未使用(予約)
 */
 
 extern volatile int16_t Rx_16Data[Rx16NUM];
 /*
-0: enable (0=stop, 1=run)
-1: mode (0=velocity, 1=angle, 2=torque)
-2: target_velocity (0.1 rad/s)
-3: target_angle (0.1 deg)
-4: target_torque (0.001 A, 電流指令)
+robomas (xiao-esp32-s3_can2io MODE_ROBOMAS) 互換のスロット構成。速度制御のみ。
+0: target_velocity (生rpm値)
+1-4: 未使用(予約)
 */

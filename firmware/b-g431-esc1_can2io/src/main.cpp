@@ -71,16 +71,6 @@ LowsideCurrentSense currentSense =
 // ======================================================
 // Control state (CAN bridge)
 // ======================================================
-enum ControlMode {
-    MODE_VELOCITY = 0,
-    MODE_ANGLE = 1,
-    MODE_TORQUE = 2,
-};
-
-static ControlMode control_mode = MODE_VELOCITY;
-static bool last_enable = false;
-static bool overspeed_guard_active = false;
-
 static float estimated_velocity = 0;
 static int16_t manual_velocity_prev_count = 0;
 static uint32_t manual_velocity_prev_us = 0;
@@ -168,77 +158,18 @@ void tim4_init() {
 // helpers
 // ======================================================
 static void apply_velocity(float v) {
-    control_mode = MODE_VELOCITY;
     motor.controller = MotionControlType::velocity;
     motor.target = v;
-}
-
-static void apply_angle(float a) {
-    control_mode = MODE_ANGLE;
-    motor.controller = MotionControlType::angle;
-    motor.target = a;
-}
-
-static void apply_torque(float target_current) {
-    // SimpleFOCの torque モードは current_limit で自動クランプされない
-    // (velocity/angleモードは PID_velocity.limit=current_limit で自動クランプされる) ため、
-    // ここで明示的にクランプする。
-    if (target_current > DEFAULT_CURRENT_LIMIT) {
-        target_current = DEFAULT_CURRENT_LIMIT;
-    } else if (target_current < -DEFAULT_CURRENT_LIMIT) {
-        target_current = -DEFAULT_CURRENT_LIMIT;
-    }
-
-    control_mode = MODE_TORQUE;
-    motor.controller = MotionControlType::torque;
-    motor.target = target_current;
-}
-
-// トルクモードは velocity_limit によるクランプが効かない(SimpleFOC本体の仕様)ため、
-// オーバースピードを検知したらトルク指令を強制的に0にするソフトガード。
-static void apply_overspeed_guard() {
-    overspeed_guard_active = false;
-    if (control_mode != MODE_TORQUE) {
-        return;
-    }
-    if (fabsf(motor.shaft_velocity) > DEFAULT_VELOCITY_LIMIT) {
-        motor.target = 0;
-        overspeed_guard_active = true;
-    }
 }
 
 // ======================================================
 // RX command handling
 // ======================================================
+// robomas (MODE_ROBOMAS) 互換: 速度制御のみ、生rpm値。CANが途絶えても最後の
+// target_velocityを保持し続ける(フェイルセーフ無し)。
 static void apply_rx() {
-    const int16_t enable = Rx_16Data[RX_ENABLE];
-    const int16_t mode = Rx_16Data[RX_MODE];
-
-    last_enable = (enable != 0);
-
-    if (!last_enable) {
-        apply_velocity(0);
-        return;
-    }
-
-    if (mode == MODE_TORQUE) {
-        const float torque = Rx_16Data[RX_TARGET_TORQUE] * TARGET_TORQUE_SCALE;
-        apply_torque(torque);
-    } else if (mode == MODE_ANGLE) {
-        // Rx値は度(0.1deg/LSB)だが、SimpleFOCのangleモードはラジアンを期待するため変換する。
-        const float ang_deg = Rx_16Data[RX_TARGET_ANGLE] * TARGET_ANGLE_SCALE;
-        apply_angle(ang_deg * PI / 180.0f);
-    } else {
-        const float vel = Rx_16Data[RX_TARGET_VELOCITY] * TARGET_VELOCITY_SCALE;
-        apply_velocity(vel);
-    }
-}
-
-// CANが CAN_CMD_TIMEOUT_MS 以上途切れている場合のフェイルセーフ。
-// (起動直後、まだ一度もホストから受信していない場合も canLastRxMs()==0 のため
-//  ここで停止側に倒れる)
-static bool can_comms_alive() {
-    return (millis() - canLastRxMs()) <= CAN_CMD_TIMEOUT_MS;
+    const float vel_rpm = (float)Rx_16Data[RX_TARGET_VELOCITY];
+    apply_velocity(vel_rpm * RPM_TO_RAD_S);
 }
 
 // ======================================================
@@ -248,24 +179,11 @@ static void update_tx() {
     update_manual_velocity_estimate();
 
     const float angle = encoder.getAngle();
-    const float foc_velocity = motor.shaft_velocity;
+    const float foc_velocity_rpm = motor.shaft_velocity * RAD_S_TO_RPM;
 
     Tx_16Data[TX_ANGLE] = saturate_to_i16(angle * 180.0f / PI / ANGLE_TX_SCALE);
-    Tx_16Data[TX_VELOCITY] = saturate_to_i16(foc_velocity / VELOCITY_TX_SCALE);
+    Tx_16Data[TX_VELOCITY] = saturate_to_i16(foc_velocity_rpm);
     Tx_16Data[TX_CURRENT_Q] = saturate_to_i16(motor.current.q / CURRENT_TX_SCALE);
-    Tx_16Data[TX_MODE] = (int16_t)control_mode;
-
-    int16_t status = 0;
-    if (can_comms_alive()) {
-        status |= STATUS_BIT_CAN_ALIVE;
-    }
-    if (overspeed_guard_active) {
-        status |= STATUS_BIT_OVERSPEED_GUARD;
-    }
-    if (last_enable) {
-        status |= STATUS_BIT_ENABLED;
-    }
-    Tx_16Data[TX_STATUS] = status;
 }
 
 // ======================================================
@@ -308,10 +226,8 @@ void setup() {
     motor.LPF_velocity.Tf = VELOCITY_LPF_TF;
     motor.PID_velocity.output_ramp = VELOCITY_PID_OUTPUT_RAMP;
 
-    motor.P_angle.P = ANGLE_P_GAIN;
-
-    // トルクモード(foc_current)で使われる電流ループのゲイン。
-    // 元の実装ではここが未結線でライブラリ既定値のまま動いていた。
+    // torque_controller=foc_current のため、速度モードでも内側の電流ループに
+    // このゲインが使われる(角度モードは廃止したためP_angleは未使用)。
     motor.PID_current_q.P = CURRENT_PID_P;
     motor.PID_current_q.I = CURRENT_PID_I;
     motor.PID_current_q.D = CURRENT_PID_D;
@@ -332,16 +248,7 @@ void loop() {
     motor.loopFOC();
 
     canTaskUpdate();
-
-    if (can_comms_alive()) {
-        apply_rx();
-    } else {
-        // ホストとの通信が途切れている: 指令を待たず強制停止する。
-        apply_velocity(0);
-        last_enable = false;
-    }
-
-    apply_overspeed_guard();
+    apply_rx();
 
     motor.move();
 

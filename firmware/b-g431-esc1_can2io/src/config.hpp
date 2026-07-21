@@ -27,9 +27,8 @@ Copyright (c) 2026.
 // CANバスのビットレート。ホスト側 (TWAI_TIMING_CONFIG_500KBITS) と一致させる。
 #define CAN_BITRATE 500000UL
 
-// この時間 [ms] 以上ホストからのCANフレームを受信できない場合はフェイルセーフ
-// (トルク/速度指令を強制的に0にする)。
-#define CAN_CMD_TIMEOUT_MS 500
+// robomas (MODE_ROBOMAS) 互換のため、CAN途絶時のフェイルセーフは持たない。
+// CANが途切れても最後に受信したtarget_velocityを保持し続ける。
 
 // ================= モータ設定 =================
 
@@ -63,37 +62,25 @@ Copyright (c) 2026.
 #define VELOCITY_PID_OUTPUT_RAMP 1000.0f
 #define VELOCITY_LPF_TF 0.02f
 
-// Angle loop
-#define ANGLE_P_GAIN 8.0f
-
 // ================= Slot Index (host -> node, 指令) =================
-// Rx_16Data[0..4]
-#define RX_ENABLE 0
-#define RX_MODE 1
-#define RX_TARGET_VELOCITY 2
-#define RX_TARGET_ANGLE 3
-#define RX_TARGET_TORQUE 4
+// Rx_16Data[0..4] (このボードはCAN_SLOTS_PER_NODE=5のうち index 0 のみ使用、1-4は未使用/予約)
+// robomas (xiao-esp32-s3_can2io MODE_ROBOMAS) と互換: 速度制御のみ、生rpm値。
+#define RX_TARGET_VELOCITY 0
 
 // ================= Slot Index (node -> host, 帰還) =================
-// Tx_16Data[0..4]
+// Tx_16Data[0..4] (index 0-2 使用、3-4は未使用/予約)
+// robomas と互換: angle(0.1deg) / velocity(生rpm) / current(0.001A)
 #define TX_ANGLE 0
 #define TX_VELOCITY 1
 #define TX_CURRENT_Q 2
-#define TX_MODE 3
-#define TX_STATUS 4
-
-// TX_STATUS のビット定義
-#define STATUS_BIT_CAN_ALIVE (1 << 0)
-#define STATUS_BIT_OVERSPEED_GUARD (1 << 1)
-#define STATUS_BIT_ENABLED (1 << 2)
 
 // ================= Unit scaling =================
-// RX (host -> node): int16 -> float
-#define TARGET_VELOCITY_SCALE 0.1f  // rad/s per LSB
-#define TARGET_ANGLE_SCALE 0.1f     // deg per LSB
-#define TARGET_TORQUE_SCALE 0.001f  // A per LSB
+// RX (host -> node): target_velocityは生rpm値(スケール無し)。SimpleFOC内部はrad/sのため
+// CAN境界でのみ変換する。
+#define RPM_TO_RAD_S (2.0f * PI / 60.0f)
+#define RAD_S_TO_RPM (60.0f / (2.0f * PI))
 
 // TX (node -> host): float -> int16
-#define ANGLE_TX_SCALE 0.1f      // deg per LSB
-#define VELOCITY_TX_SCALE 0.1f   // rad/s per LSB
-#define CURRENT_TX_SCALE 0.001f  // A per LSB
+#define ANGLE_TX_SCALE 0.1f     // deg per LSB
+#define CURRENT_TX_SCALE 0.001f // A per LSB
+// velocityは生rpm値(スケール無し)。RAD_S_TO_RPMで変換してそのままint16化する。
