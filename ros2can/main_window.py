@@ -12,7 +12,7 @@ from PyQt5.QtCore import Qt, QTimer
 from PyQt5.QtWidgets import (
     QMainWindow, QListWidget, QListWidgetItem, QStackedWidget,
     QToolBar, QAction, QLabel, QInputDialog,
-    QMessageBox, QSplitter,
+    QMessageBox, QSplitter, QMenu,
 )
 
 from .ros_backend import RosBackend
@@ -39,6 +39,8 @@ class MainWindow(QMainWindow):
         self.device_list.setMinimumWidth(220)
         self.device_list.setMaximumWidth(320)
         self.device_list.currentItemChanged.connect(self._on_selection_changed)
+        self.device_list.setContextMenuPolicy(Qt.CustomContextMenu)
+        self.device_list.customContextMenuRequested.connect(self._on_device_list_context_menu)
         splitter.addWidget(self.device_list)
 
         self.stack = QStackedWidget()
@@ -47,7 +49,9 @@ class MainWindow(QMainWindow):
             "・xiao_esp32_s3_smd_serial_bridge (MODE_CAN_HOST) を書き込んだ基板をUSB接続すると、\n"
             "  ros2can が自身でシリアルポートをスキャンして自動検出します(serial_bridgeは不要)。\n"
             "・serial_bridge (別プロセス) が既に握っているトピックに相乗りしたい場合は、\n"
-            "  上部の「デバイスを手動追加」を使用してください。")
+            "  上部の「デバイスを手動追加」を使用してください。\n"
+            "・実機が無くてもUIの動作確認をしたい場合は、上部の「デバッグデバイスを追加」\n"
+            "  から仮想デバイスを追加してください(TXの値がそのままRXにループバックされます)。")
         self.placeholder.setAlignment(Qt.AlignCenter)
         self.placeholder.setStyleSheet("color: #888; font-size: 11pt;")
         self.stack.addWidget(self.placeholder)
@@ -88,6 +92,13 @@ class MainWindow(QMainWindow):
         add_action.triggered.connect(self._on_add_device_manually)
         toolbar.addAction(add_action)
 
+        add_debug_action = QAction("デバッグデバイスを追加(実機不要)…", self)
+        add_debug_action.setToolTip(
+            "マイコン実機が無くてもUI確認ができる仮想デバイスを追加します。\n"
+            "TXに書き込んだ値がそのままRXへループバックされます。")
+        add_debug_action.triggered.connect(self._on_add_debug_device)
+        toolbar.addAction(add_debug_action)
+
         toolbar.addSeparator()
 
         estop_action = QAction("■ 全デバイス E-STOP (全ゼロ送信+TX無効化)", self)
@@ -105,6 +116,32 @@ class MainWindow(QMainWindow):
         self.backend.add_device(device_id, manual=True)
         self._refresh_device_list()
         self._select_device(device_id)
+
+    def _on_add_debug_device(self) -> None:
+        """実機不要のデバッグ(仮想)デバイスを追加する。UIの動作確認・調整用。"""
+        device_id, ok = QInputDialog.getInt(
+            self, "デバッグデバイスを追加", "DEVICE_ID (0-255):", 1, 0, 255, 1)
+        if not ok:
+            return
+        if device_id in self.backend.devices:
+            QMessageBox.warning(
+                self, "デバッグデバイスを追加",
+                f"DEVICE_ID {device_id} は既に使用されています。")
+            return
+        self.backend.add_simulated_device(device_id)
+        self._refresh_device_list()
+        self._select_device(device_id)
+
+    def _on_device_list_context_menu(self, pos) -> None:
+        item = self.device_list.itemAt(pos)
+        if item is None:
+            return
+        device_id = item.data(Qt.UserRole)
+        menu = QMenu(self)
+        remove_action = menu.addAction("このデバイスを削除")
+        chosen = menu.exec_(self.device_list.mapToGlobal(pos))
+        if chosen is remove_action:
+            self.backend.remove_device(device_id)
 
     def _refresh_device_list(self) -> None:
         existing_ids = set(self.backend.devices.keys())
@@ -149,7 +186,12 @@ class MainWindow(QMainWindow):
                 continue
             state = "🟢接続中" if ch.connected else "⚪未接続"
             armed = " [TX ON]" if ch.armed else ""
-            mode_label = f"HW:{ch.port}" if ch.mode == "hardware" else "topic"
+            if ch.mode == "hardware":
+                mode_label = f"HW:{ch.port}"
+            elif ch.mode == "simulator":
+                mode_label = "🧪DEBUG(仮想)"
+            else:
+                mode_label = "topic"
             item.setText(f"ID {device_id}  {state}{armed}\n{mode_label}  {ch.profile_key}")
 
     def _on_selection_changed(self, current: Optional[QListWidgetItem], _previous) -> None:

@@ -15,10 +15,15 @@ GUI は単一スレッドで動作させる。QTimer から `rclpy.spin_once(tim
   が Publish/Subscribe している既存のトピックにこちらが相乗りするだけのモード。
   `serial_tx_[ID]` を Publish (指令送信)、`serial_rx_[ID]` を Subscribe (センサ受信)
   する、通常のクライアントの役割。
+- "simulator" : 実機のマイコン/CANホストが無くても UI の動作確認ができるよう、
+  TX に書き込んだ値をその場で RX にループバック(+多少の揺らぎ)して返す仮想デバイス。
+  ROSトピックの Publish/Subscribe の役割は "hardware" と同じ(自分が bridge_node の
+  代わりを担う)にしてあるため、他のROSノードや rqt からも実機と区別なく確認できる。
 """
 
 from __future__ import annotations
 
+import math
 import re
 import time
 from dataclasses import dataclass, field
@@ -40,6 +45,11 @@ STALE_TIMEOUT_SEC = 1.5
 
 MODE_HARDWARE = "hardware"
 MODE_TOPIC_CLIENT = "topic_client"
+MODE_SIMULATOR = "simulator"
+
+
+def _clamp_int16(v: int) -> int:
+    return max(-32768, min(32767, v))
 
 
 @dataclass
@@ -228,6 +238,63 @@ class RosBackend(QObject):
         ch.rx_data = data[:SLOT_COUNT]
         ch.note_rx()
 
+    # ---------------- device management: simulator (debug mode, 実機不要) ----------------
+
+    def add_simulated_device(self, device_id: int, profile_key: Optional[str] = None) -> DeviceChannel:
+        """実機マイコン無しでUIの動作確認ができる仮想デバイスを追加する。
+
+        TXに書いた値をそのまま(多少の揺らぎ付きで)RXへループバックし続ける。
+        ROSの役割は "hardware" と同じ (serial_rx_[ID] を Publish / serial_tx_[ID]
+        を Subscribe) にしてあるため、他ノードから見ても実機接続時と同様に扱える。
+        """
+        if device_id in self.devices:
+            return self.devices[device_id]
+
+        ch = DeviceChannel(device_id=device_id, mode=MODE_SIMULATOR, manual=True)
+        if profile_key:
+            ch.profile_key = profile_key
+        ch.publisher = self.node.create_publisher(
+            Int16MultiArray, f"serial_rx_{device_id}", 10)
+        ch.subscription = self.node.create_subscription(
+            Int16MultiArray, f"serial_tx_{device_id}",
+            lambda msg, did=device_id: self._on_simulator_tx_command(did, msg), 10)
+        self.devices[device_id] = ch
+        self.deviceListChanged.emit()
+        return ch
+
+    def _on_simulator_tx_command(self, device_id: int, msg: Int16MultiArray) -> None:
+        """外部ROSノードから serial_tx_[ID] へ送られてきた指令値を反映する。"""
+        ch = self.devices.get(device_id)
+        if ch is None or ch.mode != MODE_SIMULATOR:
+            return
+        data = list(msg.data[:SLOT_COUNT])
+        if len(data) < SLOT_COUNT:
+            data += [0] * (SLOT_COUNT - len(data))
+        ch.tx_data = data
+
+    def service_simulators(self) -> None:
+        """全シミュレータデバイスの TX->RX ループバックを1ステップ進める。
+
+        TX有効化(armed)の有無に関わらず常にRXを更新する: 実機は接続されていれば
+        ホストの指令とは無関係にセンサ値を送り続けるため、それを模して Monitor/Raw
+        タブの動作確認をいつでもできるようにしている。
+        """
+        now = time.monotonic()
+        for device_id, ch in self.devices.items():
+            if ch.mode != MODE_SIMULATOR:
+                continue
+            wobble_phase = now * 2.0
+            values = [
+                _clamp_int16(v + int(round(4 * math.sin(wobble_phase + i * 0.7))))
+                for i, v in enumerate(ch.tx_data)
+            ]
+            self._apply_rx_data(ch, values)
+            if ch.publisher is not None:
+                msg = Int16MultiArray()
+                msg.data = [int(v) for v in ch.rx_data]
+                ch.publisher.publish(msg)
+            self.rxUpdated.emit(device_id)
+
     # ---------------- device management: common ----------------
 
     def remove_device(self, device_id: int) -> None:
@@ -251,6 +318,10 @@ class RosBackend(QObject):
             return
         if ch.mode == MODE_HARDWARE:
             self.hardware.write(device_id, ch.tx_data)
+            ch.tx_frame_count += 1
+        elif ch.mode == MODE_SIMULATOR:
+            # 実際のRX生成は service_simulators() が常時行うため、ここではカウントのみ。
+            # (ch.publisher は serial_rx_[ID] 用なので tx_data を流してはいけない)
             ch.tx_frame_count += 1
         else:
             if ch.publisher is None:

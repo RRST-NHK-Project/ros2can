@@ -313,12 +313,18 @@ class DevicePanel(QWidget):
     def refresh_from_rx(self) -> None:
         ch = self.channel
         self.led.set_state(ch.connected)
-        mode_label = f"HW直結({ch.port})" if ch.mode == "hardware" else "トピック相乗り"
+        if ch.mode == "hardware":
+            mode_label = f"HW直結({ch.port})"
+            mode_title = "CANホスト直結"
+        elif ch.mode == "simulator":
+            mode_label = "デバッグ(仮想デバイス・実機不要)"
+            mode_title = "デバッグ(仮想)"
+        else:
+            mode_label = "トピック相乗り"
+            mode_title = "トピック相乗り"
         self.status_label.setText(
             f"{'接続中' if ch.connected else '未接続'}  RX {ch.rx_hz:.1f}Hz  [{mode_label}]")
-        self.title_label.setText(
-            f"<b>Device ID {self.device_id}</b>"
-            f" ({'CANホスト直結' if ch.mode == 'hardware' else 'トピック相乗り'})")
+        self.title_label.setText(f"<b>Device ID {self.device_id}</b> ({mode_title})")
 
         for index, row in self.monitor_rows.items():
             row.set_raw_value(ch.rx_data[index])

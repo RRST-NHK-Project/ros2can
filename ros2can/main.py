@@ -24,6 +24,7 @@ from .main_window import MainWindow
 SPIN_INTERVAL_MS = 10
 PUBLISH_INTERVAL_MS = 50   # armed デバイスへの周期送信 (20Hz)
 HARDWARE_SERVICE_MS = 10   # シリアルリンクの読み書きサービス周期
+SIMULATOR_SERVICE_MS = 50  # デバッグ用仮想デバイスのTX->RXループバック周期 (20Hz、実機のRXを模す)
 
 
 def main(argv=None) -> int:
@@ -45,6 +46,10 @@ def main(argv=None) -> int:
     hardware_timer = QTimer()
     hardware_timer.timeout.connect(backend.service_hardware)
     hardware_timer.start(HARDWARE_SERVICE_MS)
+
+    simulator_timer = QTimer()
+    simulator_timer.timeout.connect(backend.service_simulators)
+    simulator_timer.start(SIMULATOR_SERVICE_MS)
 
     publish_timer = QTimer()
     publish_timer.timeout.connect(backend.publish_all_armed)
