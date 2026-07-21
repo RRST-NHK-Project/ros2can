@@ -232,9 +232,9 @@ def make_can_host_profile(
 def make_can_host_with_foc_node_profile(
     key: str = "xiao_can2io_with_foc",
     name: str = "xiao-esp32-s3_can2io + b-g431-esc1_can2io (FOCモータ, robomas互換)",
-    node_count: int = DEFAULT_CAN_NODE_COUNT,
+    node_count: int = 2,
     slots_per_node: int = DEFAULT_CAN_SLOTS_PER_NODE,
-    foc_node_index: int = 0,
+    foc_node_index: int = 1,
     servo_min_deg: int = 0,
     servo_max_deg: int = 270,
 ) -> DeviceProfile:
@@ -243,6 +243,10 @@ def make_can_host_with_foc_node_profile(
 
     foc_node_index 番目のノードだけFOCモータ用チャンネルにし、それ以外は
     make_can_host_profile と同じ汎用IOノード(SERVO/SW/ENC)のまま扱う。
+
+    デフォルト値は現在の実機構成(ホスト自身がnode0、b-g431がCAN_ID=102→node1の
+    計2台のみ接続、firmware/xiao-esp32-s3_can2io/src/config.hppのCAN_NODE_COUNT=2)
+    に合わせてある。ノード数や接続位置を変える場合はここも一緒に変更すること。
     """
     tx: List[ChannelDef] = []
     rx: List[ChannelDef] = []

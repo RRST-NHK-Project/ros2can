@@ -27,6 +27,13 @@ Copyright (c) 2026.
 // CANバスのビットレート。ホスト側 (TWAI_TIMING_CONFIG_500KBITS) と一致させる。
 #define CAN_BITRATE 500000UL
 
+// CAN通信デバッグ用のシリアル診断出力(can_task.cpp canTaskPrintDiagnostics)。
+// canTaskUpdate()から呼ばれ、loop()と同じスレッドで直列実行されるため、Serial出力が
+// 詰まる(TXバッファ満杯等)とFOC制御ループ(motor.loopFOC()/motor.move())が
+// その分だけ止まり、CAN_DIAG_PERIOD_MS(500ms)と同じ周期でトルクの「ガクッ」を
+// 引き起こすことが実機で確認されている。CAN通信の確認が終わったら0のままにしておくこと。
+#define CAN_DIAG_ENABLE 0
+
 // robomas (MODE_ROBOMAS) 互換のため、CAN途絶時のフェイルセーフは持たない。
 // CANが途切れても最後に受信したtarget_velocityを保持し続ける。
 

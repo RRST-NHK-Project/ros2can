@@ -209,10 +209,14 @@ void canTaskUpdate() {
     }
 
     // ---- 診断出力 (TXの周期ゲートより前に評価し、独立した周期で必ず動かす) ----
+    // CAN_DIAG_ENABLEが0の間はSerial出力によるFOC制御ループの遅延(トルクの周期的な
+    // 「ガクッ」の原因になった)を避けるため、呼び出し自体を行わない。
+#if CAN_DIAG_ENABLE
     if (millis() - g_last_diag_ms >= CAN_DIAG_PERIOD_MS) {
         g_last_diag_ms = millis();
         canTaskPrintDiagnostics();
     }
+#endif
 
     // ---- TX (node -> host) ----
     const uint32_t now = millis();
