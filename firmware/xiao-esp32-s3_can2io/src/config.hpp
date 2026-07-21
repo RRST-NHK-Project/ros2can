@@ -20,11 +20,11 @@ Copyright (c) 2025 RRST-NHK-Project. All rights reserved.
 
 // モードの設定，どれか一つをコメントアウト解除すること
 // #define MODE_CAN
-#define MODE_CAN_HOST
+//#define MODE_CAN_HOST
 // #define MODE_IO
 // #define MODE_DEBUG
 // #define MODE_CAN_MONITOR
-// #define MODE_ROBOMAS
+#define MODE_ROBOMAS
 
 // ================= サーボ関連 =================
 
@@ -102,7 +102,7 @@ Copyright (c) 2025 RRST-NHK-Project. All rights reserved.
 #define ROBOMAS_MOTOR_GM6020 3 // GM6020 (ダイレクトドライブ、ギア無し)
 
 // 使用するモータ機種を1つ選択すること。
-#define ROBOMAS_MOTOR_TYPE ROBOMAS_MOTOR_M2006
+#define ROBOMAS_MOTOR_TYPE ROBOMAS_MOTOR_GM6020
 
 // 速度PIDゲイン。ros2can(PC)側からは変更できない固定値。チューニングはここで行う。
 #if ROBOMAS_MOTOR_TYPE == ROBOMAS_MOTOR_M3508
@@ -118,9 +118,9 @@ Copyright (c) 2025 RRST-NHK-Project. All rights reserved.
 #define ROBOMAS_OUTPUT_GAIN 1.0f
 #define ROBOMAS_MAX_CURRENT_A 1.0f
 #elif ROBOMAS_MOTOR_TYPE == ROBOMAS_MOTOR_GM6020
-#define ROBOMAS_KP_VEL 0.03f
+#define ROBOMAS_KP_VEL 0.007f
 #define ROBOMAS_KI_VEL 0.0f
-#define ROBOMAS_KD_VEL 0.0f
+#define ROBOMAS_KD_VEL 0.0001f
 #define ROBOMAS_OUTPUT_GAIN 1.0f
 #define ROBOMAS_MAX_CURRENT_A 10.0f
 #else
