@@ -88,6 +88,31 @@ class ChannelControlRow(QWidget):
             self.spin.setMinimumWidth(110)
             layout.addWidget(self.spin)
 
+            # --- スライダーの上下限 (可変レンジ) ---
+            range_decimals = chdef.decimals if chdef.scale != 1.0 else 0
+            range_bound = 32768 * chdef.scale
+
+            layout.addWidget(QLabel("範囲:"))
+            self.range_min_spin = QDoubleSpinBox()
+            self.range_min_spin.setDecimals(range_decimals)
+            self.range_min_spin.setRange(-range_bound, range_bound)
+            self.range_min_spin.setValue(chdef.min * chdef.scale)
+            self.range_min_spin.setMaximumWidth(85)
+            self.range_min_spin.setToolTip("スライダーの下限値を変更")
+            self.range_min_spin.valueChanged.connect(self._on_range_min)
+            layout.addWidget(self.range_min_spin)
+
+            layout.addWidget(QLabel("~"))
+
+            self.range_max_spin = QDoubleSpinBox()
+            self.range_max_spin.setDecimals(range_decimals)
+            self.range_max_spin.setRange(-range_bound, range_bound)
+            self.range_max_spin.setValue(chdef.max * chdef.scale)
+            self.range_max_spin.setMaximumWidth(85)
+            self.range_max_spin.setToolTip("スライダーの上限値を変更")
+            self.range_max_spin.valueChanged.connect(self._on_range_max)
+            layout.addWidget(self.range_max_spin)
+
         self.setLayout(layout)
 
     def _emit(self, raw: int) -> None:
@@ -125,6 +150,32 @@ class ChannelControlRow(QWidget):
         self.slider.setValue(int(max(self.chdef.min, min(self.chdef.max, raw))))
         self._updating = False
         self._emit(raw)
+
+    def _on_range_min(self, value: float) -> None:
+        if self._updating:
+            return
+        raw = self.chdef.raw_from_display(value)
+        if raw >= self.chdef.max:
+            raw = self.chdef.max - 1
+            self._updating = True
+            self.range_min_spin.setValue(raw * self.chdef.scale)
+            self._updating = False
+        self.chdef.min = raw
+        self.slider.setMinimum(raw)
+        self.spin.setMinimum(raw * self.chdef.scale)
+
+    def _on_range_max(self, value: float) -> None:
+        if self._updating:
+            return
+        raw = self.chdef.raw_from_display(value)
+        if raw <= self.chdef.min:
+            raw = self.chdef.min + 1
+            self._updating = True
+            self.range_max_spin.setValue(raw * self.chdef.scale)
+            self._updating = False
+        self.chdef.max = raw
+        self.slider.setMaximum(raw)
+        self.spin.setMaximum(raw * self.chdef.scale)
 
     def set_raw_value(self, raw: int) -> None:
         """外部(Rawタブなど)からの反映。シグナルは発行しない。"""

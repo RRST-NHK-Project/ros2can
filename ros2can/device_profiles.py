@@ -293,8 +293,10 @@ def make_robomas_profile(
     for i in range(4):
         m = i + 1
         tx.append(ChannelDef(i, f"M{m} target_velocity", MOTOR, group="ロボマス 指令",
+                              min=-450, max=450,
                               unit="rpm",
-                              note="出力軸rpm(ギア比込み)、スケール無し。モータ機種はconfig.hppで固定"))
+                              note="出力軸rpm(ギア比込み)、スケール無し。モータ機種はconfig.hppで固定。"
+                                   "GUIのスライダー横の範囲欄で上下限を変更可能(デフォルト±450rpm)"))
 
     for i in range(4):
         m = i + 1
