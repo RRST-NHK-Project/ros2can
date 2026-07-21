@@ -18,3 +18,8 @@ void canTaskUpdate();
 
 // 最後にホストからのCANフレームを受信した時刻 (millis())。
 uint32_t canLastRxMs();
+
+// デバッグ用シリアルモニター。一定周期(CAN_DIAG_PERIOD_MS)でFDCANの状態
+// (Bus-Off/エラーカウンタ/最終受信からの経過時間/現在の指令値)をSerialへ出力する。
+// canTaskUpdate()から自動的に呼ばれるため、通常はloop()側で明示的に呼ぶ必要はない。
+void canTaskPrintDiagnostics();

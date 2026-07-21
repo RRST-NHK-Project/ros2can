@@ -17,6 +17,7 @@ from PyQt5.QtWidgets import (
 
 from .ros_backend import RosBackend
 from .device_panel import DevicePanel
+from .can_monitor import CanMonitorDialog
 
 UI_REFRESH_MS = 200
 TOPIC_RESCAN_MS = 1000
@@ -27,6 +28,7 @@ class MainWindow(QMainWindow):
         super().__init__(parent)
         self.backend = backend
         self.panels: Dict[int, DevicePanel] = {}
+        self._can_monitor_dialog: Optional[CanMonitorDialog] = None
 
         self.setWindowTitle("ros2can - XIAO ESP32S3 SMD CANバス デバッグGUI")
         self.resize(1280, 800)
@@ -99,6 +101,13 @@ class MainWindow(QMainWindow):
         add_debug_action.triggered.connect(self._on_add_debug_device)
         toolbar.addAction(add_debug_action)
 
+        can_monitor_action = QAction("CANモニター…", self)
+        can_monitor_action.setToolTip(
+            "MODE_CAN_MONITORで書き込んだ基板のシリアル出力(生CANフレーム/デコード済み要約)を"
+            "直接閲覧します。serial_bridgeフレームは使わないため、ros2canのデバイス一覧には出ません。")
+        can_monitor_action.triggered.connect(self._on_open_can_monitor)
+        toolbar.addAction(can_monitor_action)
+
         toolbar.addSeparator()
 
         estop_action = QAction("■ 全デバイス E-STOP (全ゼロ送信+TX無効化)", self)
@@ -131,6 +140,14 @@ class MainWindow(QMainWindow):
         self.backend.add_simulated_device(device_id)
         self._refresh_device_list()
         self._select_device(device_id)
+
+    def _on_open_can_monitor(self) -> None:
+        """MODE_CAN_MONITOR機のシリアル出力を見るための独立ウィンドウを開く(モードレス)。"""
+        if self._can_monitor_dialog is None:
+            self._can_monitor_dialog = CanMonitorDialog(self)
+        self._can_monitor_dialog.show()
+        self._can_monitor_dialog.raise_()
+        self._can_monitor_dialog.activateWindow()
 
     def _on_device_list_context_menu(self, pos) -> None:
         item = self.device_list.itemAt(pos)

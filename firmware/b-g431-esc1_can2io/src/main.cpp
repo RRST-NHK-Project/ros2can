@@ -190,6 +190,10 @@ static void update_tx() {
 // SETUP
 // ======================================================
 void setup() {
+    Serial.begin(115200);
+    delay(500); // USB-UART/CDCの安定待ち
+    Serial.println("[BOOT] b-g431-esc1_can2io starting...");
+
     canTaskInit();
 
     // ===== TIM4 =====

@@ -16,7 +16,13 @@ Copyright (c) 2025 RRST-NHK-Project. All rights reserved.
 #include <cstring>
 #include <driver/twai.h>
 
-constexpr uint32_t CAN_FRAME_ID_BASE = 0x100;
+// 指令(host->node)と帰還(node->host)は必ず別々のID帯を使うこと。
+// 以前は両方向とも同じ base+node*16+chunk を使っており、ホストの指令送信と
+// ノード自身の帰還送信が同一IDで衝突し、ホストが送信を始めた途端に
+// bus_error(エラーカウンタ)が秒間数千件規模で急増する不具合の原因になっていた
+// (STM32側は継続的にACKエラー、ESP側もbus_errorが際限なく増加し続けて確認された)。
+constexpr uint32_t CAN_FRAME_ID_CMD_BASE = 0x100; // host -> node (指令)
+constexpr uint32_t CAN_FRAME_ID_FB_BASE = 0x180;  // node -> host (帰還)
 constexpr uint8_t CAN_FRAME_DLC = 8;
 constexpr uint8_t CAN_VALUES_PER_FRAME = 4;
 constexpr uint8_t CAN_CHUNK_COUNT_PER_NODE = (CAN_SLOTS_PER_NODE + CAN_VALUES_PER_FRAME - 1) / CAN_VALUES_PER_FRAME;
@@ -27,11 +33,15 @@ static twai_timing_config_t t_config = TWAI_TIMING_CONFIG_500KBITS();
 static twai_filter_config_t f_config = TWAI_FILTER_CONFIG_ACCEPT_ALL();
 static portMUX_TYPE g_can_frame_lock = portMUX_INITIALIZER_UNLOCKED;
 
-static int16_t g_monitor_node_slots[CAN_NODE_COUNT * CAN_SLOTS_PER_NODE] = {0};
-static uint8_t g_monitor_node_chunk_mask[CAN_NODE_COUNT] = {0};
+#if defined(MODE_CAN_MONITOR)
+constexpr uint32_t CAN_MONITOR_SUMMARY_PRINT_INTERVAL_MS = 50; // ノードごとの要約出力スロットル
+static int16_t g_monitor_node_slots[CAN_MONITOR_MAX_NODES * CAN_SLOTS_PER_NODE] = {0};
+static uint8_t g_monitor_node_chunk_mask[CAN_MONITOR_MAX_NODES] = {0};
+static uint32_t g_monitor_node_last_print_ms[CAN_MONITOR_MAX_NODES] = {0};
+#endif
 
-static uint8_t canFrameNodeIndex(uint32_t identifier);
-static uint8_t canFrameChunkIndex(uint32_t identifier);
+static uint8_t canFrameNodeIndex(uint32_t id_base, uint32_t identifier);
+static uint8_t canFrameChunkIndex(uint32_t id_base, uint32_t identifier);
 static uint8_t canChunkValueCount(uint8_t chunk);
 
 static void copyRx16DataSnapshot(int16_t *buffer) {
@@ -46,32 +56,61 @@ static void publishCanFeedbackToTxBuffer(const int16_t *buffer) {
     portEXIT_CRITICAL(&g_can_frame_lock);
 }
 
+#if defined(MODE_CAN_MONITOR)
+
+#if CAN_MONITOR_RAW_ENABLE
+// バス上の全フレームをそのまま出力する(node/chunk構成を一切仮定しない汎用スニファ)。
+// スロットル無し: MODE_CAN_MONITORは他タスクを起動しないため、Serial出力がブロックしても
+// 実害はなく、むしろ全フレームを漏らさず見えることを優先する。
+static void printCanRawFrame(const twai_message_t &message) {
+    char line[96];
+    int len = snprintf(line, sizeof(line), "[CAN RAW] t=%lu id=0x%03lX dlc=%u data=",
+                        (unsigned long)millis(), (unsigned long)message.identifier,
+                        (unsigned)message.data_length_code);
+    for (uint8_t i = 0; i < message.data_length_code && len > 0 && (size_t)len < sizeof(line) - 3; i++) {
+        len += snprintf(line + len, sizeof(line) - (size_t)len, "%02X ", message.data[i]);
+    }
+    Serial.println(line);
+}
+#endif
+
+#if CAN_MONITOR_SUMMARY_ENABLE
+// node/chunk構成が既知の場合向けに、スロット単位でデコードした値も出力する。
+// ラベルはプロファイル(SW/ENC/rpm等)に依存しないよう、生のslot番号のみで表示する。
 static void printCanMonitorNodeSummary(uint8_t node_index, const int16_t *slot_buffer) {
     char line[220] = {0};
     const uint8_t slot_offset = node_index * CAN_SLOTS_PER_NODE;
-    snprintf(line, sizeof(line), "[CAN MON] node=%u SW1=%d SW2=%d SW3=%d ENC1=%d ENC2=%d",
-             (unsigned)node_index,
-             (int)slot_buffer[slot_offset + 0],
-             (int)slot_buffer[slot_offset + 1],
-             (int)slot_buffer[slot_offset + 2],
-             (int)slot_buffer[slot_offset + 3],
-             (int)slot_buffer[slot_offset + 4]);
+    int len = snprintf(line, sizeof(line), "[CAN MON] node=%u", (unsigned)node_index);
+    for (uint8_t s = 0; s < CAN_SLOTS_PER_NODE && len > 0 && (size_t)len < sizeof(line); s++) {
+        len += snprintf(line + len, sizeof(line) - (size_t)len, " slot%u=%d",
+                         (unsigned)s, (int)slot_buffer[slot_offset + s]);
+    }
     Serial.println(line);
 }
 
+// 受信したフレームをスロットバッファへ反映する。呼ばれるたびに必ず取り込む
+// (印字のスロットルとは独立させ、取りこぼしで要約が完成しなくなるのを防ぐ)。
+// 要約デコードは帰還(node->host, CAN_FRAME_ID_FB_BASE)側のみを対象とする。
+// 指令(host->node)の中身も見たい場合は生フレーム出力([CAN RAW])を参照すること。
 static void updateCanMonitorNodeFromFrame(const twai_message_t &message) {
-    const uint8_t frame_node = canFrameNodeIndex(message.identifier);
-    if (frame_node >= CAN_NODE_COUNT) {
+    if (message.identifier < CAN_FRAME_ID_FB_BASE) {
+        return;
+    }
+    const uint8_t frame_node = canFrameNodeIndex(CAN_FRAME_ID_FB_BASE, message.identifier);
+    if (frame_node >= CAN_MONITOR_MAX_NODES) {
         return;
     }
 
-    const uint8_t chunk = canFrameChunkIndex(message.identifier);
+    const uint8_t chunk = canFrameChunkIndex(CAN_FRAME_ID_FB_BASE, message.identifier);
+    if (chunk >= CAN_CHUNK_COUNT_PER_NODE) {
+        return;
+    }
     const uint8_t values_to_unpack = canChunkValueCount(chunk);
     const uint8_t slot_offset = frame_node * CAN_SLOTS_PER_NODE + chunk * CAN_VALUES_PER_FRAME;
 
     for (uint8_t i = 0; i < values_to_unpack; ++i) {
         const uint8_t slot_index = slot_offset + i;
-        if (slot_index >= CAN_NODE_COUNT * CAN_SLOTS_PER_NODE) {
+        if (slot_index >= CAN_MONITOR_MAX_NODES * CAN_SLOTS_PER_NODE) {
             break;
         }
 
@@ -83,18 +122,28 @@ static void updateCanMonitorNodeFromFrame(const twai_message_t &message) {
 
     g_monitor_node_chunk_mask[frame_node] |= (uint8_t)(1u << chunk);
     if (g_monitor_node_chunk_mask[frame_node] == ((1u << CAN_CHUNK_COUNT_PER_NODE) - 1u)) {
-        printCanMonitorNodeSummary(frame_node, g_monitor_node_slots);
+        const uint32_t now_ms = millis();
+        if (now_ms - g_monitor_node_last_print_ms[frame_node] >= CAN_MONITOR_SUMMARY_PRINT_INTERVAL_MS) {
+            printCanMonitorNodeSummary(frame_node, g_monitor_node_slots);
+            g_monitor_node_last_print_ms[frame_node] = now_ms;
+        }
+        // 完成マスクをリセットし、次の1周期分が揃ってから再度出力する
+        // (リセットしないと以後どのチャンクが来ても「完成済み」のまま毎回出力されてしまう)。
+        g_monitor_node_chunk_mask[frame_node] = 0;
     }
 }
+#endif
 
-static uint8_t canFrameNodeIndex(uint32_t identifier) {
-    // CANフレームIDからノード番号を取り出す
-    return (uint8_t)((identifier - CAN_FRAME_ID_BASE) / 16U);
+#endif // MODE_CAN_MONITOR
+
+static uint8_t canFrameNodeIndex(uint32_t id_base, uint32_t identifier) {
+    // CANフレームIDからノード番号を取り出す(指令/帰還で異なるid_baseを渡す)
+    return (uint8_t)((identifier - id_base) / 16U);
 }
 
-static uint8_t canFrameChunkIndex(uint32_t identifier) {
-    // CANフレームIDからチャンク番号を取り出す
-    return (uint8_t)((identifier - CAN_FRAME_ID_BASE) % 16U);
+static uint8_t canFrameChunkIndex(uint32_t id_base, uint32_t identifier) {
+    // CANフレームIDからチャンク番号を取り出す(指令/帰還で異なるid_baseを渡す)
+    return (uint8_t)((identifier - id_base) % 16U);
 }
 
 static uint8_t canChunkValueCount(uint8_t chunk) {
@@ -102,11 +151,11 @@ static uint8_t canChunkValueCount(uint8_t chunk) {
     return (remaining_slots < CAN_VALUES_PER_FRAME) ? remaining_slots : CAN_VALUES_PER_FRAME;
 }
 
-static void canSendNodeSlotBlock(const int16_t *data, uint8_t node_index) {
-    // 指定ノード向けにスロットデータを複数フレームに分けて送信する
+static void canSendNodeSlotBlock(const int16_t *data, uint8_t node_index, uint32_t id_base) {
+    // 指定ノード向け(指令)/指定ノードとしての(帰還)スロットデータを複数フレームに分けて送信する
     for (uint8_t chunk = 0; chunk < CAN_CHUNK_COUNT_PER_NODE; chunk++) {
         twai_message_t message{};
-        message.identifier = CAN_FRAME_ID_BASE + (node_index * 16U) + chunk;
+        message.identifier = id_base + (node_index * 16U) + chunk;
         message.data_length_code = CAN_FRAME_DLC;
         message.flags = 0;
         std::memset(message.data, 0, sizeof(message.data));
@@ -128,20 +177,23 @@ static void canSendNodeSlotBlock(const int16_t *data, uint8_t node_index) {
 }
 
 static void canRecvNodeSlotBlock(int16_t *buffer, uint8_t node_index) {
-    // 自ノード宛てのCANフレームだけを受信してローカルバッファへ反映する
+    // 自ノード宛て(指令, CAN_FRAME_ID_CMD_BASE)のCANフレームだけを受信してローカルバッファへ反映する
     twai_message_t message{};
 
     while (twai_receive(&message, pdMS_TO_TICKS(0)) == ESP_OK) {
         if (message.data_length_code != CAN_FRAME_DLC) {
             continue;
         }
+        if (message.identifier < CAN_FRAME_ID_CMD_BASE) {
+            continue;
+        }
 
-        const uint8_t frame_node = canFrameNodeIndex(message.identifier);
+        const uint8_t frame_node = canFrameNodeIndex(CAN_FRAME_ID_CMD_BASE, message.identifier);
         if (frame_node != node_index) {
             continue;
         }
 
-        const uint8_t chunk = canFrameChunkIndex(message.identifier);
+        const uint8_t chunk = canFrameChunkIndex(CAN_FRAME_ID_CMD_BASE, message.identifier);
         if (chunk >= CAN_CHUNK_COUNT_PER_NODE) {
             continue;
         }
@@ -165,20 +217,23 @@ static void canRecvNodeSlotBlock(int16_t *buffer, uint8_t node_index) {
 }
 
 static void canRecvAllNodeSlotBlocks(int16_t *buffer) {
-    // ホスト側で全ノードのスロットデータをまとめて受信する
+    // ホスト側で全ノードの帰還(CAN_FRAME_ID_FB_BASE)スロットデータをまとめて受信する
     twai_message_t message{};
 
     while (twai_receive(&message, pdMS_TO_TICKS(0)) == ESP_OK) {
         if (message.data_length_code != CAN_FRAME_DLC) {
             continue;
         }
+        if (message.identifier < CAN_FRAME_ID_FB_BASE) {
+            continue;
+        }
 
-        const uint8_t frame_node = canFrameNodeIndex(message.identifier);
+        const uint8_t frame_node = canFrameNodeIndex(CAN_FRAME_ID_FB_BASE, message.identifier);
         if (frame_node >= CAN_NODE_COUNT) {
             continue;
         }
 
-        const uint8_t chunk = canFrameChunkIndex(message.identifier);
+        const uint8_t chunk = canFrameChunkIndex(CAN_FRAME_ID_FB_BASE, message.identifier);
         if (chunk >= CAN_CHUNK_COUNT_PER_NODE) {
             continue;
         }
@@ -240,7 +295,39 @@ void canInit() {
 
     ESP_ERROR_CHECK(twai_driver_install(&g_config, &t_config, &f_config));
     ESP_ERROR_CHECK(twai_start());
+
+    Serial.println("[CAN] TWAI started (500kbit).");
 }
+
+#if defined(MODE_CAN_HOST)
+// STM32側の診断ログ(can_task.cpp canTaskPrintDiagnostics)と同じ周期で出し、
+// 突き合わせやすくする。ホスト自身が送信を始めた途端に壊れる問題の切り分け用。
+static void printHostCanDiagnostics() {
+    twai_status_info_t status{};
+    if (twai_get_status_info(&status) != ESP_OK) {
+        Serial.println("[CAN HOST] twai_get_status_info failed");
+        return;
+    }
+    const char *state_str = "?";
+    switch (status.state) {
+    case TWAI_STATE_STOPPED: state_str = "STOPPED"; break;
+    case TWAI_STATE_RUNNING: state_str = "RUNNING"; break;
+    case TWAI_STATE_BUS_OFF: state_str = "BUS_OFF"; break;
+    case TWAI_STATE_RECOVERING: state_str = "RECOVERING"; break;
+    }
+    char line[220];
+    snprintf(line, sizeof(line),
+             "[CAN HOST] t=%lu state=%s TxErrCnt=%lu RxErrCnt=%lu tx_failed=%lu "
+             "rx_missed=%lu rx_overrun=%lu arb_lost=%lu bus_error=%lu msgs_to_tx=%lu msgs_to_rx=%lu",
+             (unsigned long)millis(), state_str,
+             (unsigned long)status.tx_error_counter, (unsigned long)status.rx_error_counter,
+             (unsigned long)status.tx_failed_count, (unsigned long)status.rx_missed_count,
+             (unsigned long)status.rx_overrun_count, (unsigned long)status.arb_lost_count,
+             (unsigned long)status.bus_error_count,
+             (unsigned long)status.msgs_to_tx, (unsigned long)status.msgs_to_rx);
+    Serial.println(line);
+}
+#endif
 
 void canTask(void *) {
     TickType_t last_tx = xTaskGetTickCount();
@@ -248,19 +335,22 @@ void canTask(void *) {
     static int16_t node_slot_buffer[Tx16NUM] = {0};
     static int16_t node_feedback_buffer[Tx16NUM] = {0};
     static int16_t host_tx_payload[Rx16NUM] = {0};
-
-    static uint32_t last_monitor_print_ms = 0;
+#if defined(MODE_CAN_HOST)
+    constexpr uint32_t CAN_HOST_DIAG_PERIOD_MS = 500; // STM32側の診断ログ周期と合わせる
+    uint32_t last_host_diag_ms = millis();
+#endif
 
     while (1) {
 #if defined(MODE_CAN_MONITOR)
         twai_message_t message{};
         if (twai_receive(&message, pdMS_TO_TICKS(5)) == ESP_OK) {
             statusLedPulse();
-            const uint32_t now_ms = millis();
-            if (now_ms - last_monitor_print_ms >= 50U) {
-                updateCanMonitorNodeFromFrame(message);
-                last_monitor_print_ms = now_ms;
-            }
+#if CAN_MONITOR_RAW_ENABLE
+            printCanRawFrame(message);
+#endif
+#if CAN_MONITOR_SUMMARY_ENABLE
+            updateCanMonitorNodeFromFrame(message);
+#endif
         }
 #elif defined(MODE_CAN_HOST)
         // node_feedback_bufferは持続的なバッファ。受信したスロットだけを更新し、
@@ -280,9 +370,14 @@ void canTask(void *) {
                 if (node_index == CAN_NODE_INDEX) {
                     continue;
                 }
-                canSendNodeSlotBlock(host_tx_payload, node_index);
+                canSendNodeSlotBlock(host_tx_payload, node_index, CAN_FRAME_ID_CMD_BASE);
             }
             last_tx = xTaskGetTickCount();
+        }
+
+        if (millis() - last_host_diag_ms >= CAN_HOST_DIAG_PERIOD_MS) {
+            last_host_diag_ms = millis();
+            printHostCanDiagnostics();
         }
 #else
         canRecvNodeSlotBlock(node_slot_buffer, CAN_NODE_INDEX);
@@ -290,7 +385,7 @@ void canTask(void *) {
 
         if (xTaskGetTickCount() - last_tx >= pdMS_TO_TICKS(CAN_TX_PERIOD_MS)) {
             buildNodeSlotBlockFromLocalFeedback(node_slot_buffer, CAN_NODE_INDEX);
-            canSendNodeSlotBlock(node_slot_buffer, CAN_NODE_INDEX);
+            canSendNodeSlotBlock(node_slot_buffer, CAN_NODE_INDEX, CAN_FRAME_ID_FB_BASE);
             last_tx = xTaskGetTickCount();
         }
 #endif

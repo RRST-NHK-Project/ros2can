@@ -17,7 +17,7 @@ Copyright (c) 2026.
 // CAN_IDは3桁形式(xiao-esp32-s3_can2io側と同じ規則)で指定します。
 // 末尾2桁がノード番号(1-origin)。例: 101 -> node1, 102 -> node2, ...
 // ホスト側 config.hpp の CAN_NODE_COUNT の範囲内で、他ノードと重複しない値にすること。
-#define CAN_ID 402
+#define CAN_ID 102
 #define CAN_NODE_INDEX ((CAN_ID % 100U) - 1U)
 
 // ホスト側 (xiao-esp32-s3_can2io/src/config.hpp) の CAN_SLOTS_PER_NODE と
@@ -29,6 +29,13 @@ Copyright (c) 2026.
 
 // robomas (MODE_ROBOMAS) 互換のため、CAN途絶時のフェイルセーフは持たない。
 // CANが途切れても最後に受信したtarget_velocityを保持し続ける。
+
+// 基板搭載のCAN終端抵抗(120Ω)。B-G431B-ESC1はCAN_TERM(PC14)でオンボードの
+// アナログSPDTスイッチを介して120Ωの接続/切断をGPIOから制御できる
+// (ST UM2516 Table 3参照。デフォルトはソルダーブリッジR26側)。
+// このノードがCANバスの終端(末端)に位置する場合のみ1にすること。
+// バス中間のノードで有効にすると特性インピーダンスが乱れ通信不安定の原因になる。
+#define CAN_TERM_ENABLE 1 // 1=120Ω終端を有効化, 0=無効化(ホスト側または他ノードで既に終端している場合)
 
 // ================= モータ設定 =================
 
