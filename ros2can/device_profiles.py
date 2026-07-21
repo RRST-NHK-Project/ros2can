@@ -288,10 +288,65 @@ def make_can_host_with_foc_node_profile(
     )
 
 
+def make_robomas_profile(
+    key: str = "robomas_driver",
+    name: str = "xiao-esp32-s3_can2io (MODE_ROBOMAS, DJIロボマス x4)",
+) -> DeviceProfile:
+    """MODE_ROBOMAS (xiao-esp32-s3_can2io) 用プロファイル。
+
+    ノード/スロット分配は行わない独立デバイスとして、24スロットをロボマス最大4台分の
+    指令/帰還に直接割り当てる(スロット0起点、ノードオフセット無し)。
+    [firmware/xiao-esp32-s3_can2io/src/robomas.cpp のスロット割当と一致させること]
+
+    モータ機種(M3508/M2006/GM6020のいずれか)はファーム側config.hppの
+    ROBOMAS_MOTOR_TYPEでコンパイル時固定。速度PIDゲインもCAN経由では変更できず
+    ファーム側固定(config.hppのROBOMAS_KP_VEL等)。1バスには単一機種のみ、最大4台。
+    """
+    tx: List[ChannelDef] = []
+    rx: List[ChannelDef] = []
+
+    for i in range(4):
+        m = i + 1
+        tx.append(ChannelDef(i, f"M{m} target_velocity", MOTOR, group="ロボマス 指令",
+                              unit="rpm",
+                              note="出力軸rpm(ギア比込み)、スケール無し。モータ機種はconfig.hppで固定"))
+
+    for i in range(4):
+        m = i + 1
+        rx.append(ChannelDef(i, f"M{m} angle", READOUT, group="ロボマス 帰還",
+                              scale=0.1, unit="deg", decimals=1, note="出力軸角度"))
+    for i in range(4):
+        m = i + 1
+        rx.append(ChannelDef(4 + i, f"M{m} velocity", READOUT, group="ロボマス 帰還",
+                              unit="rpm", decimals=0, note="出力軸rpm"))
+    for i in range(4):
+        m = i + 1
+        rx.append(ChannelDef(8 + i, f"M{m} current", READOUT, group="ロボマス 帰還",
+                              scale=0.001, unit="A", decimals=3))
+
+    tx = _fill_remaining(tx, _raw_out)
+    rx = _fill_remaining(rx, _raw_in)
+
+    return DeviceProfile(
+        key=key,
+        name=name,
+        description=(
+            "MODE_ROBOMAS用。ノード/スロット分配は行わず、独立デバイスとしてロボマス"
+            "(M3508/M2006/GM6020のいずれか、config.hppのROBOMAS_MOTOR_TYPEで固定)を"
+            "最大4台まで速度制御する。速度PIDゲインはCAN経由では変更できず、ファーム側"
+            "config.hppのコンパイル時固定。このボードのCANバス(1Mbps固定)には他の"
+            "ros2canノード(500kbps)を混在させないこと。"
+        ),
+        tx=tx,
+        rx=rx,
+    )
+
+
 def _build_builtin_profiles() -> "dict[str, DeviceProfile]":
     profiles: List[DeviceProfile] = [
         make_can_host_profile(),
         make_can_host_with_foc_node_profile(),
+        make_robomas_profile(),
         make_generic_raw_profile(),
     ]
     return {p.key: p for p in profiles}

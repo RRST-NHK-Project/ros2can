@@ -7,7 +7,8 @@ This firmware targets a XIAO ESP32-S3 based board (with an MCP2561 CAN transceiv
 - a **standalone serial<->GPIO bridge** (`MODE_IO`), or
 - one **node** on a CAN bus (`MODE_CAN`), or
 - the **host** that bridges a PC serial link to up to 3 other CAN nodes while also acting as node 0 itself (`MODE_CAN_HOST`), or
-- a **read-only CAN sniffer** for bring-up/debugging (`MODE_CAN_MONITOR`).
+- a **read-only CAN sniffer** for bring-up/debugging (`MODE_CAN_MONITOR`), or
+- a **dedicated DJI RoboMaster (M3508/M2006/GM6020) driver** for up to 4 motors on its own CAN bus (`MODE_ROBOMAS`, see section 9).
 
 Each board exposes the same local I/O set (no DC motor driver on this board):
 
@@ -27,8 +28,9 @@ Select exactly one mode in `src/config.hpp`:
 - `MODE_CAN_HOST`: CAN host mode. This board owns the PC serial link, relays data to/from up to 3 other CAN nodes, and additionally drives its own local I/O directly (see section 4).
 - `MODE_CAN_MONITOR`: passive CAN sniffer. Starts the CAN driver and `canTask` only; no serial bridging and no IO task. Prints one summary line per node to `Serial` whenever all of that node's slots have been observed, for wiring/bring-up checks.
 - `MODE_DEBUG`: development/debug mode (PID task).
+- `MODE_ROBOMAS`: dedicated DJI RoboMaster driver. Does **not** use `canInit()`/`canTask()` or the node/slot protocol at all — it runs its own CAN bus at 1Mbps speaking DJI's native protocol directly. See section 9.
 
-`main.cpp` enforces that exactly one of `MODE_IO`, `MODE_CAN`, `MODE_CAN_HOST`, `MODE_DEBUG`, `MODE_CAN_MONITOR` is defined; the build fails otherwise.
+`main.cpp` enforces that exactly one of `MODE_IO`, `MODE_CAN`, `MODE_CAN_HOST`, `MODE_DEBUG`, `MODE_CAN_MONITOR`, `MODE_ROBOMAS` is defined; the build fails otherwise.
 
 ---
 
@@ -131,7 +133,58 @@ Each 5-slot block is transmitted as two CAN frames (`identifier = 0x100 + node_i
 
 ---
 
-## 8. Credits
+## 9. RoboMaster Driver Mode (`MODE_ROBOMAS`)
+
+Unlike every other mode above, `MODE_ROBOMAS` does not participate in the node/slot
+CAN protocol at all. DJI's C620 (M3508), C610 (M2006) and GM6020 controllers speak a
+fixed protocol at a fixed **1Mbps** bitrate with fixed CAN IDs that cannot be changed
+in firmware — this is incompatible with the 500kbps node/slot bus used by
+`MODE_CAN`/`MODE_CAN_HOST`/`MODE_CAN_MONITOR`. A board in `MODE_ROBOMAS` therefore acts
+as a **standalone device**: its own USB-serial link straight to the PC (own
+`DEVICE_ID`), and its own dedicated CAN bus with up to `NUM_MOTOR` (4) RoboMaster
+motors of a **single model** (mixing M3508/M2006/GM6020 on the same bus is not
+supported). Do not put any other `ros2can` node board on this same physical CAN bus.
+
+Select the motor model at compile time in `src/config.hpp`:
+
+```cpp
+#define ROBOMAS_MOTOR_TYPE ROBOMAS_MOTOR_M3508 // or ROBOMAS_MOTOR_M2006 / ROBOMAS_MOTOR_GM6020
+```
+
+Only velocity control is implemented. Velocity PID gains (`ROBOMAS_KP_VEL` /
+`ROBOMAS_KI_VEL` / `ROBOMAS_KD_VEL`) are fixed compile-time constants in `config.hpp`;
+they cannot be changed from `ros2can`/the PC side at runtime — tune them in firmware
+and reflash.
+
+Slot mapping reuses the standalone 24-slot `Tx_16Data`/`Rx_16Data` frame directly (no
+node/slot chunking, since this board is not a node on the host's bus):
+
+**Command (PC -> board), `Rx_16Data`:**
+
+| Index | Meaning |
+|---:|:---|
+| 0-3 | target velocity for motor 1-4, raw rpm (output-shaft rpm), no scaling |
+| 4-23 | unused |
+
+**Feedback (board -> PC), `Tx_16Data`:**
+
+| Index | Meaning |
+|---:|:---|
+| 0-3 | angle for motor 1-4, output-shaft degrees, scale 0.1 deg/LSB |
+| 4-7 | velocity for motor 1-4, output-shaft rpm, no scaling |
+| 8-11 | current for motor 1-4, milliamps, scale 0.001 A/LSB |
+| 12-23 | unused |
+
+CAN IDs used on the dedicated 1Mbps bus (all fixed by DJI, not configurable):
+
+| Direction | M3508 / M2006 | GM6020 |
+|:---|:---|:---|
+| Command (group, IDs 1-4) | `0x200` | `0x1FE` |
+| Feedback (per motor, ID n) | `0x200 + n` (`0x201`-`0x204`) | `0x204 + n` (`0x205`-`0x208`) |
+
+---
+
+## 10. Credits
 
 Developed by NHK Project, RRST, Ritsumeikan University, Japan.
 - Official Website: https://www.rrst.jp

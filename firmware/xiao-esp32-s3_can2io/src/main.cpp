@@ -14,6 +14,7 @@ Copyright (c) 2025 RRST-NHK-Project. All rights reserved.
 #include "config.hpp"
 #include "defs.hpp"
 #include "pin_ctrl_task.hpp"
+#include "robomas.hpp"
 #include "serial_task.hpp"
 #include <Arduino.h>
 // ================= SETUP =================
@@ -39,7 +40,7 @@ void setup() {
     // ledcSetup(1, 20000, 8);
     // ledcAttachPin(LED, 1);
 
-#if defined(MODE_CAN_HOST) || defined(MODE_IO) || defined(MODE_DEBUG)
+#if defined(MODE_CAN_HOST) || defined(MODE_IO) || defined(MODE_DEBUG) || defined(MODE_ROBOMAS)
     xTaskCreate(
         serialTask,   // タスク関数
         "serialTask", // タスク名
@@ -144,11 +145,25 @@ void setup() {
     // シリアルモニタへ受信したCAN IDと生データだけを表示する
     // 追加のIOタスクは起動しない
 
+#elif defined(MODE_ROBOMAS)
+    // ロボマス専用モード初期化
+    // xiao-esp32-s3_can2ioの他モードが使うノード/スロット分配プロトコル(500kbps)とは
+    // 別系統で、DJI RoboMasterシリーズのCANプロトコル(1Mbps固定)を直接喋る独立デバイス
+    // として動作する。canInit()/canTask()は使わず、robomas.cpp側で独自にCANを初期化する。
+    robomasInit();
+    xTaskCreate(
+        robomasTask,   // タスク関数
+        "robomasTask", // タスク名
+        4096,          // スタックサイズ（words）
+        NULL,
+        11, // 優先度
+        NULL);
+
 #else
 #error "No mode defined. Please define one mode in config.hpp."
 #endif
 
-#if (defined(MODE_IO) + defined(MODE_CAN) + defined(MODE_CAN_HOST) + defined(MODE_DEBUG) + defined(MODE_CAN_MONITOR)) != 1
+#if (defined(MODE_IO) + defined(MODE_CAN) + defined(MODE_CAN_HOST) + defined(MODE_DEBUG) + defined(MODE_CAN_MONITOR) + defined(MODE_ROBOMAS)) != 1
 #error "Invalid mode configuration. Please define exactly *one mode* in config.hpp."
 #endif
 }

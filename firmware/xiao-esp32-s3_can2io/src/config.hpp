@@ -24,6 +24,7 @@ Copyright (c) 2025 RRST-NHK-Project. All rights reserved.
 // #define MODE_IO
 // #define MODE_DEBUG
 // #define MODE_CAN_MONITOR
+// #define MODE_ROBOMAS
 
 // ================= サーボ関連 =================
 
@@ -73,3 +74,40 @@ Copyright (c) 2025 RRST-NHK-Project. All rights reserved.
 // CAN_ID の下位2桁をノード番号として使用する。
 // 例: CAN_ID=101 -> node 1, CAN_ID=102 -> node 2, CAN_ID=103 -> node 3, CAN_ID=104 -> node 4
 #define CAN_NODE_INDEX ((CAN_ID % 100U) - 1U)
+
+// ================= ロボマス関連 (MODE_ROBOMASのみ有効) =================
+// MODE_ROBOMASはxiao-esp32-s3_can2ioのノード/スロット分配方式(CAN 500kbps)とは
+// 別系統で、DJI RoboMasterシリーズのCANプロトコル(1Mbps固定, ID固定)を直接喋る
+// 独立デバイスとして動作する。1マイコン(1バス)には同一機種のみ最大4台まで接続可能。
+// このバスにxiao-esp32-s3_can2ioの他ノード(MODE_CAN等)を混在させることはできない
+// (ビットレートが異なるため)。詳細はREADME.md参照。
+
+#define ROBOMAS_MOTOR_M3508 1  // C620 + M3508 (メカナム/足回り等、ギア比19.2)
+#define ROBOMAS_MOTOR_M2006 2  // C610 + M2006 (小型アクチュエータ等、ギア比36.0)
+#define ROBOMAS_MOTOR_GM6020 3 // GM6020 (ダイレクトドライブ、ギア無し)
+
+// 使用するモータ機種を1つ選択すること。
+#define ROBOMAS_MOTOR_TYPE ROBOMAS_MOTOR_M3508
+
+// 速度PIDゲイン。ros2can(PC)側からは変更できない固定値。チューニングはここで行う。
+#if ROBOMAS_MOTOR_TYPE == ROBOMAS_MOTOR_M3508
+#define ROBOMAS_KP_VEL 0.8f
+#define ROBOMAS_KI_VEL 0.0f
+#define ROBOMAS_KD_VEL 0.05f
+#define ROBOMAS_OUTPUT_GAIN 10.0f   // PID出力 -> 電流指令[A]への換算係数
+#define ROBOMAS_MAX_CURRENT_A 20.0f // 電流指令の飽和値[A] (C620仕様上限)
+#elif ROBOMAS_MOTOR_TYPE == ROBOMAS_MOTOR_M2006
+#define ROBOMAS_KP_VEL 0.8f
+#define ROBOMAS_KI_VEL 0.0f
+#define ROBOMAS_KD_VEL 0.02f
+#define ROBOMAS_OUTPUT_GAIN 1.0f
+#define ROBOMAS_MAX_CURRENT_A 1.0f
+#elif ROBOMAS_MOTOR_TYPE == ROBOMAS_MOTOR_GM6020
+#define ROBOMAS_KP_VEL 0.03f
+#define ROBOMAS_KI_VEL 0.0f
+#define ROBOMAS_KD_VEL 0.0f
+#define ROBOMAS_OUTPUT_GAIN 1.0f
+#define ROBOMAS_MAX_CURRENT_A 10.0f
+#else
+#error "ROBOMAS_MOTOR_TYPE: unknown motor type"
+#endif

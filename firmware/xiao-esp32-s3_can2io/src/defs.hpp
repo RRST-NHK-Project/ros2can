@@ -51,40 +51,9 @@ Copyright (c) 2025 RRST-NHK-Project. All rights reserved.
 #define SERVO_PWM_MAX_DUTY ((1 << SERVO_PWM_RESOLUTION) - 1)
 #define SERVO_PWM_SCALE (SERVO_PWM_MAX_DUTY / SERVO_PWM_PERIOD_US)
 
-// ロボマス
-#define NUM_MOTOR 4                    // モーター数
+// ロボマス (MODE_ROBOMAS、詳細はrobomas.hpp/cppを参照)
+#define NUM_MOTOR 4                    // 1バスあたりのモーター数
 #define gear_m3508 19.2f               // M3508ギア比
 #define gear_m2006 36.0f               // M2006ギア比
 #define ENCODER_MAX 8192               // エンコーダ分解能
 #define HALF_ENCODER (ENCODER_MAX / 2) // エンコーダ分解能の半分
-
-// 状態変数の宣言
-extern int encoder_count[NUM_MOTOR];
-extern int rpm[NUM_MOTOR];
-extern int current[NUM_MOTOR];
-extern bool offset_ok[NUM_MOTOR];
-extern int encoder_offset[NUM_MOTOR];
-extern int last_encoder[NUM_MOTOR];
-extern int rotation_count[NUM_MOTOR];
-extern long total_encoder[NUM_MOTOR];
-// extern float angle[NUM_MOTOR];
-// extern float vel[NUM_MOTOR];
-
-// PID関連変数
-extern float target_angle[NUM_MOTOR];
-extern float pos_error_prev[NUM_MOTOR];
-extern float cur_error_prev[NUM_MOTOR];
-extern float pos_integral[NUM_MOTOR];
-extern float vel_integral[NUM_MOTOR];
-extern float cur_integral[NUM_MOTOR];
-extern float pos_output[NUM_MOTOR];
-extern float cur_output[NUM_MOTOR];
-extern float motor_output_current[NUM_MOTOR];
-
-extern float angle_m3508[NUM_MOTOR];
-extern float vel_m3508[NUM_MOTOR];
-extern float c[NUM_MOTOR];
-extern float output[NUM_MOTOR];
-extern float angle[NUM_MOTOR];
-
-extern unsigned long lastPidTime;
