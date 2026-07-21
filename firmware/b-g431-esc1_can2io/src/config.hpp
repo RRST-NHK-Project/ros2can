@@ -17,7 +17,7 @@ Copyright (c) 2026.
 // CAN_IDは3桁形式(xiao-esp32-s3_can2io側と同じ規則)で指定します。
 // 末尾2桁がノード番号(1-origin)。例: 101 -> node1, 102 -> node2, ...
 // ホスト側 config.hpp の CAN_NODE_COUNT の範囲内で、他ノードと重複しない値にすること。
-#define CAN_ID 101
+#define CAN_ID 402
 #define CAN_NODE_INDEX ((CAN_ID % 100U) - 1U)
 
 // ホスト側 (xiao-esp32-s3_can2io/src/config.hpp) の CAN_SLOTS_PER_NODE と

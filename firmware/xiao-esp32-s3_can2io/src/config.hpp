@@ -11,12 +11,12 @@ Copyright (c) 2025 RRST-NHK-Project. All rights reserved.
 // ================= 基本設定 =================
 
 // IDの設定，シリアルフレームのDEVICE_IDとして使用します。
-#define DEVICE_ID 101
+#define DEVICE_ID 1
 
 // CAN_IDは3桁形式で指定します。
 // 1桁目はバス番号、末尾2桁はノード番号を表します。
 // 例: 101, 102, 103, 104
-#define CAN_ID 101
+#define CAN_ID 401
 
 // モードの設定，どれか一つをコメントアウト解除すること
 // #define MODE_CAN
@@ -87,7 +87,7 @@ Copyright (c) 2025 RRST-NHK-Project. All rights reserved.
 #define ROBOMAS_MOTOR_GM6020 3 // GM6020 (ダイレクトドライブ、ギア無し)
 
 // 使用するモータ機種を1つ選択すること。
-#define ROBOMAS_MOTOR_TYPE ROBOMAS_MOTOR_M3508
+#define ROBOMAS_MOTOR_TYPE ROBOMAS_MOTOR_M2006
 
 // 速度PIDゲイン。ros2can(PC)側からは変更できない固定値。チューニングはここで行う。
 #if ROBOMAS_MOTOR_TYPE == ROBOMAS_MOTOR_M3508

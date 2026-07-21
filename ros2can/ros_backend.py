@@ -60,7 +60,8 @@ class DeviceChannel:
     profile_key: str = DEFAULT_PROFILE_KEY
     tx_data: List[int] = field(default_factory=lambda: [0] * SLOT_COUNT)
     rx_data: List[int] = field(default_factory=lambda: [0] * SLOT_COUNT)
-    armed: bool = False
+    topic_passthrough: bool = True
+    direct_tx: bool = False
     manual: bool = False
     last_rx_time: Optional[float] = None
     rx_frame_count: int = 0
@@ -204,15 +205,23 @@ class RosBackend(QObject):
         self.deviceListChanged.emit()
 
     def _on_hardware_tx_command(self, device_id: int, msg: Int16MultiArray) -> None:
-        """外部ROSノードから serial_tx_[ID] へ送られてきた指令値を反映する。"""
+        """外部ROSノードから serial_tx_[ID] へ送られてきた指令値を反映する。
+
+        トピック通過(topic_passthrough)がOFFの場合、外部ノードからの指令は
+        無視され tx_data には反映されない。ダイレクト送信(direct_tx)は
+        tx_data(GUI手動編集分も含む)を実際にマイコンへ書き込むかどうかを
+        制御する、別の独立したゲートである。
+        """
         ch = self.devices.get(device_id)
         if ch is None or ch.mode != MODE_HARDWARE:
+            return
+        if not ch.topic_passthrough:
             return
         data = list(msg.data[:SLOT_COUNT])
         if len(data) < SLOT_COUNT:
             data += [0] * (SLOT_COUNT - len(data))
         ch.tx_data = data
-        if ch.armed:
+        if ch.direct_tx:
             self.hardware.write(device_id, ch.tx_data)
             ch.tx_frame_count += 1
 
@@ -263,9 +272,16 @@ class RosBackend(QObject):
         return ch
 
     def _on_simulator_tx_command(self, device_id: int, msg: Int16MultiArray) -> None:
-        """外部ROSノードから serial_tx_[ID] へ送られてきた指令値を反映する。"""
+        """外部ROSノードから serial_tx_[ID] へ送られてきた指令値を反映する。
+
+        仮想デバイスは実機を書き換えないため direct_tx は見ないが、
+        トピック通過(topic_passthrough)がOFFの場合は外部ノードからの
+        指令を無視する(GUIでの動作確認用途に使う場合など)。
+        """
         ch = self.devices.get(device_id)
         if ch is None or ch.mode != MODE_SIMULATOR:
+            return
+        if not ch.topic_passthrough:
             return
         data = list(msg.data[:SLOT_COUNT])
         if len(data) < SLOT_COUNT:
@@ -275,7 +291,7 @@ class RosBackend(QObject):
     def service_simulators(self) -> None:
         """全シミュレータデバイスの TX->RX ループバックを1ステップ進める。
 
-        TX有効化(armed)の有無に関わらず常にRXを更新する: 実機は接続されていれば
+        トピック通過/ダイレクト送信の有無に関わらず常にRXを更新する: 実機は接続されていれば
         ホストの指令とは無関係にセンサ値を送り続けるため、それを模して Monitor/Raw
         タブの動作確認をいつでもできるようにしている。
         """
@@ -312,7 +328,7 @@ class RosBackend(QObject):
     # ---------------- tx ----------------
 
     def publish_tx(self, device_id: int) -> None:
-        """armed なデバイスへ現在の tx_data を実際に送信する(モードに応じて経路を切替)。"""
+        """現在の tx_data を実際に送信する(モードに応じて経路を切替)。呼び出し側でゲートすること。"""
         ch = self.devices.get(device_id)
         if ch is None:
             return
@@ -331,9 +347,10 @@ class RosBackend(QObject):
             ch.publisher.publish(msg)
             ch.tx_frame_count += 1
 
-    def publish_all_armed(self) -> None:
+    def publish_all_direct(self) -> None:
+        """ダイレクト送信(direct_tx)が有効なデバイスへ現在の tx_data を周期送信する。"""
         for device_id, ch in self.devices.items():
-            if ch.armed:
+            if ch.direct_tx:
                 self.publish_tx(device_id)
 
     def zero_and_send(self, device_id: int) -> None:
@@ -345,7 +362,7 @@ class RosBackend(QObject):
 
     def emergency_stop_all(self) -> None:
         for device_id, ch in self.devices.items():
-            ch.armed = False
+            ch.direct_tx = False
             ch.tx_data = [0] * SLOT_COUNT
             self.publish_tx(device_id)
 

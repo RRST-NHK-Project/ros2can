@@ -114,10 +114,15 @@ class DevicePanel(QWidget):
 
         layout.addStretch(1)
 
-        self.armed_check = QCheckBox("TX有効化 (実際にマイコンへ送信)")
-        self.armed_check.setStyleSheet("QCheckBox { font-weight: bold; }")
-        self.armed_check.toggled.connect(self._on_armed_toggled)
-        layout.addWidget(self.armed_check)
+        self.passthrough_check = QCheckBox("トピック通過 (外部ノードの指令を反映)")
+        self.passthrough_check.setChecked(True)
+        self.passthrough_check.toggled.connect(self._on_passthrough_toggled)
+        layout.addWidget(self.passthrough_check)
+
+        self.direct_check = QCheckBox("ダイレクト送信 (実際にマイコンへ送信)")
+        self.direct_check.setStyleSheet("QCheckBox { font-weight: bold; }")
+        self.direct_check.toggled.connect(self._on_direct_toggled)
+        layout.addWidget(self.direct_check)
 
         self.zero_btn = QPushButton("全スロットを0にして送信")
         self.zero_btn.setStyleSheet("background-color:#c0392b; color:white; font-weight:bold;")
@@ -286,9 +291,12 @@ class DevicePanel(QWidget):
         if row is not None:
             row.set_raw_value(raw)
 
-    def _on_armed_toggled(self, checked: bool) -> None:
-        self.channel.armed = checked
-        self.armed_check.setStyleSheet(
+    def _on_passthrough_toggled(self, checked: bool) -> None:
+        self.channel.topic_passthrough = checked
+
+    def _on_direct_toggled(self, checked: bool) -> None:
+        self.channel.direct_tx = checked
+        self.direct_check.setStyleSheet(
             "QCheckBox { font-weight: bold; color: #c0392b; }" if checked
             else "QCheckBox { font-weight: bold; }")
 
@@ -298,12 +306,12 @@ class DevicePanel(QWidget):
             row.set_raw_value(0)
         self.raw_tx_table.set_values(self.channel.tx_data)
 
-    def set_armed_external(self, armed: bool) -> None:
+    def set_direct_tx_external(self, direct: bool) -> None:
         """E-STOP などパネル外からの状態反映。"""
-        self.armed_check.blockSignals(True)
-        self.armed_check.setChecked(armed)
-        self.armed_check.blockSignals(False)
-        self._on_armed_toggled(armed)
+        self.direct_check.blockSignals(True)
+        self.direct_check.setChecked(direct)
+        self.direct_check.blockSignals(False)
+        self._on_direct_toggled(direct)
         for row in self.control_rows.values():
             row.set_raw_value(0)
         self.raw_tx_table.set_values(self.channel.tx_data)
@@ -340,7 +348,8 @@ class DevicePanel(QWidget):
             f"rx_hz           : {ch.rx_hz:.2f}",
             f"rx_frame_count  : {ch.rx_frame_count}",
             f"tx_frame_count  : {ch.tx_frame_count}",
-            f"armed (tx send) : {ch.armed}",
+            f"topic_passthrough : {ch.topic_passthrough}",
+            f"direct_tx          : {ch.direct_tx}",
             "",
             f"tx_data (24) = {ch.tx_data}",
             f"rx_data (24) = {ch.rx_data}",

@@ -22,7 +22,7 @@ from .ros_backend import RosBackend
 from .main_window import MainWindow
 
 SPIN_INTERVAL_MS = 10
-PUBLISH_INTERVAL_MS = 50   # armed デバイスへの周期送信 (20Hz)
+PUBLISH_INTERVAL_MS = 50   # ダイレクト送信が有効なデバイスへの周期送信 (20Hz)
 HARDWARE_SERVICE_MS = 10   # シリアルリンクの読み書きサービス周期
 SIMULATOR_SERVICE_MS = 50  # デバッグ用仮想デバイスのTX->RXループバック周期 (20Hz、実機のRXを模す)
 
@@ -52,7 +52,7 @@ def main(argv=None) -> int:
     simulator_timer.start(SIMULATOR_SERVICE_MS)
 
     publish_timer = QTimer()
-    publish_timer.timeout.connect(backend.publish_all_armed)
+    publish_timer.timeout.connect(backend.publish_all_direct)
     publish_timer.start(PUBLISH_INTERVAL_MS)
 
     exit_code = app.exec_()

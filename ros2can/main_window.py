@@ -185,14 +185,15 @@ class MainWindow(QMainWindow):
             if ch is None:
                 continue
             state = "🟢接続中" if ch.connected else "⚪未接続"
-            armed = " [TX ON]" if ch.armed else ""
+            direct = " [TX ON]" if ch.direct_tx else ""
+            passthrough = "" if ch.topic_passthrough else " [PASS OFF]"
             if ch.mode == "hardware":
                 mode_label = f"HW:{ch.port}"
             elif ch.mode == "simulator":
                 mode_label = "🧪DEBUG(仮想)"
             else:
                 mode_label = "topic"
-            item.setText(f"ID {device_id}  {state}{armed}\n{mode_label}  {ch.profile_key}")
+            item.setText(f"ID {device_id}  {state}{direct}{passthrough}\n{mode_label}  {ch.profile_key}")
 
     def _on_selection_changed(self, current: Optional[QListWidgetItem], _previous) -> None:
         if current is None:
@@ -223,18 +224,18 @@ class MainWindow(QMainWindow):
         if isinstance(current, DevicePanel):
             current.refresh_from_rx()
         connected = sum(1 for c in self.backend.devices.values() if c.connected)
-        armed = sum(1 for c in self.backend.devices.values() if c.armed)
+        direct = sum(1 for c in self.backend.devices.values() if c.direct_tx)
         self.statusBar().showMessage(
-            f"検出デバイス: {len(self.backend.devices)}  接続中: {connected}  TX有効: {armed}")
+            f"検出デバイス: {len(self.backend.devices)}  接続中: {connected}  ダイレクト送信: {direct}")
 
     # ---------------- safety ----------------
 
     def _on_global_estop(self) -> None:
         self.backend.emergency_stop_all()
         for panel in self.panels.values():
-            panel.set_armed_external(False)
+            panel.set_direct_tx_external(False)
         self._update_list_labels()
-        QMessageBox.information(self, "E-STOP", "全デバイスへゼロ指令を送信し、TXを無効化しました。")
+        QMessageBox.information(self, "E-STOP", "全デバイスへゼロ指令を送信し、ダイレクト送信を無効化しました。")
 
     def closeEvent(self, event) -> None:
         self.backend.emergency_stop_all()
