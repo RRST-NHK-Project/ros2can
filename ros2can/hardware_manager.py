@@ -26,51 +26,6 @@ class HardwareConfig:
     reconnect_interval_sec: float = 3.0
 
 
-class _LinkReaderThread(QThread):
-    """1つの SerialLink を専有し、GUIスレッドの詰まりに関係なく継続的に読み続けるスレッド。
-
-    以前は HardwareManager.service() (GUIスレッドのQTimerから高頻度に呼ばれる) が
-    read_frames() を直接呼んでいたが、GUIスレッドが他の処理(rclpy.spin_once()や
-    描画等)で詰まっている間は read_frames() 自体が呼ばれず、その間にOS側のシリアル
-    受信バッファが溢れてフレームが本当に失われることが実機検証で確認された。
-    受信だけは専用スレッドで常時ドレインし続けることで、GUIスレッドの詰まりに
-    影響されないようにする。
-
-    書き込み(write)は従来通りGUIスレッド側(HardwareManager.write())で行う。
-    同一 SerialLink に対する読み取り専用スレッドと書き込み元(GUIスレッド)が
-    並行動作する形になるが、pyserialはOSファイルディスクリプタへの読み取り/
-    書き込みが独立した操作であるため、読み書きを別スレッドに分けるのは一般的な
-    利用パターンであり問題ない。
-    """
-
-    frameReceived = pyqtSignal(int, list)  # device_id, values(24)
-    linkError = pyqtSignal(int)            # device_id
-
-    def __init__(self, link: SerialLink, parent=None):
-        super().__init__(parent)
-        self._link = link
-        self._device_id = link.device_id
-        self._running = True
-
-    def stop(self) -> None:
-        self._running = False
-
-    def run(self) -> None:
-        while self._running:
-            try:
-                frames = self._link.read_frames()
-            except SerialLinkError:
-                self.linkError.emit(self._device_id)
-                return
-            for frame_id, values in frames:
-                if frame_id != self._device_id:
-                    continue
-                self.frameReceived.emit(self._device_id, values)
-            # busy-loopにならない程度に短く待つ(ファームウェアの200Hz送信に対し
-            # 十分高頻度。実機のIO_Task/serialTaskのvTaskDelay(1)と同程度)
-            self.msleep(1)
-
-
 class _ScannerThread(QThread):
     """未専有のポートを定期的にプローブし続けるバックグラウンドスレッド。"""
 
@@ -123,7 +78,6 @@ class HardwareManager(QObject):
         super().__init__(parent)
         self.config = config or HardwareConfig()
         self.links: Dict[int, SerialLink] = {}
-        self._readers: Dict[int, _LinkReaderThread] = {}
         self._last_reconnect_attempt: Dict[int, float] = {}
         self._last_rx_time: Dict[int, float] = {}
 
@@ -139,37 +93,8 @@ class HardwareManager(QObject):
     def stop(self) -> None:
         self._scanner.stop()
         self._scanner.wait(2000)
-        for reader in self._readers.values():
-            reader.stop()
-        for reader in self._readers.values():
-            reader.wait(1000)
-        self._readers.clear()
         for link in self.links.values():
             link.close()
-
-    def _start_reader(self, device_id: int, link: SerialLink) -> None:
-        reader = _LinkReaderThread(link)
-        reader.frameReceived.connect(self._on_reader_frame)
-        reader.linkError.connect(self._on_reader_error)
-        reader.start()
-        self._readers[device_id] = reader
-
-    def _stop_reader(self, device_id: int) -> None:
-        reader = self._readers.pop(device_id, None)
-        if reader is not None:
-            reader.stop()
-            reader.wait(1000)
-
-    def _on_reader_frame(self, device_id: int, values: List[int]) -> None:
-        # 専用スレッド(_LinkReaderThread)からキューイング配信されるスロット。
-        # ここはGUI/メインスレッド上で実行される。
-        self._last_rx_time[device_id] = time.monotonic()
-        self.frameReceived.emit(device_id, values)
-
-    def _on_reader_error(self, device_id: int) -> None:
-        link = self.links.get(device_id)
-        if link is not None:
-            self._handle_disconnect(device_id, link)
 
     def _owned_ports(self) -> Set[str]:
         return {link.port for link in self.links.values() if link.is_open}
@@ -197,30 +122,35 @@ class HardwareManager(QObject):
 
         self.links[device_id] = link
         self._last_rx_time[device_id] = time.monotonic()
-        self._start_reader(device_id, link)
         self.deviceClaimed.emit(device_id, port)
         self.linkStateChanged.emit(device_id, True)
 
     # ---------------- periodic IO ----------------
 
     def service(self) -> None:
-        """高頻度に呼び出し、切断検知・再接続を行う。
-
-        実際のフレーム受信は _LinkReaderThread が専用スレッドで常時ドレインして
-        いるため、ここでは行わない(GUIスレッドの詰まりでOS側シリアルバッファが
-        溢れてフレームが失われるのを防ぐため、受信だけは切り離してある)。
-        """
+        """高頻度に呼び出し、全リンクの受信処理・切断検知・再接続を行う。"""
         now = time.monotonic()
         for device_id, link in list(self.links.items()):
             if not link.is_open:
                 self._maybe_reconnect(device_id, link, now)
                 continue
 
+            try:
+                frames = link.read_frames()
+            except SerialLinkError:
+                self._handle_disconnect(device_id, link)
+                continue
+
+            for frame_id, values in frames:
+                if frame_id != device_id:
+                    continue  # ID不一致フレームは破棄
+                self._last_rx_time[device_id] = now
+                self.frameReceived.emit(device_id, values)
+
             if now - self._last_rx_time.get(device_id, now) >= self.config.rx_timeout_sec:
                 self._handle_disconnect(device_id, link)
 
     def _handle_disconnect(self, device_id: int, link: SerialLink) -> None:
-        self._stop_reader(device_id)
         link.close()
         self._last_reconnect_attempt[device_id] = time.monotonic()
         self.linkStateChanged.emit(device_id, False)
@@ -233,14 +163,12 @@ class HardwareManager(QObject):
         try:
             link.open()
             self._last_rx_time[device_id] = now
-            self._start_reader(device_id, link)
             self.linkStateChanged.emit(device_id, True)
         except Exception:
             pass
 
     def release(self, device_id: int) -> None:
         """デバイスの管理自体を終了する(GUI側で明示的に削除された場合)。"""
-        self._stop_reader(device_id)
         link = self.links.pop(device_id, None)
         if link is not None:
             link.close()
