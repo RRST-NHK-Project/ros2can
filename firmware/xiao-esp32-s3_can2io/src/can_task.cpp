@@ -172,7 +172,11 @@ static void canSendNodeSlotBlock(const int16_t *data, uint8_t node_index, uint32
             message.data[i * 2 + 1] = (uint8_t)(value & 0xFF);
         }
 
-        (void)twai_transmit(&message, pdMS_TO_TICKS(100));
+        // CAN未接続/相手ノード無応答時にTXキューが詰まっても、ここでブロックすると
+        // 同じcanTask内で行っているホストのローカルエンコーダ値publishまで遅延してしまう
+        // (エンコーダ取得が遅延して見える不具合の原因だった)。1周期分は捨てても
+        // 次のCAN_TX_PERIOD_MS周期で最新値を送り直すため、非ブロッキングで十分。
+        (void)twai_transmit(&message, 0);
     }
 }
 
@@ -329,6 +333,31 @@ static void printHostCanDiagnostics() {
 }
 #endif
 
+// CAN未接続/相手ノード無応答が続くとエラーカウンタが上限に達しBus-Offへ遷移するが、
+// TWAIドライバはBus-Offから自動復帰しない(twai_initiate_recovery()が必須、かつ
+// 復帰後もRUNNINGへは戻らずSTOPPEDで止まるため明示的にtwai_start()が要る)。
+// これを放置すると一度Bus-Offに陥ったら再接続してもCAN通信が永久に復旧しない。
+static void canRecoverBusIfNeeded() {
+    constexpr uint32_t CAN_RECOVERY_CHECK_PERIOD_MS = 100;
+    static uint32_t last_check_ms = 0;
+    const uint32_t now_ms = millis();
+    if (now_ms - last_check_ms < CAN_RECOVERY_CHECK_PERIOD_MS) {
+        return;
+    }
+    last_check_ms = now_ms;
+
+    twai_status_info_t status{};
+    if (twai_get_status_info(&status) != ESP_OK) {
+        return;
+    }
+
+    if (status.state == TWAI_STATE_BUS_OFF) {
+        twai_initiate_recovery();
+    } else if (status.state == TWAI_STATE_STOPPED) {
+        twai_start();
+    }
+}
+
 void canTask(void *) {
     TickType_t last_tx = xTaskGetTickCount();
     // 1周期ごとに送受信を行う
@@ -341,6 +370,7 @@ void canTask(void *) {
 #endif
 
     while (1) {
+        canRecoverBusIfNeeded();
 #if defined(MODE_CAN_MONITOR)
         twai_message_t message{};
         if (twai_receive(&message, pdMS_TO_TICKS(5)) == ESP_OK) {

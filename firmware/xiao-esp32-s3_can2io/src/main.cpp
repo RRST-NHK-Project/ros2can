@@ -25,7 +25,7 @@ void setup() {
     Serial.begin(115200);
 
     delay(200);
-    delay(100 * DEVICE_ID); // 安定待ち, IDごとに開始タイミングをずらす
+    delay(1 * DEVICE_ID); // 安定待ち, IDごとに開始タイミングをずらす
 
     pinMode(LED, OUTPUT);
 
