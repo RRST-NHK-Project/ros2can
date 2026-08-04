@@ -20,11 +20,11 @@ Copyright (c) 2025 RRST-NHK-Project. All rights reserved.
 
 // モードの設定，どれか一つをコメントアウト解除すること
 // #define MODE_CAN
-#define MODE_CAN_HOST
+//define MODE_CAN_HOST
 // #define MODE_IO
 // #define MODE_DEBUG
 // #define MODE_CAN_MONITOR
-//#define MODE_ROBOMAS
+#define MODE_ROBOMAS
 
 // ================= サーボ関連 =================
 
@@ -102,7 +102,7 @@ Copyright (c) 2025 RRST-NHK-Project. All rights reserved.
 #define ROBOMAS_MOTOR_GM6020 3 // GM6020 (ダイレクトドライブ、ギア無し)
 
 // 使用するモータ機種を1つ選択すること。
-#define ROBOMAS_MOTOR_TYPE ROBOMAS_MOTOR_M2006
+#define ROBOMAS_MOTOR_TYPE ROBOMAS_MOTOR_GM6020
 
 // 速度PIDゲイン。ros2can(PC)側からは変更できない固定値。チューニングはここで行う。
 #if ROBOMAS_MOTOR_TYPE == ROBOMAS_MOTOR_M3508
@@ -126,19 +126,25 @@ Copyright (c) 2025 RRST-NHK-Project. All rights reserved.
 #define ROBOMAS_OUTPUT_GAIN 1.0f
 #define ROBOMAS_MAX_CURRENT_A 1.0f
 #elif ROBOMAS_MOTOR_TYPE == ROBOMAS_MOTOR_GM6020
-// 実測: Kp=0.0080で振動 -> 限界感度 Ku=0.0080。Kp=0.5*Ku で約6dBの
-// ゲイン余裕を確保する(0.0079はKuの99%で余裕が実質ゼロだった)。
-// Kiは指令103rpmに対し実測6.8rpm残っていた定常偏差を潰すために入れる。
-// (u=Kp*eのP動作しかしていなかったため。実測平均電流55mA=Kp*6.8と一致)
-// Ti = Kp/Ki = 0.1s、積分の折れ点1.6Hz。交差周波数での位相遅れは5度未満で
-// ゲイン余裕をほとんど食わない。
-// Kdは0にする。この実装のkdはΔeにそのまま掛かる(dtで割っていない)ので旧値
-// 0.0001は連続系換算で1e-7[A*s/rpm]、微分先行時間13us = 1サンプル周期未満
-// で実質無効だった。速度帰還は1rpm量子化・フィルタ無しのため、意味のある値
-// まで上げると雑音を拾うだけになる。PI制御とする。
-#define ROBOMAS_KP_VEL 0.0050f
-#define ROBOMAS_KI_VEL 0.050f
-#define ROBOMAS_KD_VEL 0.0f
+// PD制御 (Ki=0)。実測: P単独でKp=0.0080から振動 -> 限界感度 Ku=0.0080。
+//
+// Kd: PID.hppのDifferential_は -(current - last_current)/dt とdtで除算するので、
+//     Kdは連続系の単位[A*s/rpm]そのまま。微分先行時間Tdとは Kd = Kp * Td。
+//     ここを増分形PID(dt未除算)の感覚で書くとdt≈1msのぶん1000倍になり、速度の
+//     量子化1LSB(1rpm)だけで Kd*(1/0.001)=Kd*1000 [A] のキックが出て出力が全振幅
+//     で飽和・反転し、停止中でも激しく振動する(M2006の項と同じ罠)。
+//     Tdの上限を決めるのもこの量子化。Td=4msなら1LSBあたり25.6mA(上限3Aの0.9%)で
+//     許容範囲、Td=10ms以上ではノイズの増幅が信号を上回る。
+//     Td=4ms採用 -> Kd = Kp * 0.004。Kpを動かすときはこの比を保つこと。
+// Kp: ZNのPD則 0.8*Ku = 0.0064 から開始。Dの位相進みでKu自体が上がるはずなので、
+//     無音なら 0.0080 -> 0.0100 と上げられる(その都度Kdも上式で追随させる)。
+//
+// Kiは意図的に0。ただし摩擦・コギング抗力を打ち消す電流(実測55mA)をP項だけで
+// 作ることになるため、55mA/Kp = 8.6rpm の定常偏差が恒久的に残る。PもDも偏差ゼロ
+// では出力ゼロなのでこれは消えない。許容できない場合のみKiを戻すこと。
+#define ROBOMAS_KP_VEL 0.02f
+#define ROBOMAS_KI_VEL 0.0f
+#define ROBOMAS_KD_VEL 0.0000256f
 #define ROBOMAS_OUTPUT_GAIN 1.0f
 // sendCurGm6020()が±3.0A(±16384)で切っているので外側もそこに合わせる。
 // 10.0Aのままだと飽和点が実効上限とずれ、アンチワインドアップが機能しない。
