@@ -31,10 +31,11 @@ from typing import Dict, List, Optional
 
 import rclpy
 from rclpy.node import Node
-from std_msgs.msg import Int16MultiArray
+from std_msgs.msg import Int16MultiArray, Int32MultiArray
 
 from PyQt5.QtCore import QObject, pyqtSignal
 
+from .counter_unwrapper import CounterUnwrapper
 from .device_profiles import DEFAULT_PROFILE_KEY, SLOT_COUNT
 from .hardware_manager import HardwareConfig, HardwareManager
 
@@ -42,6 +43,12 @@ TOPIC_RE = re.compile(r"^/?(serial_tx|serial_rx)_(\d+)$")
 
 # この時間 [s] 以上 RX が無ければ「オフライン」とみなす (表示用のヒューリスティック)
 STALE_TIMEOUT_SEC = 1.5
+
+# PCNT生カウントのリセット幅。counter_unwrapper.py 冒頭コメント参照
+# (実機確認済み: h_lim=32767/l_lim=-32768到達でそれぞれ独立に0へリセットされる)。
+# ENC以外のスロット(SW/SERVO/速度指令等)にも一律適用するが、それらは通常
+# この半分(16384)を大きく下回る範囲でしか変化しないため無害。
+_COUNTS_PER_WRAP = 32768
 
 MODE_HARDWARE = "hardware"
 MODE_TOPIC_CLIENT = "topic_client"
@@ -69,6 +76,12 @@ class DeviceChannel:
     _rx_times: List[float] = field(default_factory=list)
     publisher = None
     subscription = None
+    # serial_rx_[ID]_unwrapped (Int32MultiArray) 用。MODE_HARDWARE/MODE_SIMULATOR
+    # (=自分がserial_rx_[ID]の発行元になる場合)のみ使う。MODE_TOPIC_CLIENTは
+    # 他プロセスが既に発行元のため、二重発行を避けるためunwrapは行わない。
+    unwrapped_publisher = None
+    unwrappers: List[CounterUnwrapper] = field(
+        default_factory=lambda: [CounterUnwrapper(_COUNTS_PER_WRAP) for _ in range(SLOT_COUNT)])
 
     @property
     def connected(self) -> bool:
@@ -198,6 +211,8 @@ class RosBackend(QObject):
         # topic_client と逆になる: serial_rx を Publish、serial_tx を Subscribe する。
         ch.publisher = self.node.create_publisher(
             Int16MultiArray, f"serial_rx_{device_id}", 10)
+        ch.unwrapped_publisher = self.node.create_publisher(
+            Int32MultiArray, f"serial_rx_{device_id}_unwrapped", 10)
         ch.subscription = self.node.create_subscription(
             Int16MultiArray, f"serial_tx_{device_id}",
             lambda msg, did=device_id: self._on_hardware_tx_command(did, msg), 10)
@@ -234,7 +249,17 @@ class RosBackend(QObject):
             msg = Int16MultiArray()
             msg.data = [int(v) for v in ch.rx_data]
             ch.publisher.publish(msg)
+        # HardwareManager.service() (高頻度なQTimer駆動、サンプルが密な場所) で
+        # フレームを受信した直後にunwrapする。詳細は counter_unwrapper.py 冒頭コメント参照。
+        self._publish_unwrapped(ch)
         self.rxUpdated.emit(device_id)
+
+    def _publish_unwrapped(self, ch: DeviceChannel) -> None:
+        if ch.unwrapped_publisher is None:
+            return
+        msg = Int32MultiArray()
+        msg.data = [u.update(v) for u, v in zip(ch.unwrappers, ch.rx_data)]
+        ch.unwrapped_publisher.publish(msg)
 
     def _on_hardware_link_state(self, device_id: int, _connected: bool) -> None:
         # デバイス一覧への反映(ポート情報等)のトリガーとして使う
@@ -264,6 +289,8 @@ class RosBackend(QObject):
             ch.profile_key = profile_key
         ch.publisher = self.node.create_publisher(
             Int16MultiArray, f"serial_rx_{device_id}", 10)
+        ch.unwrapped_publisher = self.node.create_publisher(
+            Int32MultiArray, f"serial_rx_{device_id}_unwrapped", 10)
         ch.subscription = self.node.create_subscription(
             Int16MultiArray, f"serial_tx_{device_id}",
             lambda msg, did=device_id: self._on_simulator_tx_command(did, msg), 10)
@@ -309,6 +336,7 @@ class RosBackend(QObject):
                 msg = Int16MultiArray()
                 msg.data = [int(v) for v in ch.rx_data]
                 ch.publisher.publish(msg)
+            self._publish_unwrapped(ch)
             self.rxUpdated.emit(device_id)
 
     # ---------------- device management: common ----------------
@@ -319,6 +347,8 @@ class RosBackend(QObject):
             return
         if ch.publisher is not None:
             self.node.destroy_publisher(ch.publisher)
+        if ch.unwrapped_publisher is not None:
+            self.node.destroy_publisher(ch.unwrapped_publisher)
         if ch.subscription is not None:
             self.node.destroy_subscription(ch.subscription)
         if ch.mode == MODE_HARDWARE:
