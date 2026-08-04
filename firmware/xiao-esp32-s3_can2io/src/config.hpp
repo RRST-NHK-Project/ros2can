@@ -20,11 +20,11 @@ Copyright (c) 2025 RRST-NHK-Project. All rights reserved.
 
 // モードの設定，どれか一つをコメントアウト解除すること
 // #define MODE_CAN
-// #define MODE_CAN_HOST
+#define MODE_CAN_HOST
 // #define MODE_IO
 // #define MODE_DEBUG
 // #define MODE_CAN_MONITOR
-#define MODE_ROBOMAS
+//#define MODE_ROBOMAS
 
 // ================= サーボ関連 =================
 
@@ -102,7 +102,7 @@ Copyright (c) 2025 RRST-NHK-Project. All rights reserved.
 #define ROBOMAS_MOTOR_GM6020 3 // GM6020 (ダイレクトドライブ、ギア無し)
 
 // 使用するモータ機種を1つ選択すること。
-#define ROBOMAS_MOTOR_TYPE ROBOMAS_MOTOR_GM6020
+#define ROBOMAS_MOTOR_TYPE ROBOMAS_MOTOR_M2006
 
 // 速度PIDゲイン。ros2can(PC)側からは変更できない固定値。チューニングはここで行う。
 #if ROBOMAS_MOTOR_TYPE == ROBOMAS_MOTOR_M3508
@@ -112,9 +112,17 @@ Copyright (c) 2025 RRST-NHK-Project. All rights reserved.
 #define ROBOMAS_OUTPUT_GAIN 10.0f   // PID出力 -> 電流指令[A]への換算係数
 #define ROBOMAS_MAX_CURRENT_A 20.0f // 電流指令の飽和値[A] (C620仕様上限)
 #elif ROBOMAS_MOTOR_TYPE == ROBOMAS_MOTOR_M2006
+// Kp=0.8のため誤差1.25rpm(=max_out/Kp)を超えると出力は電流上限1.0Aに張り付く。
+// 目標200rpmに対し実測が183rpm付近で頭打ちなのはこの電流上限による飽和であり、
+// ゲインでは解消しない(電流上限を上げない前提で追い込む場合はここが天井)。
+// Kdは旧増分PID(dt未除算)向けの値0.02のままだった。PID.hppのDifferential_は
+// dtで除算する実装のため、dt≈1msでは同じKd値でも実効ゲインが約1000倍になり、
+// 速度センサの数rpmのノイズがそのまま数十A相当に増幅されて出力を瞬間的に
+// デサチュレートさせ、リップルの原因になっていた。dt換算(Kd_new≈Kd_old*dt)で
+// 0とみなせる値まで下げる。
 #define ROBOMAS_KP_VEL 0.8f
 #define ROBOMAS_KI_VEL 0.0f
-#define ROBOMAS_KD_VEL 0.02f
+#define ROBOMAS_KD_VEL 0.0f
 #define ROBOMAS_OUTPUT_GAIN 1.0f
 #define ROBOMAS_MAX_CURRENT_A 1.0f
 #elif ROBOMAS_MOTOR_TYPE == ROBOMAS_MOTOR_GM6020

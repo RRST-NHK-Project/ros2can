@@ -25,6 +25,7 @@ Copyright (c) 2025 RRST-NHK-Project. All rights reserved.
 #include "config.hpp"
 #include "defs.hpp"
 #include "frame_data.hpp"
+#include "PID.hpp"
 #include <Arduino.h>
 
 namespace {
@@ -44,12 +45,16 @@ float current_a[NUM_MOTOR] = {0}; // 実電流[A]
 float target_rpm[NUM_MOTOR] = {0};
 
 // -------- 速度PID状態 -------- //
-float vel_error_prev[NUM_MOTOR] = {0};
-float vel_prop_prev[NUM_MOTOR] = {0};
-float vel_output[NUM_MOTOR] = {0};
 float motor_output_current[NUM_MOTOR] = {0};
 
 unsigned long g_last_pid_time = 0;
+
+PIDController vel_pid[NUM_MOTOR] = {
+    PIDController(ROBOMAS_KP_VEL, ROBOMAS_KI_VEL, ROBOMAS_KD_VEL, ROBOMAS_MAX_CURRENT_A / ROBOMAS_OUTPUT_GAIN),
+    PIDController(ROBOMAS_KP_VEL, ROBOMAS_KI_VEL, ROBOMAS_KD_VEL, ROBOMAS_MAX_CURRENT_A / ROBOMAS_OUTPUT_GAIN),
+    PIDController(ROBOMAS_KP_VEL, ROBOMAS_KI_VEL, ROBOMAS_KD_VEL, ROBOMAS_MAX_CURRENT_A / ROBOMAS_OUTPUT_GAIN),
+    PIDController(ROBOMAS_KP_VEL, ROBOMAS_KI_VEL, ROBOMAS_KD_VEL, ROBOMAS_MAX_CURRENT_A / ROBOMAS_OUTPUT_GAIN),
+};
 
 float constrainFloat(float val, float min_val, float max_val) {
     if (val < min_val)
@@ -57,29 +62,6 @@ float constrainFloat(float val, float min_val, float max_val) {
     if (val > max_val)
         return max_val;
     return val;
-}
-
-// 速度形(増分形)PID。累積すると u = kp*e + ki*Σ(e*dt) + kd*Δe と等価になる。
-// 注意: kd は dt で割っていないため、連続系の微分ゲインは kd*dt 相当であり
-// ループ周期に依存する。dt≈1ms前提。
-float pidVelocity(float setpoint, float input, float &error_prev, float &prop_prev, float &output,
-                   float kp, float ki, float kd, float dt, float out_limit) {
-    float error = setpoint - input;
-    float prop = error - error_prev;
-    float deriv = prop - prop_prev;
-    float du = kp * prop + ki * error * dt + kd * deriv;
-    output += du;
-
-    // 速度形PIDでは output 自身が積分器を兼ねるため、ここで飽和させることが
-    // そのままアンチワインドアップになる。ki > 0 でこれが無いと、出力軸が
-    // 機械的に止められた場合に output が際限なく伸び、拘束を解いても
-    // 巻き戻るまでモータが暴走したまま戻らない。
-    output = constrainFloat(output, -out_limit, out_limit);
-
-    prop_prev = prop;
-    error_prev = error;
-
-    return output;
 }
 
 // -------- CAN送信 (指令 -> ESC) -------- //
@@ -215,6 +197,10 @@ void robomasInit() {
     }
 
     g_last_pid_time = micros();
+
+    for (int i = 0; i < NUM_MOTOR; i++) {
+        vel_pid[i].reset();
+    }
 }
 
 void robomasTask(void *pvParameters) {
@@ -236,9 +222,8 @@ void robomasTask(void *pvParameters) {
         receiveFeedback();
 
         for (int i = 0; i < NUM_MOTOR; i++) {
-            float vel_out = pidVelocity(target_rpm[i], vel[i], vel_error_prev[i], vel_prop_prev[i], vel_output[i],
-                                         ROBOMAS_KP_VEL, ROBOMAS_KI_VEL, ROBOMAS_KD_VEL, dt,
-                                         ROBOMAS_MAX_CURRENT_A / ROBOMAS_OUTPUT_GAIN);
+            vel_pid[i].set_target(target_rpm[i]);
+            float vel_out = vel_pid[i].update(vel[i], dt);
             motor_output_current[i] = constrainFloat(vel_out * ROBOMAS_OUTPUT_GAIN, -ROBOMAS_MAX_CURRENT_A, ROBOMAS_MAX_CURRENT_A);
         }
 

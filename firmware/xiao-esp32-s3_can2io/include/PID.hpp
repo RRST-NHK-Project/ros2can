@@ -6,6 +6,7 @@ Copyright (c) 2025 RRST-NHK-Project. All rights reserved.
 #pragma once
 
 #include <algorithm>
+#include <cmath>
 
 class PIDController {
 public:
@@ -47,7 +48,7 @@ public:
         if (Ki_ != 0.0f) {
             Integral_ += (Error_ + last_Error_) * dt / 2;
             float integral_limit = max_out_ / std::abs(Ki_);
-            Integral_ = std::clamp(Integral_, -integral_limit, integral_limit);
+            Integral_ = std::max(-integral_limit, std::min(Integral_, integral_limit));
         } else {
             Integral_ = 0.0f;
         }
@@ -58,7 +59,7 @@ public:
         last_Error_ = Error_;
 
         float output = Kp_ * Error_ + Ki_ * Integral_ + Kd_ * Differential_;
-        return std::clamp(output, -max_out_, max_out_);
+        return std::max(-max_out_, std::min(output, max_out_));
     }
 
 private:
