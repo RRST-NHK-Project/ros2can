@@ -31,10 +31,11 @@ from typing import Dict, List, Optional
 
 import rclpy
 from rclpy.node import Node
-from std_msgs.msg import Int16MultiArray
+from std_msgs.msg import Int16MultiArray, Int32MultiArray
 
 from PyQt5.QtCore import QObject, pyqtSignal
 
+from .counter_unwrapper import CounterUnwrapper
 from .device_profiles import DEFAULT_PROFILE_KEY, SLOT_COUNT
 from .hardware_manager import HardwareConfig, HardwareManager
 
@@ -69,6 +70,9 @@ class DeviceChannel:
     _rx_times: List[float] = field(default_factory=list)
     publisher = None
     subscription = None
+    unwrap_publisher = None
+    unwrappers: List[CounterUnwrapper] = field(
+        default_factory=lambda: [CounterUnwrapper() for _ in range(SLOT_COUNT)])
 
     @property
     def connected(self) -> bool:
@@ -198,6 +202,12 @@ class RosBackend(QObject):
         # topic_client と逆になる: serial_rx を Publish、serial_tx を Subscribe する。
         ch.publisher = self.node.create_publisher(
             Int16MultiArray, f"serial_rx_{device_id}", 10)
+        # 生スロット(int16、±32768で折り返す)とは別に、フレーム受信直後(サンプルが
+        # 密な場所)でラップ検出・連続値化した値を Int32MultiArray で追加配信する。
+        # 下流(ROSトピック経由)でGUIスレッドの詰まり等によりサンプルが疎になっても、
+        # ここで既に連続値化してあるためラップの誤判定が起きない。
+        ch.unwrap_publisher = self.node.create_publisher(
+            Int32MultiArray, f"serial_rx_{device_id}_unwrapped", 10)
         ch.subscription = self.node.create_subscription(
             Int16MultiArray, f"serial_tx_{device_id}",
             lambda msg, did=device_id: self._on_hardware_tx_command(did, msg), 10)
@@ -234,6 +244,12 @@ class RosBackend(QObject):
             msg = Int16MultiArray()
             msg.data = [int(v) for v in ch.rx_data]
             ch.publisher.publish(msg)
+        if ch.unwrap_publisher is not None:
+            unwrapped_msg = Int32MultiArray()
+            unwrapped_msg.data = [
+                ch.unwrappers[i].update(ch.rx_data[i]) for i in range(SLOT_COUNT)
+            ]
+            ch.unwrap_publisher.publish(unwrapped_msg)
         self.rxUpdated.emit(device_id)
 
     def _on_hardware_link_state(self, device_id: int, _connected: bool) -> None:
@@ -319,6 +335,8 @@ class RosBackend(QObject):
             return
         if ch.publisher is not None:
             self.node.destroy_publisher(ch.publisher)
+        if ch.unwrap_publisher is not None:
+            self.node.destroy_publisher(ch.unwrap_publisher)
         if ch.subscription is not None:
             self.node.destroy_subscription(ch.subscription)
         if ch.mode == MODE_HARDWARE:
