@@ -59,14 +59,22 @@ float constrainFloat(float val, float min_val, float max_val) {
     return val;
 }
 
-// 台形積分の速度PID (現在値そのものではなく差分を積み上げる実装)
+// 速度形(増分形)PID。累積すると u = kp*e + ki*Σ(e*dt) + kd*Δe と等価になる。
+// 注意: kd は dt で割っていないため、連続系の微分ゲインは kd*dt 相当であり
+// ループ周期に依存する。dt≈1ms前提。
 float pidVelocity(float setpoint, float input, float &error_prev, float &prop_prev, float &output,
-                   float kp, float ki, float kd, float dt) {
+                   float kp, float ki, float kd, float dt, float out_limit) {
     float error = setpoint - input;
     float prop = error - error_prev;
     float deriv = prop - prop_prev;
     float du = kp * prop + ki * error * dt + kd * deriv;
     output += du;
+
+    // 速度形PIDでは output 自身が積分器を兼ねるため、ここで飽和させることが
+    // そのままアンチワインドアップになる。ki > 0 でこれが無いと、出力軸が
+    // 機械的に止められた場合に output が際限なく伸び、拘束を解いても
+    // 巻き戻るまでモータが暴走したまま戻らない。
+    output = constrainFloat(output, -out_limit, out_limit);
 
     prop_prev = prop;
     error_prev = error;
@@ -206,7 +214,7 @@ void robomasInit() {
             ;
     }
 
-    g_last_pid_time = millis();
+    g_last_pid_time = micros();
 }
 
 void robomasTask(void *pvParameters) {
@@ -215,8 +223,10 @@ void robomasTask(void *pvParameters) {
             target_rpm[i] = Rx_16Data[i];
         }
 
-        unsigned long now = millis();
-        float dt = (now - g_last_pid_time) / 1000.0f;
+        // ループ周期は約1msなので millis() では量子化誤差が dt の100%に達し、
+        // 積分項のレートがそのまま揺れる。micros() で測る。
+        unsigned long now = micros();
+        float dt = (unsigned long)(now - g_last_pid_time) / 1000000.0f;
         if (dt <= 0)
             dt = 0.000001f;
         if (dt > 0.02f)
@@ -227,7 +237,8 @@ void robomasTask(void *pvParameters) {
 
         for (int i = 0; i < NUM_MOTOR; i++) {
             float vel_out = pidVelocity(target_rpm[i], vel[i], vel_error_prev[i], vel_prop_prev[i], vel_output[i],
-                                         ROBOMAS_KP_VEL, ROBOMAS_KI_VEL, ROBOMAS_KD_VEL, dt);
+                                         ROBOMAS_KP_VEL, ROBOMAS_KI_VEL, ROBOMAS_KD_VEL, dt,
+                                         ROBOMAS_MAX_CURRENT_A / ROBOMAS_OUTPUT_GAIN);
             motor_output_current[i] = constrainFloat(vel_out * ROBOMAS_OUTPUT_GAIN, -ROBOMAS_MAX_CURRENT_A, ROBOMAS_MAX_CURRENT_A);
         }
 

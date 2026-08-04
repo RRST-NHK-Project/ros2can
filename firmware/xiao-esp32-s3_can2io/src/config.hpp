@@ -118,11 +118,23 @@ Copyright (c) 2025 RRST-NHK-Project. All rights reserved.
 #define ROBOMAS_OUTPUT_GAIN 1.0f
 #define ROBOMAS_MAX_CURRENT_A 1.0f
 #elif ROBOMAS_MOTOR_TYPE == ROBOMAS_MOTOR_GM6020
-#define ROBOMAS_KP_VEL 0.007f
-#define ROBOMAS_KI_VEL 0.0f
-#define ROBOMAS_KD_VEL 0.0001f
+// 実測: Kp=0.0080で振動 -> 限界感度 Ku=0.0080。Kp=0.5*Ku で約6dBの
+// ゲイン余裕を確保する(0.0079はKuの99%で余裕が実質ゼロだった)。
+// Kiは指令103rpmに対し実測6.8rpm残っていた定常偏差を潰すために入れる。
+// (u=Kp*eのP動作しかしていなかったため。実測平均電流55mA=Kp*6.8と一致)
+// Ti = Kp/Ki = 0.1s、積分の折れ点1.6Hz。交差周波数での位相遅れは5度未満で
+// ゲイン余裕をほとんど食わない。
+// Kdは0にする。この実装のkdはΔeにそのまま掛かる(dtで割っていない)ので旧値
+// 0.0001は連続系換算で1e-7[A*s/rpm]、微分先行時間13us = 1サンプル周期未満
+// で実質無効だった。速度帰還は1rpm量子化・フィルタ無しのため、意味のある値
+// まで上げると雑音を拾うだけになる。PI制御とする。
+#define ROBOMAS_KP_VEL 0.0050f
+#define ROBOMAS_KI_VEL 0.050f
+#define ROBOMAS_KD_VEL 0.0f
 #define ROBOMAS_OUTPUT_GAIN 1.0f
-#define ROBOMAS_MAX_CURRENT_A 10.0f
+// sendCurGm6020()が±3.0A(±16384)で切っているので外側もそこに合わせる。
+// 10.0Aのままだと飽和点が実効上限とずれ、アンチワインドアップが機能しない。
+#define ROBOMAS_MAX_CURRENT_A 3.0f
 #else
 #error "ROBOMAS_MOTOR_TYPE: unknown motor type"
 #endif
