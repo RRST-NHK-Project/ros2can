@@ -27,6 +27,7 @@ Copyright (c) 2026.
 #include "can_task.hpp"
 #include "config.hpp"
 #include "frame_data.hpp"
+#include "status_led.hpp"
 
 #include <Arduino.h>
 #include "stm32g4xx_hal.h"
@@ -206,6 +207,7 @@ void canTaskUpdate() {
         }
 
         g_last_rx_ms = millis();
+        statusLedPulse();
     }
 
     // ---- 診断出力 (TXの周期ゲートより前に評価し、独立した周期で必ず動かす) ----

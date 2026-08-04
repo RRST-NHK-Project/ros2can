@@ -1,6 +1,7 @@
 #include "can_task.hpp"
 #include "config.hpp"
 #include "frame_data.hpp"
+#include "status_led.hpp"
 
 #include <Arduino.h>
 #include <SimpleFOC.h>
@@ -194,6 +195,7 @@ void setup() {
     delay(500); // USB-UART/CDCの安定待ち
     Serial.println("[BOOT] b-g431-esc1_can2io starting...");
 
+    statusLedInit();
     canTaskInit();
 
     // ===== TIM4 =====
@@ -257,4 +259,6 @@ void loop() {
     motor.move();
 
     update_tx();
+
+    statusLedUpdate();
 }
