@@ -245,7 +245,7 @@ void robomasTask(void *pvParameters) {
         sendCurrentCommand(motor_output_current);
 
         for (int i = 0; i < NUM_MOTOR; i++) {
-            Tx_16Data[i] = (int16_t)(angle[i] * 10.0f);
+            Tx_16Data[i] = (int16_t)(angle[i]);
             Tx_16Data[4 + i] = (int16_t)vel[i];
             Tx_16Data[8 + i] = (int16_t)(current_a[i] * 1000.0f);
         }
