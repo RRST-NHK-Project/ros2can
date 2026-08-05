@@ -17,11 +17,16 @@ from PyQt5.QtWidgets import (
 
 from .device_profiles import (
     all_profiles, DeviceProfile, RAW_OUT, RAW_IN,
+    DIGITAL_IN, COUNTER, ENUM_IN,
     save_custom_profile, unique_custom_key,
 )
-from .ros_backend import RosBackend, DeviceChannel
+from .ros_backend import RosBackend, DeviceChannel, MODE_SIMULATOR
 from .widgets import ChannelControlRow, ChannelMonitorRow, RawSlotTable, LedIndicator
 from .profile_editor import ProfileEditorDialog
+
+# シミュレータ(仮想デバイス)モードでMonitorタブから直接値を設定できるRX種別。
+# 実機ではTX指令と無関係な独立したセンサ入力に相当する(ENC/SW等)。
+_SIM_EDITABLE_RX_KINDS = (DIGITAL_IN, COUNTER, ENUM_IN)
 
 
 def _clear_layout(layout) -> None:
@@ -40,7 +45,9 @@ class DevicePanel(QWidget):
         self.device_id = device_id
         self.channel: DeviceChannel = backend.devices[device_id]
         self.control_rows: Dict[int, ChannelControlRow] = {}
-        self.monitor_rows: Dict[int, ChannelMonitorRow] = {}
+        # 通常は ChannelMonitorRow(読取専用)だが、シミュレータモードのENC/SW等は
+        # ChannelControlRow(編集可能)になることがある(_make_monitor_row 参照)。
+        self.monitor_rows: Dict[int, QWidget] = {}
 
         self._build_header()
 
@@ -172,20 +179,33 @@ class DevicePanel(QWidget):
             self._rebuild_for_profile()
             self.refresh_from_rx()
 
-    def _build_channel_rows(self, defs, row_cls, on_change=None):
+    def _build_channel_rows(self, defs, row_factory):
         """group名ごとにまとめた縦並びウィジェットを1つ作る。"""
         widget = QWidget()
         v = QVBoxLayout(widget)
         v.setContentsMargins(4, 4, 4, 4)
         rows = {}
         for chdef in sorted(defs, key=lambda c: c.index):
-            row = row_cls(chdef)
-            if on_change is not None:
-                row.valueChanged.connect(on_change)
+            row = row_factory(chdef)
             v.addWidget(row)
             rows[chdef.index] = row
         v.addStretch(1)
         return widget, rows
+
+    def _make_control_row(self, chdef) -> ChannelControlRow:
+        row = ChannelControlRow(chdef)
+        row.valueChanged.connect(self._on_control_value_changed)
+        return row
+
+    def _make_monitor_row(self, chdef):
+        """RX行を1つ作る。シミュレータモードでENC/SW等に該当する場合は、
+        実機とは無関係な独立したセンサ入力をGUIから再現できるよう編集可能行にする。"""
+        if self.channel.mode == MODE_SIMULATOR and chdef.kind in _SIM_EDITABLE_RX_KINDS:
+            self.channel.sim_rx_override.add(chdef.index)
+            row = ChannelControlRow(chdef)
+            row.valueChanged.connect(self._on_sim_rx_changed)
+            return row
+        return ChannelMonitorRow(chdef)
 
     def _rebuild_for_profile(self) -> None:
         profile = self.current_profile()
@@ -207,15 +227,14 @@ class DevicePanel(QWidget):
                 node_tx = [c for c in defined_tx if base <= c.index < base + profile.slots_per_node]
                 node_rx = [c for c in defined_rx if base <= c.index < base + profile.slots_per_node]
 
-                cw, crows = self._build_channel_rows(
-                    node_tx, ChannelControlRow, self._on_control_value_changed)
+                cw, crows = self._build_channel_rows(node_tx, self._make_control_row)
                 self.control_rows.update(crows)
                 scroll_c = QScrollArea()
                 scroll_c.setWidgetResizable(True)
                 scroll_c.setWidget(cw)
                 control_tabs.addTab(scroll_c, f"ノード{node_no}")
 
-                mw, mrows = self._build_channel_rows(node_rx, ChannelMonitorRow)
+                mw, mrows = self._build_channel_rows(node_rx, self._make_monitor_row)
                 self.monitor_rows.update(mrows)
                 scroll_m = QScrollArea()
                 scroll_m.setWidgetResizable(True)
@@ -226,8 +245,7 @@ class DevicePanel(QWidget):
             self.monitor_host_layout.addWidget(monitor_tabs)
         else:
             # ノード構成を持たないプロファイル (汎用Raw等): groupごとに縦積み表示
-            cw, crows = self._grouped_widget(defined_tx, ChannelControlRow,
-                                              self._on_control_value_changed,
+            cw, crows = self._grouped_widget(defined_tx, self._make_control_row,
                                               "このプロファイルに個別定義された送信スロットはありません。"
                                               "Raw タブで全24スロットを直接編集してください。")
             self.control_rows.update(crows)
@@ -236,7 +254,7 @@ class DevicePanel(QWidget):
             scroll_c.setWidget(cw)
             self.control_host_layout.addWidget(scroll_c)
 
-            mw, mrows = self._grouped_widget(defined_rx, ChannelMonitorRow, None,
+            mw, mrows = self._grouped_widget(defined_rx, self._make_monitor_row,
                                               "このプロファイルに個別定義された受信スロットはありません。"
                                               "Raw タブで全24スロットを直接確認してください。")
             self.monitor_rows.update(mrows)
@@ -257,7 +275,7 @@ class DevicePanel(QWidget):
         for index, row in self.control_rows.items():
             row.set_raw_value(self.channel.tx_data[index])
 
-    def _grouped_widget(self, defs, row_cls, on_change, empty_message: str):
+    def _grouped_widget(self, defs, row_factory, empty_message: str):
         widget = QWidget()
         layout = QVBoxLayout(widget)
         groups: Dict[str, QVBoxLayout] = {}
@@ -269,9 +287,7 @@ class DevicePanel(QWidget):
                 v = QVBoxLayout(box)
                 groups[group_name] = v
                 layout.addWidget(box)
-            row = row_cls(chdef)
-            if on_change is not None:
-                row.valueChanged.connect(on_change)
+            row = row_factory(chdef)
             groups[group_name].addWidget(row)
             rows[chdef.index] = row
         if not defs:
@@ -290,6 +306,10 @@ class DevicePanel(QWidget):
         row = self.control_rows.get(index)
         if row is not None:
             row.set_raw_value(raw)
+
+    def _on_sim_rx_changed(self, index: int, raw: int) -> None:
+        """シミュレータモードでMonitorタブのENC/SW等をGUIから手動設定した際の反映。"""
+        self.backend.set_sim_rx_value(self.device_id, index, raw)
 
     def _on_passthrough_toggled(self, checked: bool) -> None:
         self.channel.topic_passthrough = checked

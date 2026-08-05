@@ -31,7 +31,13 @@ class LedIndicator(QLabel):
 
 
 class ChannelControlRow(QWidget):
-    """TX (ROS -> マイコン) の 1 チャンネル分の指令値入力行。"""
+    """1 チャンネル分の編集可能な値入力行。
+
+    本来は TX (ROS -> マイコン) の指令値入力用だが、DIGITAL_IN/ENUM_IN も
+    DIGITAL_OUT/ENUM_OUT と同じ操作系(トグル/コンボ)で問題ないため、
+    仮想デバイス(simulator)のRXスロットをGUIから手動設定する用途にも
+    そのまま流用する(device_panel._make_monitor_row 参照)。
+    """
 
     valueChanged = pyqtSignal(int, int)  # (slot_index, raw_value)
 
@@ -51,7 +57,7 @@ class ChannelControlRow(QWidget):
             name_label.setToolTip(chdef.note)
         layout.addWidget(name_label)
 
-        if chdef.kind == DIGITAL_OUT:
+        if chdef.kind in (DIGITAL_OUT, DIGITAL_IN):
             self.toggle_btn = QPushButton("OFF")
             self.toggle_btn.setCheckable(True)
             self.toggle_btn.setMinimumWidth(80)
@@ -59,7 +65,7 @@ class ChannelControlRow(QWidget):
             layout.addWidget(self.toggle_btn)
             layout.addStretch(1)
 
-        elif chdef.kind == ENUM_OUT:
+        elif chdef.kind in (ENUM_OUT, ENUM_IN):
             self.combo = QComboBox()
             for raw, text in (chdef.options or []):
                 self.combo.addItem(text, raw)
@@ -181,9 +187,9 @@ class ChannelControlRow(QWidget):
         """外部(Rawタブなど)からの反映。シグナルは発行しない。"""
         self._updating = True
         try:
-            if self.chdef.kind == DIGITAL_OUT:
+            if self.chdef.kind in (DIGITAL_OUT, DIGITAL_IN):
                 self.toggle_btn.setChecked(bool(raw))
-            elif self.chdef.kind == ENUM_OUT:
+            elif self.chdef.kind in (ENUM_OUT, ENUM_IN):
                 idx = self.combo.findData(raw)
                 if idx >= 0:
                     self.combo.setCurrentIndex(idx)

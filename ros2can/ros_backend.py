@@ -16,14 +16,17 @@ GUI は単一スレッドで動作させる。QTimer から `rclpy.spin_once(tim
   `serial_tx_[ID]` を Publish (指令送信)、`serial_rx_[ID]` を Subscribe (センサ受信)
   する、通常のクライアントの役割。
 - "simulator" : 実機のマイコン/CANホストが無くても UI の動作確認ができるよう、
-  TX に書き込んだ値をその場で RX にループバック(+多少の揺らぎ)して返す仮想デバイス。
+  TX に書き込んだ値をその場で RX にループバックして返す仮想デバイス。
   ROSトピックの Publish/Subscribe の役割は "hardware" と同じ(自分が bridge_node の
   代わりを担う)にしてあるため、他のROSノードや rqt からも実機と区別なく確認できる。
+  ENC/SW等、実機ではTX指令と無関係な独立したセンサ入力に相当するRXスロットは
+  Monitor タブから直接値を設定できる(set_sim_rx_value)。設定したスロットは
+  TX->RXループバック対象から外れ、マイコンの実際の挙動(スイッチ操作・エンコーダ回転)を
+  GUI操作で再現できる。
 """
 
 from __future__ import annotations
 
-import math
 import re
 import time
 from dataclasses import dataclass, field
@@ -73,6 +76,10 @@ class DeviceChannel:
     last_rx_time: Optional[float] = None
     rx_frame_count: int = 0
     tx_frame_count: int = 0
+    # MODE_SIMULATOR限定: GUIから手動で値を設定したRXスロットのindex集合。
+    # ここに含まれるスロットは service_simulators() の TX->RX ループバック対象から外れ、
+    # 手動設定値をそのまま保持し続ける(ENC/SW等、実機では独立したセンサ入力の再現用)。
+    sim_rx_override: set = field(default_factory=set)
     _rx_times: List[float] = field(default_factory=list)
     publisher = None
     subscription = None
@@ -292,7 +299,7 @@ class RosBackend(QObject):
     def add_simulated_device(self, device_id: int, profile_key: Optional[str] = None) -> DeviceChannel:
         """実機マイコン無しでUIの動作確認ができる仮想デバイスを追加する。
 
-        TXに書いた値をそのまま(多少の揺らぎ付きで)RXへループバックし続ける。
+        TXに書いた値をそのままRXへループバックし続ける。
         ROSの役割は "hardware" と同じ (serial_rx_[ID] を Publish / serial_tx_[ID]
         を Subscribe) にしてあるため、他ノードから見ても実機接続時と同様に扱える。
         """
@@ -336,16 +343,17 @@ class RosBackend(QObject):
         トピック通過/ダイレクト送信の有無に関わらず常にRXを更新する: 実機は接続されていれば
         ホストの指令とは無関係にセンサ値を送り続けるため、それを模して Monitor/Raw
         タブの動作確認をいつでもできるようにしている。
+        ただし ch.sim_rx_override に含まれるスロット(ENC/SW等、GUIから手動設定した
+        センサ入力)はこのループバックの対象から外し、手動設定値をそのまま維持する。
         """
-        now = time.monotonic()
         for device_id, ch in self.devices.items():
             if ch.mode != MODE_SIMULATOR:
                 continue
-            wobble_phase = now * 2.0
-            values = [
-                _clamp_int16(v + int(round(4 * math.sin(wobble_phase + i * 0.7))))
-                for i, v in enumerate(ch.tx_data)
-            ]
+            values = list(ch.rx_data)
+            for i, v in enumerate(ch.tx_data):
+                if i in ch.sim_rx_override:
+                    continue
+                values[i] = v
             self._apply_rx_data(ch, values)
             if ch.publisher is not None:
                 msg = Int16MultiArray()
@@ -353,6 +361,28 @@ class RosBackend(QObject):
                 ch.publisher.publish(msg)
             self._publish_unwrapped(ch)
             self.rxUpdated.emit(device_id)
+
+    def set_sim_rx_value(self, device_id: int, index: int, raw: int) -> None:
+        """デバッグ(仮想)デバイスのRXスロットをGUIから直接設定する。
+
+        ENC/SW等、実機では独立したセンサ入力に相当し TX 指令とは無関係な値を
+        GUIから再現するための入口。設定したスロットは ch.sim_rx_override に登録され、
+        以後 service_simulators() のTX->RXループバック対象から外れて、次に変更される
+        までこの値を保持し続ける。
+        """
+        ch = self.devices.get(device_id)
+        if ch is None or ch.mode != MODE_SIMULATOR:
+            return
+        ch.sim_rx_override.add(index)
+        data = list(ch.rx_data)
+        data[index] = _clamp_int16(raw)
+        self._apply_rx_data(ch, data)
+        if ch.publisher is not None:
+            msg = Int16MultiArray()
+            msg.data = [int(v) for v in ch.rx_data]
+            ch.publisher.publish(msg)
+        self._publish_unwrapped(ch)
+        self.rxUpdated.emit(device_id)
 
     # ---------------- device management: common ----------------
 
