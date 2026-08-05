@@ -199,16 +199,9 @@ class RosBackend(QObject):
 
     # ---------------- device management: hardware ----------------
 
-    def _on_hardware_claimed(self, device_id: int, port: str) -> None:
-        if device_id in self.devices:
-            # 既存デバイス(topic_client 等)がハードウェア直結に切り替わった場合はポートだけ更新
-            self.devices[device_id].port = port
-            self.devices[device_id].mode = MODE_HARDWARE
-            return
-
-        ch = DeviceChannel(device_id=device_id, mode=MODE_HARDWARE, port=port, manual=False)
-        # 自分自身が bridge_node の役割を担うため、他ノードとの互換のため役割は
-        # topic_client と逆になる: serial_rx を Publish、serial_tx を Subscribe する。
+    def _attach_hardware_pubsub(self, ch: DeviceChannel, device_id: int) -> None:
+        """自分自身が bridge_node の役割を担うため、他ノードとの互換のため役割は
+        topic_client と逆になる: serial_rx を Publish、serial_tx を Subscribe する。"""
         ch.publisher = self.node.create_publisher(
             Int16MultiArray, f"serial_rx_{device_id}", 10)
         ch.unwrapped_publisher = self.node.create_publisher(
@@ -216,6 +209,28 @@ class RosBackend(QObject):
         ch.subscription = self.node.create_subscription(
             Int16MultiArray, f"serial_tx_{device_id}",
             lambda msg, did=device_id: self._on_hardware_tx_command(did, msg), 10)
+
+    def _on_hardware_claimed(self, device_id: int, port: str) -> None:
+        ch = self.devices.get(device_id)
+        if ch is not None:
+            ch.port = port
+            if ch.mode != MODE_HARDWARE:
+                # 既存デバイス(topic_client 等)がハードウェア直結に切り替わった場合、
+                # 役割が逆転する(serial_rx をPublish/serial_txをSubscribeに変わる)ため、
+                # 古いモード向けの publisher/subscription を破棄してから作り直す。
+                # (これをせず mode だけ書き換えると、RXフレームが古い publisher=
+                # serial_tx_[ID] にそのまま publish されてしまう)
+                if ch.publisher is not None:
+                    self.node.destroy_publisher(ch.publisher)
+                if ch.subscription is not None:
+                    self.node.destroy_subscription(ch.subscription)
+                ch.mode = MODE_HARDWARE
+                self._attach_hardware_pubsub(ch, device_id)
+                self.deviceListChanged.emit()
+            return
+
+        ch = DeviceChannel(device_id=device_id, mode=MODE_HARDWARE, port=port, manual=False)
+        self._attach_hardware_pubsub(ch, device_id)
         self.devices[device_id] = ch
         self.deviceListChanged.emit()
 
