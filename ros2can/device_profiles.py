@@ -333,11 +333,103 @@ def make_robomas_profile(
     )
 
 
+CUBEMARS_ERROR_CODES: List[Tuple[int, str]] = [
+    (0, "no fault"),
+    (1, "motor over-temp"),
+    (2, "over-current"),
+    (3, "over-voltage"),
+    (4, "under-voltage"),
+    (5, "encoder fault"),
+    (6, "MOSFET over-temp"),
+    (7, "motor stall"),
+]
+
+
+def make_cubemars_profile(
+    key: str = "cubemars_ak_driver",
+    name: str = "xiao-esp32-s3_can2io (MODE_CUBEMARS, CubeMars AKシリーズ x4)",
+) -> DeviceProfile:
+    """MODE_CUBEMARS (xiao-esp32-s3_can2io) 用プロファイル。
+
+    ノード/スロット分配は行わない独立デバイスとして、24スロットをCubeMars AKシリーズ
+    (AK40-10等、Servo(CAN)モード)最大4台分の指令/帰還に直接割り当てる
+    (スロット0起点、ノードオフセット無し)。
+    [firmware/xiao-esp32-s3_can2io/src/cubemars.cpp のスロット割当と一致させること]
+
+    速度/位置ともアクチュエータ内蔵のクローズドループがそのまま追従するため、
+    ロボマスのGM6020と違いホスト側PIDは無い。各モータのCAN IDはファーム側
+    config.hppのCUBEMARS_MOTOR_ID_nでコンパイル時固定(R-Linkの設定と一致させること)。
+    1バスには最大4台まで(config.hppのCUBEMARS_MOTOR_COUNT)。
+    """
+    tx: List[ChannelDef] = []
+    rx: List[ChannelDef] = []
+
+    for i in range(4):
+        m = i + 1
+        group_cmd = f"M{m} 指令"
+        tx.append(ChannelDef(i, f"M{m} target", MOTOR, group=group_cmd,
+                              note="control_modeが速度のとき10ERPM/LSB(電気角速度)、"
+                                   "位置のとき0.1deg/LSB。GUI上はスケール無しの生値。"))
+    for i in range(4):
+        m = i + 1
+        group_cmd = f"M{m} 指令"
+        tx.append(ChannelDef(4 + i, f"M{m} control_mode", ENUM_OUT, group=group_cmd,
+                              options=[(0, "速度ループ"), (1, "位置ループ")],
+                              note="全ゼロ(未接続/E-STOP時の既定)で速度ループ・target=0となり、"
+                                   "安全にその場停止する(位置ジャンプは発生しない)"))
+
+    for i in range(4):
+        m = i + 1
+        group_fb = f"M{m} 帰還"
+        rx.append(ChannelDef(i, f"M{m} position", READOUT, group=group_fb,
+                              scale=0.1, unit="deg", decimals=1))
+    for i in range(4):
+        m = i + 1
+        group_fb = f"M{m} 帰還"
+        rx.append(ChannelDef(4 + i, f"M{m} speed", READOUT, group=group_fb,
+                              scale=10, unit="ERPM", decimals=0,
+                              note="電気角速度。出力軸rpmへの換算(極対数・減速比)は"
+                                   "モータ機種依存のためGUI側では未実施"))
+    for i in range(4):
+        m = i + 1
+        group_fb = f"M{m} 帰還"
+        rx.append(ChannelDef(8 + i, f"M{m} current", READOUT, group=group_fb,
+                              scale=0.01, unit="A", decimals=2))
+    for i in range(4):
+        m = i + 1
+        group_fb = f"M{m} 帰還"
+        rx.append(ChannelDef(12 + i, f"M{m} temperature", READOUT, group=group_fb,
+                              unit="degC", decimals=0))
+    for i in range(4):
+        m = i + 1
+        group_fb = f"M{m} 帰還"
+        rx.append(ChannelDef(16 + i, f"M{m} error", ENUM_IN, group=group_fb,
+                              options=list(CUBEMARS_ERROR_CODES)))
+
+    tx = _fill_remaining(tx, _raw_out)
+    rx = _fill_remaining(rx, _raw_in)
+
+    return DeviceProfile(
+        key=key,
+        name=name,
+        description=(
+            "MODE_CUBEMARS用。ノード/スロット分配は行わず、独立デバイスとしてCubeMars "
+            "AKシリーズ(Servo(CAN)モード)を最大4台まで速度/位置制御する。アクチュエータ"
+            "内蔵のクローズドループがそのまま追従するためホスト側PIDは無し。CAN IDは"
+            "ファーム側config.hppのCUBEMARS_MOTOR_ID_nで固定、R-Linkの設定と一致させること。"
+            "このバス(1Mbps固定)には他のros2canノード(500kbps)を混在させないこと。"
+        ),
+        tx=tx,
+        rx=rx,
+    )
+
+
 def _build_builtin_profiles() -> "dict[str, DeviceProfile]":
     profiles: List[DeviceProfile] = [
         make_can_host_profile(),
         make_can_host_with_foc_node_profile(),
         make_robomas_profile(),
+        make_cubemars_profile(),
         make_generic_raw_profile(),
     ]
     return {p.key: p for p in profiles}

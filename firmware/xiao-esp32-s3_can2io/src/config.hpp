@@ -20,11 +20,12 @@ Copyright (c) 2025 RRST-NHK-Project. All rights reserved.
 
 // モードの設定，どれか一つをコメントアウト解除すること
 // #define MODE_CAN
-//define MODE_CAN_HOST
+// define MODE_CAN_HOST
 // #define MODE_IO
 // #define MODE_DEBUG
 // #define MODE_CAN_MONITOR
-#define MODE_ROBOMAS
+// #define MODE_ROBOMAS
+#define MODE_CUBEMARS
 
 // ================= サーボ関連 =================
 
@@ -152,3 +153,20 @@ Copyright (c) 2025 RRST-NHK-Project. All rights reserved.
 #else
 #error "ROBOMAS_MOTOR_TYPE: unknown motor type"
 #endif
+
+// ================= CubeMars AK関連 (MODE_CUBEMARSのみ有効) =================
+// MODE_CUBEMARSはMODE_ROBOMASと同様、xiao-esp32-s3_can2ioのノード/スロット分配方式
+// (CAN 500kbps)とは別系統で、CubeMars AKシリーズのServo(CAN)モードプロトコル
+// (1Mbps固定、AK Series Module Product Manual V3.2.0 4.1節)を直接喋る独立デバイス
+// として動作する。速度/位置ともアクチュエータ内蔵のクローズドループがそのまま
+// 追従するため、ロボマスのGM6020のようなホスト側速度PIDは不要。
+// 1マイコン(1バス)には最大 CUBEMARS_MOTOR_COUNT 台まで接続可能。
+
+#define CUBEMARS_MOTOR_COUNT 4 // 1バスあたりの接続台数(最大4)
+
+// 各モータのCAN ID (R-Link CubeMarsTool の Application Configuration -> CAN ID
+// 設定と一致させること。1台ずつ重複しない値を書き込んでおく)
+#define CUBEMARS_MOTOR_ID_1 101
+#define CUBEMARS_MOTOR_ID_2 102
+#define CUBEMARS_MOTOR_ID_3 103
+#define CUBEMARS_MOTOR_ID_4 104

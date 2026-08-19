@@ -8,7 +8,8 @@ This firmware targets a XIAO ESP32-S3 based board (with an MCP2561 CAN transceiv
 - one **node** on a CAN bus (`MODE_CAN`), or
 - the **host** that bridges a PC serial link to up to 3 other CAN nodes while also acting as node 0 itself (`MODE_CAN_HOST`), or
 - a **read-only CAN sniffer** for bring-up/debugging (`MODE_CAN_MONITOR`), or
-- a **dedicated DJI RoboMaster (M3508/M2006/GM6020) driver** for up to 4 motors on its own CAN bus (`MODE_ROBOMAS`, see section 9).
+- a **dedicated DJI RoboMaster (M3508/M2006/GM6020) driver** for up to 4 motors on its own CAN bus (`MODE_ROBOMAS`, see section 9), or
+- a **dedicated CubeMars AK-series (e.g. AK40-10) driver** for up to 4 actuators on its own CAN bus, using the Servo(CAN) protocol (`MODE_CUBEMARS`, see section 10).
 
 Each board exposes the same local I/O set (no DC motor driver on this board):
 
@@ -29,8 +30,9 @@ Select exactly one mode in `src/config.hpp`:
 - `MODE_CAN_MONITOR`: passive CAN sniffer. Starts the CAN driver and `canTask` only; no serial bridging and no IO task. Prints one summary line per node to `Serial` whenever all of that node's slots have been observed, for wiring/bring-up checks.
 - `MODE_DEBUG`: development/debug mode (PID task).
 - `MODE_ROBOMAS`: dedicated DJI RoboMaster driver. Does **not** use `canInit()`/`canTask()` or the node/slot protocol at all — it runs its own CAN bus at 1Mbps speaking DJI's native protocol directly. See section 9.
+- `MODE_CUBEMARS`: dedicated CubeMars AK-series driver. Also does **not** use `canInit()`/`canTask()` or the node/slot protocol — it runs its own CAN bus at 1Mbps speaking CubeMars's Servo(CAN) protocol directly. See section 10.
 
-`main.cpp` enforces that exactly one of `MODE_IO`, `MODE_CAN`, `MODE_CAN_HOST`, `MODE_DEBUG`, `MODE_CAN_MONITOR`, `MODE_ROBOMAS` is defined; the build fails otherwise.
+`main.cpp` enforces that exactly one of `MODE_IO`, `MODE_CAN`, `MODE_CAN_HOST`, `MODE_DEBUG`, `MODE_CAN_MONITOR`, `MODE_ROBOMAS`, `MODE_CUBEMARS` is defined; the build fails otherwise.
 
 ---
 
@@ -184,7 +186,85 @@ CAN IDs used on the dedicated 1Mbps bus (all fixed by DJI, not configurable):
 
 ---
 
-## 10. Credits
+## 10. CubeMars AK-Series Driver Mode (`MODE_CUBEMARS`)
+
+Like `MODE_ROBOMAS`, `MODE_CUBEMARS` does not participate in the node/slot CAN
+protocol at all. CubeMars AK-series actuators (e.g. AK40-10) speak the Servo(CAN)
+protocol described in the *AK Series Module Product Manual V3.2.0* (section 4.1) at a
+fixed **1Mbps** bitrate — incompatible with the 500kbps node/slot bus used by
+`MODE_CAN`/`MODE_CAN_HOST`/`MODE_CAN_MONITOR`. A board in `MODE_CUBEMARS` therefore
+acts as a **standalone device**: its own USB-serial link straight to the PC (own
+`DEVICE_ID`), and its own dedicated CAN bus with up to `CUBEMARS_MOTOR_COUNT` (4) AK
+actuators. Unlike DJI's GM6020 in `MODE_ROBOMAS`, AK actuators run their own onboard
+closed-loop position/velocity control (FOC), so this mode does **not** run a
+host-side PID loop — it only forwards commands and parses feedback.
+
+Set each actuator's CAN ID at compile time in `src/config.hpp`, matching the ID
+configured on the actuator itself via R-Link/CubeMarsTool:
+
+```cpp
+#define CUBEMARS_MOTOR_COUNT 4  // number of actuators on this bus (max 4)
+#define CUBEMARS_MOTOR_ID_1 1
+#define CUBEMARS_MOTOR_ID_2 2
+#define CUBEMARS_MOTOR_ID_3 3
+#define CUBEMARS_MOTOR_ID_4 4
+```
+
+Each actuator can be commanded in either velocity-loop or position-loop mode,
+selected per actuator per control cycle via a mode slot. Slot mapping reuses the
+standalone 24-slot `Tx_16Data`/`Rx_16Data` frame directly (no node/slot chunking):
+
+**Command (PC -> board), `Rx_16Data`:**
+
+| Index | Meaning |
+|---:|:---|
+| 0-3 | target for motor 1-4; meaning depends on that motor's `control_mode` slot below |
+| 4-7 | `control_mode` for motor 1-4: `0` = velocity loop, `1` = position loop |
+| 8-23 | unused |
+
+When `control_mode == 0` (velocity), the target is electrical speed at **10 ERPM per
+LSB** (range approx. ±327670 ERPM), matching the scale the actuator itself uses for
+velocity feedback (see below). When `control_mode == 1` (position), the target is
+**0.1 deg per LSB** (range ±3276.7°), matching the scale used for position feedback.
+
+All-zero `Rx_16Data` (the default when nothing is connected, and what direct-send
+E-STOP transmits) decodes to `control_mode = 0` (velocity) with `target = 0` — i.e. a
+safe zero-velocity command, not a position jump to zero. No separate E-STOP/disable
+logic is needed in firmware for this reason.
+
+**Feedback (board -> PC), `Tx_16Data`:**
+
+| Index | Meaning |
+|---:|:---|
+| 0-3 | position for motor 1-4, degrees, scale 0.1 deg/LSB |
+| 4-7 | speed for motor 1-4, **electrical** rpm (ERPM), scale 10 ERPM/LSB |
+| 8-11 | current for motor 1-4, amps, scale 0.01 A/LSB |
+| 12-15 | motor temperature for motor 1-4, °C, no scaling |
+| 16-19 | error code for motor 1-4 (0=no fault, 1=motor over-temp, 2=over-current, 3=over-voltage, 4=under-voltage, 5=encoder fault, 6=MOSFET over-temp, 7=motor stall) |
+| 20-23 | unused |
+
+These are the raw fields of the actuator's periodic status frame (function ID
+`0x29`), copied through without conversion. Note that `speed` is **electrical** rpm,
+not output-shaft rpm — converting to real rpm requires dividing by the actuator's
+pole-pair count and gear ratio, which vary per motor model; this is left to the
+`ros2can` GUI profile's per-channel scale factor rather than baked into firmware.
+
+CAN identifiers used on the dedicated 1Mbps bus are extended (29-bit) IDs built as
+`(control_mode_id << 8) | motor_can_id`:
+
+| Direction | Control mode ID |
+|:---|:---|
+| Command: velocity loop | `3` |
+| Command: position loop | `4` |
+| Feedback: periodic status | `0x29` |
+
+Only velocity-loop and position-loop commands are implemented; other Servo(CAN) modes
+(duty cycle, current loop, current brake, set-origin, position-velocity loop, motor
+disable) from the manual are not used by this firmware.
+
+---
+
+## 11. Credits
 
 Developed by NHK Project, RRST, Ritsumeikan University, Japan.
 - Official Website: https://www.rrst.jp
