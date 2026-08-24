@@ -248,6 +248,12 @@ class RosBackend(QObject):
         無視され tx_data には反映されない。ダイレクト送信(direct_tx)は
         tx_data(GUI手動編集分も含む)を実際にマイコンへ書き込むかどうかを
         制御する、別の独立したゲートである。
+
+        GUI(device_panel.py)側では両チェックボックスを相互排他にしており、
+        「外部ノードの指令を反映する」か「GUIから直接送信する」かのどちらか
+        一方しか選べない。ただしこのメソッド自体、およびこのフラグの組み合わせ
+        自体には制約が無く、--nogui (serial_bridge互換ブリッジ) は両方を常時ON
+        にして外部トピックの指令をそのままマイコンへ中継する(main.py参照)。
         """
         ch = self.devices.get(device_id)
         if ch is None or ch.mode != MODE_HARDWARE:

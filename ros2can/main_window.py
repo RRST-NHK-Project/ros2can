@@ -10,7 +10,7 @@ from typing import Dict, Optional
 
 from PyQt5.QtCore import Qt, QTimer, QSettings
 from PyQt5.QtWidgets import (
-    QMainWindow, QListWidget, QListWidgetItem, QStackedWidget,
+    QMainWindow, QListWidget, QListWidgetItem,
     QToolBar, QAction, QLabel, QInputDialog,
     QMessageBox, QSplitter, QMenu,
 )
@@ -18,6 +18,7 @@ from PyQt5.QtWidgets import (
 from .ros_backend import RosBackend
 from .device_panel import DevicePanel
 from .can_monitor import CanMonitorDialog
+from .widgets import SizedStackedWidget
 
 UI_REFRESH_MS = 200
 TOPIC_RESCAN_MS = 1000
@@ -52,7 +53,7 @@ class MainWindow(QMainWindow):
         self.device_list.customContextMenuRequested.connect(self._on_device_list_context_menu)
         splitter.addWidget(self.device_list)
 
-        self.stack = QStackedWidget()
+        self.stack = SizedStackedWidget()
         self.placeholder = QLabel(
             "CANホストがまだ検出されていません。\n\n"
             "・xiao_esp32_s3_smd_serial_bridge (MODE_CAN_HOST) を書き込んだ基板をUSB接続すると、\n"

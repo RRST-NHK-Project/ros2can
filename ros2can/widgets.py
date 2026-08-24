@@ -2,17 +2,70 @@
 
 from __future__ import annotations
 
-from PyQt5.QtCore import Qt, pyqtSignal
+from PyQt5.QtCore import Qt, QSize, pyqtSignal
 from PyQt5.QtWidgets import (
     QWidget, QLabel, QSlider, QDoubleSpinBox, QHBoxLayout,
     QPushButton, QComboBox, QTableWidget, QTableWidgetItem, QHeaderView,
-    QSpinBox,
+    QSpinBox, QTabWidget, QStackedWidget,
 )
 
 from .device_profiles import (
     ChannelDef, DIGITAL_OUT, ENUM_OUT,
     DIGITAL_IN, ENUM_IN, SLOT_COUNT,
 )
+
+
+class SizedTabWidget(QTabWidget):
+    """表示中のタブだけでサイズヒントを計算する QTabWidget。
+
+    QTabWidget は既定では過去に追加した全タブの最大サイズを常に確保し続けるため
+    (非表示のタブの内容でも最小幅を押し上げる)、タブを切り替えてもウィンドウが
+    縮まらず、最大化ボタンを押しても既にその最小幅で頭打ちで変化が無いように見える
+    原因になる。currentWidget() だけを見るよう上書きする。
+    """
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.currentChanged.connect(lambda _i: self.updateGeometry())
+
+    def _content_size(self, attr: str) -> QSize:
+        w = self.currentWidget()
+        return QSize(0, 0) if w is None else getattr(w, attr)()
+
+    def minimumSizeHint(self) -> QSize:
+        content = self._content_size("minimumSizeHint")
+        bar = self.tabBar().sizeHint()
+        m = self.contentsMargins()
+        return QSize(max(content.width(), bar.width()) + m.left() + m.right(),
+                     content.height() + bar.height() + m.top() + m.bottom())
+
+    def sizeHint(self) -> QSize:
+        content = self._content_size("sizeHint")
+        bar = self.tabBar().sizeHint()
+        m = self.contentsMargins()
+        return QSize(max(content.width(), bar.width()) + m.left() + m.right(),
+                     content.height() + bar.height() + m.top() + m.bottom())
+
+
+class SizedStackedWidget(QStackedWidget):
+    """表示中のページだけでサイズヒントを計算する QStackedWidget。
+
+    QStackedWidget は既定では過去に addWidget() した全ページの最大サイズを
+    常に確保し続けるため、デバイスを追加していくほどウィンドウの最小幅が
+    際限なく大きくなってしまう。currentWidget() だけを見るよう上書きする。
+    """
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.currentChanged.connect(lambda _i: self.updateGeometry())
+
+    def minimumSizeHint(self) -> QSize:
+        w = self.currentWidget()
+        return QSize(0, 0) if w is None else w.minimumSizeHint()
+
+    def sizeHint(self) -> QSize:
+        w = self.currentWidget()
+        return QSize(0, 0) if w is None else w.sizeHint()
 
 
 class LedIndicator(QLabel):

@@ -11,7 +11,7 @@ import copy
 from typing import Dict
 
 from PyQt5.QtWidgets import (
-    QWidget, QLabel, QVBoxLayout, QHBoxLayout, QGroupBox, QTabWidget,
+    QWidget, QLabel, QVBoxLayout, QHBoxLayout, QGroupBox,
     QScrollArea, QComboBox, QPushButton, QCheckBox, QPlainTextEdit,
 )
 
@@ -21,7 +21,7 @@ from .device_profiles import (
     save_custom_profile, unique_custom_key,
 )
 from .ros_backend import RosBackend, DeviceChannel, MODE_SIMULATOR, MODE_TOPIC_CLIENT
-from .widgets import ChannelControlRow, ChannelMonitorRow, RawSlotTable, LedIndicator
+from .widgets import ChannelControlRow, ChannelMonitorRow, RawSlotTable, LedIndicator, SizedTabWidget
 from .profile_editor import ProfileEditorDialog
 
 # シミュレータ(仮想デバイス)モードでMonitorタブから直接値を設定できるRX種別。
@@ -51,7 +51,7 @@ class DevicePanel(QWidget):
 
         self._build_header()
 
-        self.tabs = QTabWidget()
+        self.tabs = SizedTabWidget()
 
         self.control_host = QWidget()
         self.control_host_layout = QVBoxLayout(self.control_host)
@@ -95,46 +95,57 @@ class DevicePanel(QWidget):
     # ---------------- header ----------------
 
     def _build_header(self) -> None:
+        # 1行のQHBoxLayoutに全コントロールを詰め込むと、各ウィジェットの最小幅が
+        # 単純合算されてウィンドウの最小幅を大きく押し上げてしまう(タブ切替や
+        # デバイス追加では縮まらない)ため、上段(状態表示)/下段(操作)の2行に分ける。
         self.header = QGroupBox()
-        layout = QHBoxLayout(self.header)
+        outer = QVBoxLayout(self.header)
+
+        top = QHBoxLayout()
+        outer.addLayout(top)
 
         self.title_label = QLabel(f"<b>Device ID {self.device_id}</b>")
         self.title_label.setStyleSheet("font-size:13pt;")
-        layout.addWidget(self.title_label)
+        top.addWidget(self.title_label)
 
         self.led = LedIndicator()
-        layout.addWidget(self.led)
+        top.addWidget(self.led)
         self.status_label = QLabel("未接続")
-        layout.addWidget(self.status_label)
+        top.addWidget(self.status_label)
 
-        layout.addSpacing(20)
-        layout.addWidget(QLabel("プロファイル:"))
+        top.addSpacing(20)
+        top.addWidget(QLabel("プロファイル:"))
         self.profile_combo = QComboBox()
         self.profile_combo.setMinimumWidth(300)
         self._reload_profile_list()
         self.profile_combo.currentIndexChanged.connect(self._on_profile_selected)
-        layout.addWidget(self.profile_combo)
+        top.addWidget(self.profile_combo)
 
         self.edit_profile_btn = QPushButton("プロファイル編集")
         self.edit_profile_btn.clicked.connect(self._on_edit_profile)
-        layout.addWidget(self.edit_profile_btn)
+        top.addWidget(self.edit_profile_btn)
 
-        layout.addStretch(1)
+        top.addStretch(1)
+
+        bottom = QHBoxLayout()
+        outer.addLayout(bottom)
 
         self.passthrough_check = QCheckBox("トピック通過 (外部ノードの指令を反映)")
         self.passthrough_check.setChecked(True)
         self.passthrough_check.toggled.connect(self._on_passthrough_toggled)
-        layout.addWidget(self.passthrough_check)
+        bottom.addWidget(self.passthrough_check)
 
         self.direct_check = QCheckBox("ダイレクト送信 (実際にマイコンへ送信)")
         self.direct_check.setStyleSheet("QCheckBox { font-weight: bold; }")
         self.direct_check.toggled.connect(self._on_direct_toggled)
-        layout.addWidget(self.direct_check)
+        bottom.addWidget(self.direct_check)
+
+        bottom.addStretch(1)
 
         self.zero_btn = QPushButton("全スロットを0にして送信")
         self.zero_btn.setStyleSheet("background-color:#c0392b; color:white; font-weight:bold;")
         self.zero_btn.clicked.connect(self._on_zero_clicked)
-        layout.addWidget(self.zero_btn)
+        bottom.addWidget(self.zero_btn)
 
     def _reload_profile_list(self) -> None:
         self.profile_combo.blockSignals(True)
@@ -219,8 +230,8 @@ class DevicePanel(QWidget):
 
         if profile.node_count > 0:
             # ノードごとのサブタブとして「どのマイコンを操作するか」を選択できるようにする
-            control_tabs = QTabWidget()
-            monitor_tabs = QTabWidget()
+            control_tabs = SizedTabWidget()
+            monitor_tabs = SizedTabWidget()
             for node in range(profile.node_count):
                 base = node * profile.slots_per_node
                 node_no = node + 1
@@ -312,13 +323,19 @@ class DevicePanel(QWidget):
         self.backend.set_sim_rx_value(self.device_id, index, raw)
 
     def _on_passthrough_toggled(self, checked: bool) -> None:
+        """トピック通過(外部ノード指令の反映)とダイレクト送信(GUIからの直接送信)は
+        両立しない: 有効化すると、もう一方のチェックを自動でOFFにする。"""
         self.channel.topic_passthrough = checked
+        if checked and self.direct_check.isChecked():
+            self.direct_check.setChecked(False)
 
     def _on_direct_toggled(self, checked: bool) -> None:
         self.channel.direct_tx = checked
         self.direct_check.setStyleSheet(
             "QCheckBox { font-weight: bold; color: #c0392b; }" if checked
             else "QCheckBox { font-weight: bold; }")
+        if checked and self.passthrough_check.isChecked():
+            self.passthrough_check.setChecked(False)
 
     def _on_zero_clicked(self) -> None:
         self.backend.zero_and_send(self.device_id)
