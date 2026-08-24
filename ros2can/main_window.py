@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from typing import Dict, Optional
 
-from PyQt5.QtCore import Qt, QTimer
+from PyQt5.QtCore import Qt, QTimer, QSettings
 from PyQt5.QtWidgets import (
     QMainWindow, QListWidget, QListWidgetItem, QStackedWidget,
     QToolBar, QAction, QLabel, QInputDialog,
@@ -31,7 +31,14 @@ class MainWindow(QMainWindow):
         self._can_monitor_dialog: Optional[CanMonitorDialog] = None
 
         self.setWindowTitle("ros2can - XIAO ESP32S3 SMD CANバス デバッグGUI")
-        self.resize(1280, 800)
+
+        # 前回終了時のウィンドウサイズ/位置を記憶し、毎回リサイズし直す手間を無くす。
+        self._settings = QSettings("ros2can", "MainWindow")
+        geometry = self._settings.value("geometry")
+        if geometry is not None:
+            self.restoreGeometry(geometry)
+        else:
+            self.resize(1000, 680)
 
         self._build_toolbar()
 
@@ -255,5 +262,6 @@ class MainWindow(QMainWindow):
         QMessageBox.information(self, "E-STOP", "全デバイスへゼロ指令を送信し、ダイレクト送信を無効化しました。")
 
     def closeEvent(self, event) -> None:
+        self._settings.setValue("geometry", self.saveGeometry())
         self.backend.emergency_stop_all()
         super().closeEvent(event)
