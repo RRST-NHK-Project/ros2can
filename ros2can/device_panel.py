@@ -143,7 +143,7 @@ class DevicePanel(QWidget):
         self.passthrough_check.toggled.connect(self._on_passthrough_toggled)
         bottom.addWidget(self.passthrough_check)
 
-        self.direct_check = QCheckBox("ダイレクト送信 (実際にマイコンへ送信)")
+        self.direct_check = QCheckBox("ダイレクト送信 (GUIから直接送信)")
         self.direct_check.setStyleSheet("QCheckBox { font-weight: bold; }")
         self.direct_check.toggled.connect(self._on_direct_toggled)
         bottom.addWidget(self.direct_check)

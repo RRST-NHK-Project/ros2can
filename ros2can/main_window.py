@@ -55,12 +55,13 @@ class MainWindow(QMainWindow):
 
         self.stack = SizedStackedWidget()
         self.placeholder = QLabel(
-            "CANホストがまだ検出されていません。\n\n"
-            "・xiao_esp32_s3_smd_serial_bridge (MODE_CAN_HOST) を書き込んだ基板をUSB接続すると、\n"
-            "  ros2can が自身でシリアルポートをスキャンして自動検出します(serial_bridgeは不要)。\n"
-            "・serial_bridge (別プロセス) が既に握っているトピックに相乗りしたい場合は、\n"
+            "マイコンが検出されていません。\n\n"
+            "・xiao_esp32_s3_smd_serial_bridge (MODE_CAN_HOST) または serial_bridge の\n"
+            "  ファームウェアを書き込んだマイコンをUSB接続してください。ros2can が\n"
+            "  自動検出します。\n"
+            "・別プロセスが既に握っているトピックに相乗りしたい場合は、\n"
             "  上部の「デバイスを手動追加」を使用してください。\n"
-            "・実機が無くてもUIの動作確認をしたい場合は、上部の「デバッグデバイスを追加」\n"
+            "・実機なしで動作確認をしたい場合は、上部の「デバッグデバイスを追加」\n"
             "  から仮想デバイスを追加してください(TXの値がそのままRXにループバックされます)。")
         self.placeholder.setAlignment(Qt.AlignCenter)
         self.placeholder.setStyleSheet("color: #888; font-size: 11pt;")
@@ -94,7 +95,7 @@ class MainWindow(QMainWindow):
         toolbar.setMovable(False)
         self.addToolBar(toolbar)
 
-        rescan_action = QAction("今すぐ再スキャン", self)
+        rescan_action = QAction("再スキャン", self)
         rescan_action.triggered.connect(self.backend.rescan_topics)
         toolbar.addAction(rescan_action)
 
@@ -163,7 +164,7 @@ class MainWindow(QMainWindow):
             return
         device_id = item.data(Qt.UserRole)
         menu = QMenu(self)
-        remove_action = menu.addAction("このデバイスを削除")
+        remove_action = menu.addAction("デバイスを削除")
         chosen = menu.exec_(self.device_list.mapToGlobal(pos))
         if chosen is remove_action:
             self.backend.remove_device(device_id)
@@ -262,7 +263,7 @@ class MainWindow(QMainWindow):
         self._update_list_labels()
         QMessageBox.information(
             self, "E-STOP",
-            "全デバイスへゼロ指令を送信し、トピック通過/ダイレクト送信を両方とも無効化しました。")
+            "全デバイスへゼロ指令を送信し、トピック通過/ダイレクト送信を無効化しました。")
 
     def closeEvent(self, event) -> None:
         self._settings.setValue("geometry", self.saveGeometry())
