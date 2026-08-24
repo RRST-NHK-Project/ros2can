@@ -6,13 +6,9 @@
 
 from __future__ import annotations
 
-import os
-import xml.etree.ElementTree as ET
 from typing import Dict, Optional
 
-from ament_index_python.packages import get_package_share_directory
 from PyQt5.QtCore import Qt, QTimer, QSettings
-from PyQt5.QtGui import QPixmap
 from PyQt5.QtWidgets import (
     QMainWindow, QListWidget, QListWidgetItem,
     QToolBar, QAction, QLabel, QInputDialog,
@@ -23,44 +19,12 @@ from .ros_backend import RosBackend
 from .device_panel import DevicePanel
 from .can_monitor import CanMonitorDialog
 from .widgets import SizedStackedWidget
+from .app_info import logo_pixmap, package_version
+from .settings_dialog import SettingsDialog
+from .about_dialog import AboutDialog
 
 UI_REFRESH_MS = 200
 TOPIC_RESCAN_MS = 1000
-
-
-def _package_version() -> str:
-    """git の short hash を優先して表示バージョンとする(setup.py がビルド時に
-    resources/git_version.txt へ焼き込む。colcon build のたびに最新コミットへ
-    自動で追従する)。取得できなければ package.xml の <version> にフォールバック。"""
-    try:
-        share_dir = get_package_share_directory('ros2can')
-        git_version_path = os.path.join(share_dir, 'resources', 'git_version.txt')
-        with open(git_version_path) as f:
-            git_hash = f.read().strip()
-        if git_hash:
-            return git_hash
-    except Exception:
-        pass
-    try:
-        share_dir = get_package_share_directory('ros2can')
-        tree = ET.parse(os.path.join(share_dir, 'package.xml'))
-        version_el = tree.getroot().find('version')
-        if version_el is not None and version_el.text:
-            return version_el.text.strip()
-    except Exception:
-        pass
-    return '?'
-
-
-def _logo_pixmap() -> Optional[QPixmap]:
-    try:
-        share_dir = get_package_share_directory('ros2can')
-        pixmap = QPixmap(os.path.join(share_dir, 'resources', 'logo.png'))
-        if not pixmap.isNull():
-            return pixmap
-    except Exception:
-        pass
-    return None
 
 
 class MainWindow(QMainWindow):
@@ -70,7 +34,7 @@ class MainWindow(QMainWindow):
         self.panels: Dict[int, DevicePanel] = {}
         self._can_monitor_dialog: Optional[CanMonitorDialog] = None
 
-        self.setWindowTitle(f"RRST ros2can GUI - v{_package_version()}")
+        self.setWindowTitle(f"RRST ros2can GUI - v{package_version()}")
 
         # 前回終了時のウィンドウサイズ/位置を記憶し、毎回リサイズし直す手間を無くす。
         self._settings = QSettings("ros2can", "MainWindow")
@@ -157,6 +121,14 @@ class MainWindow(QMainWindow):
         can_monitor_action.triggered.connect(self._on_open_can_monitor)
         toolbar.addAction(can_monitor_action)
 
+        settings_action = QAction("設定…", self)
+        settings_action.setToolTip(
+            "除外ポートやタイムアウトなどのハードウェアスキャン設定を編集します。\n"
+            "保存内容は ~/.config/ros2can/settings.yaml に保存され、Gitの追跡対象には"
+            "なりません。")
+        settings_action.triggered.connect(self._on_open_settings)
+        toolbar.addAction(settings_action)
+
         toolbar.addSeparator()
 
         estop_action = QAction("■ 全デバイス E-STOP (全ゼロ送信+TX無効化)", self)
@@ -168,15 +140,20 @@ class MainWindow(QMainWindow):
         spacer.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
         toolbar.addWidget(spacer)
 
-        logo_pixmap = _logo_pixmap()
-        if logo_pixmap is not None:
+        pixmap = logo_pixmap()
+        if pixmap is not None:
             logo_label = QLabel()
-            logo_label.setPixmap(logo_pixmap.scaledToHeight(44, Qt.SmoothTransformation))
+            logo_label.setPixmap(pixmap.scaledToHeight(44, Qt.SmoothTransformation))
             toolbar.addWidget(logo_label)
 
-        version_label = QLabel(f"v{_package_version()}")
+        version_label = QLabel(f"v{package_version()}")
         version_label.setStyleSheet("color: #888; font-size: 10pt; padding: 0 10px;")
         toolbar.addWidget(version_label)
+
+        about_action = QAction("Info…", self)
+        about_action.setToolTip("バージョン情報とGitHubリンクを表示します。")
+        about_action.triggered.connect(self._on_open_about)
+        toolbar.addAction(about_action)
 
     # ---------------- device list ----------------
 
@@ -211,6 +188,12 @@ class MainWindow(QMainWindow):
         self._can_monitor_dialog.show()
         self._can_monitor_dialog.raise_()
         self._can_monitor_dialog.activateWindow()
+
+    def _on_open_settings(self) -> None:
+        SettingsDialog(self.backend.hardware.config, self).exec_()
+
+    def _on_open_about(self) -> None:
+        AboutDialog(self).exec_()
 
     def _on_device_list_context_menu(self, pos) -> None:
         item = self.device_list.itemAt(pos)

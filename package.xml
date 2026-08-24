@@ -12,6 +12,8 @@
   </description>
   <maintainer email="tashikou1682@gmail.com">dev</maintainer>
   <license>Apache-2.0</license>
+  <url type="repository">https://github.com/RRST-NHK-Project/ros2can</url>
+  <url type="bugtracker">https://github.com/RRST-NHK-Project/ros2can/issues</url>
 
   <buildtool_depend>ament_python</buildtool_depend>
 
@@ -19,6 +21,7 @@
   <exec_depend>std_msgs</exec_depend>
   <exec_depend>python3-pyqt5</exec_depend>
   <exec_depend>python3-serial</exec_depend>
+  <exec_depend>python3-yaml</exec_depend>
   <exec_depend>launch</exec_depend>
   <exec_depend>launch_ros</exec_depend>
   <exec_depend>ament_index_python</exec_depend>

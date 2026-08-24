@@ -1,2 +1,6 @@
 __pycache__/
 *.pyc
+
+# setup.py がビルドの度に書き直すgit short hash (バージョン表示用)。
+# 内容が毎回変わるビルド生成物なので追跡対象にしない。
+/resources/git_version.txt

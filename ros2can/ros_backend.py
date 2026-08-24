@@ -41,6 +41,7 @@ from PyQt5.QtCore import QObject, pyqtSignal
 from .counter_unwrapper import CounterUnwrapper
 from .device_profiles import DEFAULT_PROFILE_KEY, SLOT_COUNT
 from .hardware_manager import HardwareConfig, HardwareManager
+from .settings_store import load_settings
 
 TOPIC_RE = re.compile(r"^/?(serial_tx|serial_rx)_(\d+)$")
 
@@ -133,13 +134,21 @@ class RosBackend(QObject):
         self.hardware.linkStateChanged.connect(self._on_hardware_link_state)
 
     def _load_hardware_config_from_params(self) -> HardwareConfig:
-        """serial_bridge.yaml と同名のパラメータでハードウェア直結の挙動を設定する。"""
-        self.node.declare_parameter("excluded_ports", [])
-        self.node.declare_parameter("rx_timeout_sec", 2.0)
-        self.node.declare_parameter("reconnect_interval_sec", 3.0)
-        self.node.declare_parameter("scan_interval_ms", 5000)
-        self.node.declare_parameter("probe_timeout_sec", 2.0)
-        self.node.declare_parameter("probe_settle_sec", 0.5)
+        """serial_bridge.yaml と同名のパラメータでハードウェア直結の挙動を設定する。
+
+        declare_parameter の default には settings_store.load_settings() (=
+        config/ros2can.yaml に GUI の「設定」ダイアログでのローカル上書きを
+        重ねたもの) を渡す。--ros-args -p や launch の parameters=[...] で
+        明示的に値が渡された場合は、通常のROSパラメータの優先順位どおり
+        そちらが勝つ。"""
+        defaults = load_settings()
+        self.node.declare_parameter("excluded_ports", list(defaults["excluded_ports"]))
+        self.node.declare_parameter("rx_timeout_sec", float(defaults["rx_timeout_sec"]))
+        self.node.declare_parameter(
+            "reconnect_interval_sec", float(defaults["reconnect_interval_sec"]))
+        self.node.declare_parameter("scan_interval_ms", int(defaults["scan_interval_ms"]))
+        self.node.declare_parameter("probe_timeout_sec", float(defaults["probe_timeout_sec"]))
+        self.node.declare_parameter("probe_settle_sec", float(defaults["probe_settle_sec"]))
 
         excluded = set(self.node.get_parameter("excluded_ports").value or [])
         return HardwareConfig(
