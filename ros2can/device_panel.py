@@ -20,7 +20,7 @@ from .device_profiles import (
     DIGITAL_IN, COUNTER, ENUM_IN,
     save_custom_profile, unique_custom_key,
 )
-from .ros_backend import RosBackend, DeviceChannel, MODE_SIMULATOR
+from .ros_backend import RosBackend, DeviceChannel, MODE_SIMULATOR, MODE_TOPIC_CLIENT
 from .widgets import ChannelControlRow, ChannelMonitorRow, RawSlotTable, LedIndicator
 from .profile_editor import ProfileEditorDialog
 
@@ -350,8 +350,18 @@ class DevicePanel(QWidget):
         else:
             mode_label = "トピック相乗り"
             mode_title = "トピック相乗り"
-        self.status_label.setText(
-            f"{'接続中' if ch.connected else '未接続'}  RX {ch.rx_hz:.1f}Hz  [{mode_label}]")
+
+        if ch.mode == MODE_TOPIC_CLIENT and not ch.connected:
+            # serial_bridge を併用しない運用のため、相乗り先トピックが未接続 = 実機を
+            # どのros2canインスタンスも掴めていない異常状態とみなして警告表示する。
+            self.status_label.setStyleSheet(
+                "QLabel { font-weight: bold; color: #c0392b; }")
+            self.status_label.setText(
+                f"⚠ ハードウェア未検出(未接続)  RX {ch.rx_hz:.1f}Hz  [{mode_label}]")
+        else:
+            self.status_label.setStyleSheet("")
+            self.status_label.setText(
+                f"{'接続中' if ch.connected else '未接続'}  RX {ch.rx_hz:.1f}Hz  [{mode_label}]")
         self.title_label.setText(f"<b>Device ID {self.device_id}</b> ({mode_title})")
 
         for index, row in self.monitor_rows.items():
