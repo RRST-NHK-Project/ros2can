@@ -6,13 +6,17 @@
 
 from __future__ import annotations
 
+import os
+import xml.etree.ElementTree as ET
 from typing import Dict, Optional
 
+from ament_index_python.packages import get_package_share_directory
 from PyQt5.QtCore import Qt, QTimer, QSettings
+from PyQt5.QtGui import QPixmap
 from PyQt5.QtWidgets import (
     QMainWindow, QListWidget, QListWidgetItem,
     QToolBar, QAction, QLabel, QInputDialog,
-    QMessageBox, QSplitter, QMenu,
+    QMessageBox, QSplitter, QMenu, QWidget, QSizePolicy,
 )
 
 from .ros_backend import RosBackend
@@ -24,6 +28,41 @@ UI_REFRESH_MS = 200
 TOPIC_RESCAN_MS = 1000
 
 
+def _package_version() -> str:
+    """git の short hash を優先して表示バージョンとする(setup.py がビルド時に
+    resources/git_version.txt へ焼き込む。colcon build のたびに最新コミットへ
+    自動で追従する)。取得できなければ package.xml の <version> にフォールバック。"""
+    try:
+        share_dir = get_package_share_directory('ros2can')
+        git_version_path = os.path.join(share_dir, 'resources', 'git_version.txt')
+        with open(git_version_path) as f:
+            git_hash = f.read().strip()
+        if git_hash:
+            return git_hash
+    except Exception:
+        pass
+    try:
+        share_dir = get_package_share_directory('ros2can')
+        tree = ET.parse(os.path.join(share_dir, 'package.xml'))
+        version_el = tree.getroot().find('version')
+        if version_el is not None and version_el.text:
+            return version_el.text.strip()
+    except Exception:
+        pass
+    return '?'
+
+
+def _logo_pixmap() -> Optional[QPixmap]:
+    try:
+        share_dir = get_package_share_directory('ros2can')
+        pixmap = QPixmap(os.path.join(share_dir, 'resources', 'logo.png'))
+        if not pixmap.isNull():
+            return pixmap
+    except Exception:
+        pass
+    return None
+
+
 class MainWindow(QMainWindow):
     def __init__(self, backend: RosBackend, parent=None):
         super().__init__(parent)
@@ -31,7 +70,7 @@ class MainWindow(QMainWindow):
         self.panels: Dict[int, DevicePanel] = {}
         self._can_monitor_dialog: Optional[CanMonitorDialog] = None
 
-        self.setWindowTitle("ros2can - XIAO ESP32S3 SMD CANバス デバッグGUI")
+        self.setWindowTitle(f"RRST ros2can GUI - v{_package_version()}")
 
         # 前回終了時のウィンドウサイズ/位置を記憶し、毎回リサイズし直す手間を無くす。
         self._settings = QSettings("ros2can", "MainWindow")
@@ -93,6 +132,7 @@ class MainWindow(QMainWindow):
     def _build_toolbar(self) -> None:
         toolbar = QToolBar("main")
         toolbar.setMovable(False)
+        toolbar.setMinimumHeight(48)
         self.addToolBar(toolbar)
 
         rescan_action = QAction("再スキャン", self)
@@ -123,6 +163,20 @@ class MainWindow(QMainWindow):
         estop_action.setToolTip("全ての接続中デバイスのTXを即座にゼロにして送信を停止します")
         estop_action.triggered.connect(self._on_global_estop)
         toolbar.addAction(estop_action)
+
+        spacer = QWidget()
+        spacer.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
+        toolbar.addWidget(spacer)
+
+        logo_pixmap = _logo_pixmap()
+        if logo_pixmap is not None:
+            logo_label = QLabel()
+            logo_label.setPixmap(logo_pixmap.scaledToHeight(44, Qt.SmoothTransformation))
+            toolbar.addWidget(logo_label)
+
+        version_label = QLabel(f"v{_package_version()}")
+        version_label.setStyleSheet("color: #888; font-size: 10pt; padding: 0 10px;")
+        toolbar.addWidget(version_label)
 
     # ---------------- device list ----------------
 
