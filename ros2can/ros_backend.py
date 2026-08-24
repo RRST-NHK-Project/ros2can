@@ -245,15 +245,16 @@ class RosBackend(QObject):
         """外部ROSノードから serial_tx_[ID] へ送られてきた指令値を反映する。
 
         トピック通過(topic_passthrough)がOFFの場合、外部ノードからの指令は
-        無視され tx_data には反映されない。ダイレクト送信(direct_tx)は
-        tx_data(GUI手動編集分も含む)を実際にマイコンへ書き込むかどうかを
-        制御する、別の独立したゲートである。
+        無視され tx_data にも反映されない。ONの場合は tx_data に反映した上で
+        即座にマイコンへ書き込む(direct_tx は見ない)。
 
-        GUI(device_panel.py)側では両チェックボックスを相互排他にしており、
-        「外部ノードの指令を反映する」か「GUIから直接送信する」かのどちらか
-        一方しか選べない。ただしこのメソッド自体、およびこのフラグの組み合わせ
-        自体には制約が無く、--nogui (serial_bridge互換ブリッジ) は両方を常時ON
-        にして外部トピックの指令をそのままマイコンへ中継する(main.py参照)。
+        ダイレクト送信(direct_tx)は、GUIで手動編集した tx_data を
+        publish_all_direct() が周期送信するための別モードであり、GUI
+        (device_panel.py)側では topic_passthrough と相互排他にしている
+        (「外部ノードの指令を反映する」か「GUIから直接送信する」かの二択)。
+        ただしこのフラグの組み合わせ自体に制約は無く、--nogui
+        (serial_bridge互換ブリッジ) は direct_tx も常時ONにして、周期送信による
+        heartbeat 送信を兼ねる(main.py参照)。
         """
         ch = self.devices.get(device_id)
         if ch is None or ch.mode != MODE_HARDWARE:
@@ -264,9 +265,8 @@ class RosBackend(QObject):
         if len(data) < SLOT_COUNT:
             data += [0] * (SLOT_COUNT - len(data))
         ch.tx_data = data
-        if ch.direct_tx:
-            self.hardware.write(device_id, ch.tx_data)
-            ch.tx_frame_count += 1
+        self.hardware.write(device_id, ch.tx_data)
+        ch.tx_frame_count += 1
 
     def _on_hardware_frame(self, device_id: int, values: List[int]) -> None:
         ch = self.devices.get(device_id)
@@ -429,7 +429,11 @@ class RosBackend(QObject):
             ch.tx_frame_count += 1
 
     def publish_all_direct(self) -> None:
-        """ダイレクト送信(direct_tx)が有効なデバイスへ現在の tx_data を周期送信する。"""
+        """ダイレクト送信(direct_tx)が有効なデバイスへ現在の tx_data を周期送信する。
+
+        GUIから直接操作するモード用の経路(トピック経由の指令は
+        _on_hardware_tx_command が即時に書き込むため、ここでは扱わない)。
+        """
         for device_id, ch in self.devices.items():
             if ch.direct_tx:
                 self.publish_tx(device_id)
@@ -442,8 +446,15 @@ class RosBackend(QObject):
         self.publish_tx(device_id)
 
     def emergency_stop_all(self) -> None:
+        """全デバイスへゼロ指令を送信し、以後の自動送信経路を両方とも止める。
+
+        direct_tx だけでなく topic_passthrough もOFFにする: OFFにしないと
+        外部ノードが指令を送り続けている場合に _on_hardware_tx_command が
+        即座に非ゼロ値を書き込み直してしまい、E-STOPの意味がなくなる。
+        """
         for device_id, ch in self.devices.items():
             ch.direct_tx = False
+            ch.topic_passthrough = False
             ch.tx_data = [0] * SLOT_COUNT
             self.publish_tx(device_id)
 

@@ -258,9 +258,11 @@ class MainWindow(QMainWindow):
     def _on_global_estop(self) -> None:
         self.backend.emergency_stop_all()
         for panel in self.panels.values():
-            panel.set_direct_tx_external(False)
+            panel.sync_estop_state()
         self._update_list_labels()
-        QMessageBox.information(self, "E-STOP", "全デバイスへゼロ指令を送信し、ダイレクト送信を無効化しました。")
+        QMessageBox.information(
+            self, "E-STOP",
+            "全デバイスへゼロ指令を送信し、トピック通過/ダイレクト送信を両方とも無効化しました。")
 
     def closeEvent(self, event) -> None:
         self._settings.setValue("geometry", self.saveGeometry())

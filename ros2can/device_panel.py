@@ -12,7 +12,7 @@ from typing import Dict
 
 from PyQt5.QtWidgets import (
     QWidget, QLabel, QVBoxLayout, QHBoxLayout, QGroupBox,
-    QScrollArea, QComboBox, QPushButton, QCheckBox, QPlainTextEdit,
+    QScrollArea, QComboBox, QPushButton, QCheckBox, QPlainTextEdit, QSizePolicy,
 )
 
 from .device_profiles import (
@@ -111,12 +111,20 @@ class DevicePanel(QWidget):
         self.led = LedIndicator()
         top.addWidget(self.led)
         self.status_label = QLabel("未接続")
+        # 接続状態の説明文は長くなり得る(相乗り警告等)ため、これがウィンドウの
+        # 最小幅を決めてしまわないよう、必要幅が足りない時は縮んでよいと明示する。
+        self.status_label.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Preferred)
         top.addWidget(self.status_label)
 
         top.addSpacing(20)
         top.addWidget(QLabel("プロファイル:"))
         self.profile_combo = QComboBox()
-        self.profile_combo.setMinimumWidth(300)
+        # プロファイル名は長いものがある(60文字超)ため、素のQComboBoxだと
+        # 最長の項目に合わせてボックス自体が広がりウィンドウを圧迫してしまう。
+        # 表示欄は一定の文字数分だけ確保し、全文はツールチップとポップアップで見る。
+        self.profile_combo.setSizeAdjustPolicy(QComboBox.AdjustToMinimumContentsLengthWithIcon)
+        self.profile_combo.setMinimumContentsLength(22)
+        self.profile_combo.setMinimumWidth(260)
         self._reload_profile_list()
         self.profile_combo.currentIndexChanged.connect(self._on_profile_selected)
         top.addWidget(self.profile_combo)
@@ -343,12 +351,23 @@ class DevicePanel(QWidget):
             row.set_raw_value(0)
         self.raw_tx_table.set_values(self.channel.tx_data)
 
-    def set_direct_tx_external(self, direct: bool) -> None:
-        """E-STOP などパネル外からの状態反映。"""
+    def sync_estop_state(self) -> None:
+        """E-STOP などパネル外からの状態反映。
+
+        トピック通過(外部ノード指令)/ダイレクト送信(GUI指令)の両方の
+        自動送信経路を止めた状態(backend.emergency_stop_all() 済み)に
+        チェックボックス表示を合わせる。channel側は既にOFFになっている
+        ため、ここでは相互排他のトグルハンドラを経由せず直接同期する。
+        """
+        self.passthrough_check.blockSignals(True)
+        self.passthrough_check.setChecked(False)
+        self.passthrough_check.blockSignals(False)
+
         self.direct_check.blockSignals(True)
-        self.direct_check.setChecked(direct)
+        self.direct_check.setChecked(False)
         self.direct_check.blockSignals(False)
-        self._on_direct_toggled(direct)
+        self.direct_check.setStyleSheet("QCheckBox { font-weight: bold; }")
+
         for row in self.control_rows.values():
             row.set_raw_value(0)
         self.raw_tx_table.set_values(self.channel.tx_data)
