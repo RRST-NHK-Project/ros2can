@@ -352,14 +352,22 @@ def make_cubemars_profile(
     """MODE_CUBEMARS (xiao-esp32-s3_can2io) 用プロファイル。
 
     ノード/スロット分配は行わない独立デバイスとして、24スロットをCubeMars AKシリーズ
-    (AK40-10等、Servo(CAN)モード)最大4台分の指令/帰還に直接割り当てる
-    (スロット0起点、ノードオフセット無し)。
+    (AK40-10等、Servo(CAN)モード / MIT(Force Control)モード)最大4台分の指令/帰還に
+    直接割り当てる(スロット0起点、ノードオフセット無し)。
     [firmware/xiao-esp32-s3_can2io/src/cubemars.cpp のスロット割当と一致させること]
 
     速度/位置ともアクチュエータ内蔵のクローズドループがそのまま追従するため、
     ロボマスのGM6020と違いホスト側PIDは無い。各モータのCAN IDはファーム側
     config.hppのCUBEMARS_MOTOR_ID_nでコンパイル時固定(R-Linkの設定と一致させること)。
     1バスには最大4台まで(config.hppのCUBEMARS_MOTOR_COUNT)。
+
+    MITモード (control_mode=2) は位置・速度・Kp・Kd・トルクFFを同時に指令し、
+    モータ側で torque = Kp*(pos_des-pos) + Kd*(vel_des-vel) + torque_ff を計算する
+    インピーダンス制御 (AK Series Module Product Manual V3.2.0 4.2節)。
+    mit_velocity/mit_kp/mit_kd/mit_torque_ff スロットはcontrol_mode=2のときのみ
+    参照される。クランプ範囲(スライダーの範囲欄)はファーム側config.hppの
+    CUBEMARS_MIT_*と必ず一致させ、実機のR-Link設定と揃えること
+    (マニュアルにAK40-10のMITパラメータ表が無いため暫定値になっている)。
     """
     tx: List[ChannelDef] = []
     rx: List[ChannelDef] = []
@@ -369,14 +377,45 @@ def make_cubemars_profile(
         group_cmd = f"M{m} 指令"
         tx.append(ChannelDef(i, f"M{m} target", MOTOR, group=group_cmd,
                               note="control_modeが速度のとき10ERPM/LSB(電気角速度)、"
-                                   "位置のとき0.1deg/LSB。GUI上はスケール無しの生値。"))
+                                   "位置/MITのとき0.1deg/LSB。GUI上はスケール無しの生値。"))
     for i in range(4):
         m = i + 1
         group_cmd = f"M{m} 指令"
         tx.append(ChannelDef(4 + i, f"M{m} control_mode", ENUM_OUT, group=group_cmd,
-                              options=[(0, "速度ループ"), (1, "位置ループ")],
+                              options=[(0, "速度ループ"), (1, "位置ループ"), (2, "MIT(Force Control)")],
                               note="全ゼロ(未接続/E-STOP時の既定)で速度ループ・target=0となり、"
-                                   "安全にその場停止する(位置ジャンプは発生しない)"))
+                                   "安全にその場停止する(位置ジャンプは発生しない)。MIT選択時は"
+                                   "mit_velocity/mit_kp/mit_kd/mit_torque_ffも参照される"))
+    for i in range(4):
+        m = i + 1
+        group_cmd = f"M{m} 指令"
+        tx.append(ChannelDef(8 + i, f"M{m} mit_velocity", MOTOR, group=group_cmd,
+                              min=-5000, max=5000, scale=0.01, unit="rad/s", decimals=2,
+                              note="MITモード用の目標速度(control_mode=2のときのみ参照)。"
+                                   "0.01rad/s/LSB。範囲欄はconfig.hppのCUBEMARS_MIT_V_MIN/MAX_RADPSと"
+                                   "実機のR-Link設定に合わせて調整すること"))
+    for i in range(4):
+        m = i + 1
+        group_cmd = f"M{m} 指令"
+        tx.append(ChannelDef(12 + i, f"M{m} mit_kp", MOTOR, group=group_cmd,
+                              min=0, max=5000, scale=0.1, unit="", decimals=1,
+                              note="MITモード用のKp(control_mode=2のときのみ参照)。0.1/LSB、"
+                                   "レンジ0-500(マニュアル共通値)"))
+    for i in range(4):
+        m = i + 1
+        group_cmd = f"M{m} 指令"
+        tx.append(ChannelDef(16 + i, f"M{m} mit_kd", MOTOR, group=group_cmd,
+                              min=0, max=500, scale=0.01, unit="", decimals=2,
+                              note="MITモード用のKd(control_mode=2のときのみ参照)。0.01/LSB、"
+                                   "レンジ0-5(マニュアル共通値)"))
+    for i in range(4):
+        m = i + 1
+        group_cmd = f"M{m} 指令"
+        tx.append(ChannelDef(20 + i, f"M{m} mit_torque_ff", MOTOR, group=group_cmd,
+                              min=-1800, max=1800, scale=0.01, unit="N・m", decimals=2,
+                              note="MITモード用のトルクFF(control_mode=2のときのみ参照)。"
+                                   "0.01N・m/LSB。範囲欄はconfig.hppのCUBEMARS_MIT_T_MIN/MAX_NMと"
+                                   "実機のR-Link設定に合わせて調整すること"))
 
     for i in range(4):
         m = i + 1
@@ -414,9 +453,13 @@ def make_cubemars_profile(
         name=name,
         description=(
             "MODE_CUBEMARS用。ノード/スロット分配は行わず、独立デバイスとしてCubeMars "
-            "AKシリーズ(Servo(CAN)モード)を最大4台まで速度/位置制御する。アクチュエータ"
-            "内蔵のクローズドループがそのまま追従するためホスト側PIDは無し。CAN IDは"
-            "ファーム側config.hppのCUBEMARS_MOTOR_ID_nで固定、R-Linkの設定と一致させること。"
+            "AKシリーズ(Servo(CAN)モードの速度/位置制御、およびMIT(Force Control)モード)"
+            "を最大4台まで制御する。アクチュエータ内蔵のクローズドループがそのまま追従する"
+            "ためホスト側PIDは無し。MITモードはKp/Kdを使ったインピーダンス制御で、"
+            "mit_velocity/mit_kp/mit_kd/mit_torque_ffのクランプ範囲(スライダー範囲欄)は"
+            "マニュアルにAK40-10のパラメータ表が無いため暫定値。実機のR-Link設定・"
+            "ファーム側config.hppのCUBEMARS_MIT_*と必ず一致させること。CAN IDはファーム側"
+            "config.hppのCUBEMARS_MOTOR_ID_nで固定、R-Linkの設定と一致させること。"
             "このバス(1Mbps固定)には他のros2canノード(500kbps)を混在させないこと。"
         ),
         tx=tx,

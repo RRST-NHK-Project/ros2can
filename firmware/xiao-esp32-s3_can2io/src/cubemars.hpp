@@ -5,7 +5,9 @@
 MODE_CUBEMARSは、xiao-esp32-s3_can2ioの他モード(MODE_IO/MODE_CAN/MODE_CAN_HOST)
 が使うノード/スロット分配プロトコル(CAN 500kbps)とは別系統で、CubeMars AKシリーズ
 のServo(CAN)モードプロトコル(1Mbps固定, AK Series Module Product Manual V3.2.0
-4.1節)を直接喋る独立デバイスとして動作する。
+4.1節)、およびForce Control(MIT)モード(同マニュアル4.2節、位置/速度/Kp/Kd/
+トルクFFを1フレームで指令するインピーダンス制御)を直接喋る独立デバイスとして
+動作する。モータごとにcontrol_modeスロットでどちらを使うか毎周期選択できる。
 1マイコン(1バス)には最大 CUBEMARS_MOTOR_COUNT 台まで接続する構成を想定する。
 
 指令(PC -> 本機, Rx_16Data)/帰還(本機 -> PC, Tx_16Data)のスロット割り当ては

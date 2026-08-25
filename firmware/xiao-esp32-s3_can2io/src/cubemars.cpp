@@ -7,6 +7,11 @@ CubeMars AK Series Module Product Manual V3.2.0 4.1節の Servo(CAN)モードプ
 AK40-10等のAKシリーズはアクチュエータ内蔵のクローズドループ(位置/速度)が指令に
 そのまま追従するため、ロボマスのGM6020のようなホスト側PID(PID.hpp)は不要。
 
+速度/位置ループに加え、マニュアル4.2節のForce Control(MIT)モード
+(control_mode_id=8、位置+速度+Kp+Kd+トルクFFを1フレームで指令するインピーダンス
+制御)にも対応する。CAN IDやフレーム形式はServo(CAN)モードと同じ拡張ID方式なので、
+本機はcontrol_modeスロットの値でどちらのモードを使うか毎周期選択するだけでよい。
+
 スロット割り当て (frame_data.hppのTx_16Data/Rx_16Dataを使用、独立デバイスとして
 24スロットをそのまま使う。ノード/スロット分配は行わない):
 
@@ -16,10 +21,15 @@ AK40-10等のAKシリーズはアクチュエータ内蔵のクローズドル�
            マニュアル4.1.4の帰還フレーム速度フィールドと同一スケール
          - control_mode=1(位置): 0.1deg/LSB (レンジ ±3276.7deg)
            マニュアル4.3.1の帰還フレーム位置フィールドと同一スケール
-    4-7: control_mode (モータ1-4): 0=速度ループ, 1=位置ループ
+         - control_mode=2(MIT): 目標位置、0.1deg/LSB (position/positionループと同一
+           スケール。CAN送信直前にradへ変換する)
+    4-7: control_mode (モータ1-4): 0=速度ループ, 1=位置ループ, 2=MIT(Force Control)
          全ゼロ(E-STOP/未接続時のデフォルト)で0=速度・target=0となり、
          安全にゼロ速度指令(その場停止)になる設計。位置ジャンプは発生しない。
-    8-23: 未使用
+    8-11:  MITモード用 目標速度(モータ1-4)、0.01rad/s/LSB (control_mode=2のみ参照)
+    12-15: MITモード用 Kp(モータ1-4)、0.1/LSB、レンジ0-500 (control_mode=2のみ参照)
+    16-19: MITモード用 Kd(モータ1-4)、0.01/LSB、レンジ0-5 (control_mode=2のみ参照)
+    20-23: MITモード用 目標トルクFF(モータ1-4)、0.01N・m/LSB (control_mode=2のみ参照)
 
   Tx_16Data (本機 -> PC, 帰還。マニュアル4.3.1 CAN Upload Message Protocol
              (Function ID 0x29) の値をスケール変換無しでそのまま格納):
@@ -40,17 +50,35 @@ Copyright (c) 2025 RRST-NHK-Project. All rights reserved.
 #include "defs.hpp"
 #include "frame_data.hpp"
 #include <Arduino.h>
+#include <algorithm>
 
 namespace {
 
 // Servo(CAN)モードの制御モードID (マニュアル4.1節)
 constexpr uint32_t CUBEMARS_CMD_RPM = 3; // Velocity Loop Mode
 constexpr uint32_t CUBEMARS_CMD_POS = 4; // Position Loop Mode
+// Force Control(MIT)モードの制御モードID (マニュアル4.2節、Servo(CAN)モードと
+// 同じ拡張ID方式(control_mode_id<<8 | driver_id)を共有する)
+constexpr uint32_t CUBEMARS_CMD_MIT = 8;
 constexpr uint32_t CUBEMARS_FEEDBACK_FUNCTION_ID = 0x29; // 定期帰還フレーム
 
 // PC側(Rx_16Data)のcontrol_mode enum値
 constexpr int16_t CUBEMARS_MODE_VELOCITY = 0;
 constexpr int16_t CUBEMARS_MODE_POSITION = 1;
+constexpr int16_t CUBEMARS_MODE_MIT = 2;
+
+// MITモード用の追加スロット (target/control_modeは0-7を流用、cubemars.cpp先頭コメント参照)
+constexpr int MIT_SLOT_VELOCITY = 8;   // 8-11
+constexpr int MIT_SLOT_KP = 12;        // 12-15
+constexpr int MIT_SLOT_KD = 16;        // 16-19
+constexpr int MIT_SLOT_TORQUE_FF = 20; // 20-23
+
+// MITモード各スロットのスケール (Ros2CanCubemarsPacketController.hppと一致させること)
+constexpr double MIT_POSITION_LSB_DEG = 0.1;    // 目標位置(target流用)。0.1deg/LSB
+constexpr double MIT_VELOCITY_LSB_RADPS = 0.01; // 目標速度。0.01rad/s/LSB
+constexpr double MIT_KP_LSB = 0.1;              // Kp。0.1/LSB
+constexpr double MIT_KD_LSB = 0.01;             // Kd。0.01/LSB
+constexpr double MIT_TORQUE_LSB_NM = 0.01;      // トルクFF。0.01N・m/LSB
 
 const uint8_t kMotorCanId[CUBEMARS_MOTOR_COUNT] = {
     CUBEMARS_MOTOR_ID_1,
@@ -88,6 +116,39 @@ void sendInt32Command(uint32_t cmd_id, uint8_t motor_can_id, int32_t value) {
     sendExtended(cmd_id, motor_can_id, buffer, 4);
 }
 
+// float値をx_min~x_maxの範囲へクランプしたうえでbitsビットの符号無し整数へ
+// エンコードする (マニュアル4.2節 float_to_uint() と同じ変換式)。
+// x_min/x_maxはモータ側のデコード基準と一致している必要がある
+// (config.hppのCUBEMARS_MIT_*参照)。
+uint16_t floatToUint(float x, float x_min, float x_max, uint8_t bits) {
+    x = std::min(std::max(x, x_min), x_max);
+    float span = x_max - x_min;
+    uint32_t raw = (uint32_t)((x - x_min) * (float)(1UL << bits) / span);
+    uint32_t max_raw = (1UL << bits) - 1UL;
+    return (uint16_t)std::min(raw, max_raw);
+}
+
+// Force Control(MIT)モードの8byte指令フレームを組み立てて送信する
+// (マニュアル4.2節、KP(12bit)+KD(12bit)+Position(16bit)+Speed(12bit)+Torque(12bit)の順)。
+void sendMitCommand(uint8_t motor_can_id, float pos_rad, float vel_radps, float kp, float kd, float torque_nm) {
+    uint16_t p_u = floatToUint(pos_rad, CUBEMARS_MIT_P_MIN_RAD, CUBEMARS_MIT_P_MAX_RAD, 16);
+    uint16_t v_u = floatToUint(vel_radps, CUBEMARS_MIT_V_MIN_RADPS, CUBEMARS_MIT_V_MAX_RADPS, 12);
+    uint16_t kp_u = floatToUint(kp, CUBEMARS_MIT_KP_MIN, CUBEMARS_MIT_KP_MAX, 12);
+    uint16_t kd_u = floatToUint(kd, CUBEMARS_MIT_KD_MIN, CUBEMARS_MIT_KD_MAX, 12);
+    uint16_t t_u = floatToUint(torque_nm, CUBEMARS_MIT_T_MIN_NM, CUBEMARS_MIT_T_MAX_NM, 12);
+
+    uint8_t buffer[8];
+    buffer[0] = (uint8_t)(kp_u >> 4);                          // KP high 8 bits
+    buffer[1] = (uint8_t)(((kp_u & 0xF) << 4) | (kd_u >> 8));  // KP low 4 bits | KD high 4 bits
+    buffer[2] = (uint8_t)(kd_u & 0xFF);                        // KD low 8 bits
+    buffer[3] = (uint8_t)(p_u >> 8);                           // Position high 8 bits
+    buffer[4] = (uint8_t)(p_u & 0xFF);                         // Position low 8 bits
+    buffer[5] = (uint8_t)(v_u >> 4);                           // Speed high 8 bits
+    buffer[6] = (uint8_t)(((v_u & 0xF) << 4) | (t_u >> 8));    // Speed low 4 bits | Torque high 4 bits
+    buffer[7] = (uint8_t)(t_u & 0xFF);                         // Torque low 8 bits
+    sendExtended(CUBEMARS_CMD_MIT, motor_can_id, buffer, 8);
+}
+
 // -------- CAN送信 (指令 -> AKシリーズ) -------- //
 
 void sendCommands() {
@@ -95,7 +156,14 @@ void sendCommands() {
         int16_t target = Rx_16Data[m];
         int16_t mode = Rx_16Data[4 + m];
 
-        if (mode == CUBEMARS_MODE_POSITION) {
+        if (mode == CUBEMARS_MODE_MIT) {
+            float pos_rad = (float)(target * MIT_POSITION_LSB_DEG) * DEG_TO_RAD;
+            float vel_radps = (float)(Rx_16Data[MIT_SLOT_VELOCITY + m] * MIT_VELOCITY_LSB_RADPS);
+            float kp = (float)(Rx_16Data[MIT_SLOT_KP + m] * MIT_KP_LSB);
+            float kd = (float)(Rx_16Data[MIT_SLOT_KD + m] * MIT_KD_LSB);
+            float torque_ff = (float)(Rx_16Data[MIT_SLOT_TORQUE_FF + m] * MIT_TORQUE_LSB_NM);
+            sendMitCommand(kMotorCanId[m], pos_rad, vel_radps, kp, kd, torque_ff);
+        } else if (mode == CUBEMARS_MODE_POSITION) {
             // 0.1deg/LSB(本機スロット) -> 0.0001deg/LSB(CAN指令、マニュアル4.1.5)
             int32_t pos_cmd = (int32_t)target * 1000;
             sendInt32Command(CUBEMARS_CMD_POS, kMotorCanId[m], pos_cmd);

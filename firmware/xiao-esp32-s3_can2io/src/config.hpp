@@ -170,3 +170,28 @@ Copyright (c) 2025 RRST-NHK-Project. All rights reserved.
 #define CUBEMARS_MOTOR_ID_2 102
 #define CUBEMARS_MOTOR_ID_3 103
 #define CUBEMARS_MOTOR_ID_4 104
+
+// ---- MIT(Force Control)モード関連 (AK Series Module Product Manual V3.2.0 4.2節) ----
+// MITモードはServo(CAN)モードと同じ拡張ID方式(control_mode_id<<8 | driver_id)の
+// 別モード(control_mode_id=8)で、位置・速度・トルクFF・Kp・Kdを同時に指令し
+// モータ側で torque = Kp*(p_des-p) + Kd*(v_des-v) + t_ff を計算するインピーダンス制御。
+// 有効化はcubemars.cpp側、ホストからの選択はcontrol_modeスロット(=2)で行う。
+//
+// 下記のP/V/T(位置・速度・トルク)レンジはホスト側のエンコード基準であり、
+// モータ側のデコード基準(ファーム内蔵、R-Linkからは変更不可)と一致していないと
+// 指令値の意味(rad, rad/s, N・m)がズレて意図しない速度・トルクが出力される。
+// マニュアルのパラメータ表にAK40-10の掲載が無いため、他モータ(AK70-9/AK80-9等)の
+// 値から類推した暫定値になっている。使用前に必ずCubeMars公式の最新AK40-10
+// データシート、またはR-Link(CubeMarsTool)のMIT Controlタブで実機の値を確認し、
+// 書き換えること。Kp/Kdレンジ(0-500 / 0-5)は全モータ共通の値としてマニュアルに
+// 明記されているためそのまま使用してよい。
+#define CUBEMARS_MIT_P_MIN_RAD -12.5f
+#define CUBEMARS_MIT_P_MAX_RAD 12.5f
+#define CUBEMARS_MIT_V_MIN_RADPS -50.0f
+#define CUBEMARS_MIT_V_MAX_RADPS 50.0f
+#define CUBEMARS_MIT_T_MIN_NM -18.0f
+#define CUBEMARS_MIT_T_MAX_NM 18.0f
+#define CUBEMARS_MIT_KP_MIN 0.0f
+#define CUBEMARS_MIT_KP_MAX 500.0f
+#define CUBEMARS_MIT_KD_MIN 0.0f
+#define CUBEMARS_MIT_KD_MAX 5.0f

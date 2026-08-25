@@ -114,7 +114,7 @@ ros2can はポートを開いた直後に `ioctl(fd, TIOCEXCL)` を発行して�
 | XIAO ESP32S3 SMD (CAN Host) | 24スロットを4ノード x 5スロットに分配 (既定の `CAN_NODE_COUNT=4`, `CAN_SLOTS_PER_NODE=5` に対応) |
 | xiao-esp32-s3_can2io + b-g431-esc1_can2io (FOCモータ, robomas互換) | 上記のノード1台をFOCモータ(SimpleFOC、速度制御のみ)用チャンネルに置き換え |
 | xiao-esp32-s3_can2io (MODE_ROBOMAS, DJIロボマス x4) | `MODE_ROBOMAS`(独立デバイス、CAN 1Mbps固定)用。ノード/スロット分配は行わず、ロボマス最大4台の速度指令/帰還を24スロットに直接割り当てる |
-| xiao-esp32-s3_can2io (MODE_CUBEMARS, CubeMars AKシリーズ x4) | `MODE_CUBEMARS`(独立デバイス、CAN 1Mbps固定)用。ノード/スロット分配は行わず、CubeMars AKシリーズ(AK40-10等、Servo(CAN)モード)最大4台の速度/位置指令・帰還を24スロットに直接割り当てる |
+| xiao-esp32-s3_can2io (MODE_CUBEMARS, CubeMars AKシリーズ x4) | `MODE_CUBEMARS`(独立デバイス、CAN 1Mbps固定)用。ノード/スロット分配は行わず、CubeMars AKシリーズ(AK40-10等、Servo(CAN)モードの速度/位置制御、およびMIT(Force Control)モード)最大4台の指令・帰還を24スロットに直接割り当てる |
 | 汎用 Raw | CAN分配を意識しない生の24スロット |
 
 ファームウェア側の `config.hpp` で `CAN_NODE_COUNT` / `CAN_SLOTS_PER_NODE` を

@@ -9,7 +9,7 @@ This firmware targets a XIAO ESP32-S3 based board (with an MCP2561 CAN transceiv
 - the **host** that bridges a PC serial link to up to 3 other CAN nodes while also acting as node 0 itself (`MODE_CAN_HOST`), or
 - a **read-only CAN sniffer** for bring-up/debugging (`MODE_CAN_MONITOR`), or
 - a **dedicated DJI RoboMaster (M3508/M2006/GM6020) driver** for up to 4 motors on its own CAN bus (`MODE_ROBOMAS`, see section 9), or
-- a **dedicated CubeMars AK-series (e.g. AK40-10) driver** for up to 4 actuators on its own CAN bus, using the Servo(CAN) protocol (`MODE_CUBEMARS`, see section 10).
+- a **dedicated CubeMars AK-series (e.g. AK40-10) driver** for up to 4 actuators on its own CAN bus, using the Servo(CAN) and MIT (Force Control) protocols (`MODE_CUBEMARS`, see section 10).
 
 Each board exposes the same local I/O set (no DC motor driver on this board):
 
@@ -30,7 +30,7 @@ Select exactly one mode in `src/config.hpp`:
 - `MODE_CAN_MONITOR`: passive CAN sniffer. Starts the CAN driver and `canTask` only; no serial bridging and no IO task. Prints one summary line per node to `Serial` whenever all of that node's slots have been observed, for wiring/bring-up checks.
 - `MODE_DEBUG`: development/debug mode (PID task).
 - `MODE_ROBOMAS`: dedicated DJI RoboMaster driver. Does **not** use `canInit()`/`canTask()` or the node/slot protocol at all — it runs its own CAN bus at 1Mbps speaking DJI's native protocol directly. See section 9.
-- `MODE_CUBEMARS`: dedicated CubeMars AK-series driver. Also does **not** use `canInit()`/`canTask()` or the node/slot protocol — it runs its own CAN bus at 1Mbps speaking CubeMars's Servo(CAN) protocol directly. See section 10.
+- `MODE_CUBEMARS`: dedicated CubeMars AK-series driver. Also does **not** use `canInit()`/`canTask()` or the node/slot protocol — it runs its own CAN bus at 1Mbps speaking CubeMars's Servo(CAN) and MIT (Force Control) protocols directly. See section 10.
 
 `main.cpp` enforces that exactly one of `MODE_IO`, `MODE_CAN`, `MODE_CAN_HOST`, `MODE_DEBUG`, `MODE_CAN_MONITOR`, `MODE_ROBOMAS`, `MODE_CUBEMARS` is defined; the build fails otherwise.
 
@@ -190,14 +190,18 @@ CAN IDs used on the dedicated 1Mbps bus (all fixed by DJI, not configurable):
 
 Like `MODE_ROBOMAS`, `MODE_CUBEMARS` does not participate in the node/slot CAN
 protocol at all. CubeMars AK-series actuators (e.g. AK40-10) speak the Servo(CAN)
-protocol described in the *AK Series Module Product Manual V3.2.0* (section 4.1) at a
+protocol described in the *AK Series Module Product Manual V3.2.0* (section 4.1),
+plus the Force Control (MIT) protocol from the same manual (section 4.2), at a
 fixed **1Mbps** bitrate — incompatible with the 500kbps node/slot bus used by
 `MODE_CAN`/`MODE_CAN_HOST`/`MODE_CAN_MONITOR`. A board in `MODE_CUBEMARS` therefore
 acts as a **standalone device**: its own USB-serial link straight to the PC (own
 `DEVICE_ID`), and its own dedicated CAN bus with up to `CUBEMARS_MOTOR_COUNT` (4) AK
 actuators. Unlike DJI's GM6020 in `MODE_ROBOMAS`, AK actuators run their own onboard
 closed-loop position/velocity control (FOC), so this mode does **not** run a
-host-side PID loop — it only forwards commands and parses feedback.
+host-side PID loop — it only forwards commands and parses feedback. In MIT mode the
+actuator itself computes `torque = Kp*(p_des - p) + Kd*(v_des - v) + t_ff`, so what
+looks like a host-side gain (Kp/Kd) is actually just forwarded to the actuator's own
+control law every cycle.
 
 Set each actuator's CAN ID at compile time in `src/config.hpp`, matching the ID
 configured on the actuator itself via R-Link/CubeMarsTool:
@@ -210,22 +214,55 @@ configured on the actuator itself via R-Link/CubeMarsTool:
 #define CUBEMARS_MOTOR_ID_4 4
 ```
 
-Each actuator can be commanded in either velocity-loop or position-loop mode,
-selected per actuator per control cycle via a mode slot. Slot mapping reuses the
-standalone 24-slot `Tx_16Data`/`Rx_16Data` frame directly (no node/slot chunking):
+MIT mode also needs the actuator's encoding range for position/velocity/torque
+(`float_to_uint()`'s `x_min`/`x_max` in the manual) to match what the actuator itself
+decodes with. These are **not** listed for the AK40-10 in the manual's parameter
+table (only AK10-9/AK60-6/AK70-9/AK80-9/AKE60-8/AKE80-8 are), so the defaults below
+are extrapolated from similar models and must be checked against R-Link
+(CubeMarsTool)'s MIT Control tab or the latest AK40-10 datasheet before relying on
+them — a mismatch here silently shifts what a given command value actually means in
+rad/rad-per-s/N·m:
+
+```cpp
+#define CUBEMARS_MIT_P_MIN_RAD -12.5f
+#define CUBEMARS_MIT_P_MAX_RAD 12.5f
+#define CUBEMARS_MIT_V_MIN_RADPS -50.0f
+#define CUBEMARS_MIT_V_MAX_RADPS 50.0f
+#define CUBEMARS_MIT_T_MIN_NM -18.0f
+#define CUBEMARS_MIT_T_MAX_NM 18.0f
+#define CUBEMARS_MIT_KP_MIN 0.0f
+#define CUBEMARS_MIT_KP_MAX 500.0f
+#define CUBEMARS_MIT_KD_MIN 0.0f
+#define CUBEMARS_MIT_KD_MAX 5.0f
+```
+(Kp/Kd ranges are documented as common across all AK models, so those two can be
+trusted as-is.)
+
+Each actuator can be commanded in velocity-loop, position-loop, or MIT (Force
+Control) mode, selected per actuator per control cycle via a mode slot. Slot mapping
+reuses the standalone 24-slot `Tx_16Data`/`Rx_16Data` frame directly (no node/slot
+chunking):
 
 **Command (PC -> board), `Rx_16Data`:**
 
 | Index | Meaning |
 |---:|:---|
 | 0-3 | target for motor 1-4; meaning depends on that motor's `control_mode` slot below |
-| 4-7 | `control_mode` for motor 1-4: `0` = velocity loop, `1` = position loop |
-| 8-23 | unused |
+| 4-7 | `control_mode` for motor 1-4: `0` = velocity loop, `1` = position loop, `2` = MIT (Force Control) |
+| 8-11 | MIT target velocity for motor 1-4 (only read when that motor's `control_mode == 2`) |
+| 12-15 | MIT Kp for motor 1-4 (only read when `control_mode == 2`) |
+| 16-19 | MIT Kd for motor 1-4 (only read when `control_mode == 2`) |
+| 20-23 | MIT feed-forward torque for motor 1-4 (only read when `control_mode == 2`) |
 
 When `control_mode == 0` (velocity), the target is electrical speed at **10 ERPM per
 LSB** (range approx. ±327670 ERPM), matching the scale the actuator itself uses for
-velocity feedback (see below). When `control_mode == 1` (position), the target is
-**0.1 deg per LSB** (range ±3276.7°), matching the scale used for position feedback.
+velocity feedback (see below). When `control_mode == 1` (position) or `control_mode
+== 2` (MIT), the target is **0.1 deg per LSB** (range ±3276.7°), matching the scale
+used for position feedback; for MIT this degree value is converted to radians right
+before it's packed into the CAN frame. The MIT-only slots use **0.01 rad/s/LSB**
+(velocity), **0.1/LSB** (Kp, range 0-500), **0.01/LSB** (Kd, range 0-5), and **0.01
+N·m/LSB** (feed-forward torque) — each is clamped firmware-side to the
+`CUBEMARS_MIT_*` range above before being packed.
 
 All-zero `Rx_16Data` (the default when nothing is connected, and what direct-send
 E-STOP transmits) decodes to `control_mode = 0` (velocity) with `target = 0` — i.e. a
@@ -256,11 +293,19 @@ CAN identifiers used on the dedicated 1Mbps bus are extended (29-bit) IDs built 
 |:---|:---|
 | Command: velocity loop | `3` |
 | Command: position loop | `4` |
+| Command: MIT (Force Control) | `8` |
 | Feedback: periodic status | `0x29` |
 
-Only velocity-loop and position-loop commands are implemented; other Servo(CAN) modes
-(duty cycle, current loop, current brake, set-origin, position-velocity loop, motor
-disable) from the manual are not used by this firmware.
+The MIT command packs Kp(12bit)+Kd(12bit)+Position(16bit)+Speed(12bit)+Torque(12bit)
+into the 8-byte payload in that order (manual section 4.2), each value converted with
+the same clamp-then-scale-to-unsigned-int transform the manual's `float_to_uint()`
+uses. Feedback for MIT-mode motors is unchanged — it's the same periodic status frame
+(function ID `0x29`) used by velocity/position loop, since the actuator broadcasts it
+on a timer independent of which control mode is active.
+
+Only velocity-loop, position-loop, and MIT commands are implemented; other Servo(CAN)
+modes (duty cycle, current loop, current brake, set-origin, position-velocity loop,
+motor disable) from the manual are not used by this firmware.
 
 ---
 
