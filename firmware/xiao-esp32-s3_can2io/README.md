@@ -216,27 +216,29 @@ configured on the actuator itself via R-Link/CubeMarsTool:
 
 MIT mode also needs the actuator's encoding range for position/velocity/torque
 (`float_to_uint()`'s `x_min`/`x_max` in the manual) to match what the actuator itself
-decodes with. These are **not** listed for the AK40-10 in the manual's parameter
-table (only AK10-9/AK60-6/AK70-9/AK80-9/AKE60-8/AKE80-8 are), so the defaults below
-are extrapolated from similar models and must be checked against R-Link
-(CubeMarsTool)'s MIT Control tab or the latest AK40-10 datasheet before relying on
-them — a mismatch here silently shifts what a given command value actually means in
-rad/rad-per-s/N·m:
+decodes with. These are **not** listed for the AK40-10 in the *AK Series Module
+Product Manual V3.2.0* parameter table (only AK10-9/AK60-6/AK70-9/AK80-9/AKE60-8/
+AKE80-8 are, and that manual targets the AK 3.0 generation this board's AK40-10 is
+built on). The velocity/torque values below instead come from the AK40-10 row of the
+*AK Series Module Driver Manual V1.0.18* (AK 2.0 generation) parameter table — the
+generation gap is expected to have little effect, but check R-Link (CubeMarsTool)'s
+MIT Control tab against the actual unit before relying on them — a mismatch here
+silently shifts what a given command value actually means in rad/rad-per-s/N·m:
 
 ```cpp
 #define CUBEMARS_MIT_P_MIN_RAD -12.5f
 #define CUBEMARS_MIT_P_MAX_RAD 12.5f
-#define CUBEMARS_MIT_V_MIN_RADPS -50.0f
-#define CUBEMARS_MIT_V_MAX_RADPS 50.0f
-#define CUBEMARS_MIT_T_MIN_NM -18.0f
-#define CUBEMARS_MIT_T_MAX_NM 18.0f
+#define CUBEMARS_MIT_V_MIN_RADPS -45.5f
+#define CUBEMARS_MIT_V_MAX_RADPS 45.5f
+#define CUBEMARS_MIT_T_MIN_NM -5.0f
+#define CUBEMARS_MIT_T_MAX_NM 5.0f
 #define CUBEMARS_MIT_KP_MIN 0.0f
 #define CUBEMARS_MIT_KP_MAX 500.0f
 #define CUBEMARS_MIT_KD_MIN 0.0f
 #define CUBEMARS_MIT_KD_MAX 5.0f
 ```
-(Kp/Kd ranges are documented as common across all AK models, so those two can be
-trusted as-is.)
+(Kp/Kd ranges are documented as common across all AK models in both manuals, so
+those two can be trusted as-is.)
 
 Each actuator can be commanded in velocity-loop, position-loop, or MIT (Force
 Control) mode, selected per actuator per control cycle via a mode slot. Slot mapping

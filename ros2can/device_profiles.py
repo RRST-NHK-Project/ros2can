@@ -367,7 +367,8 @@ def make_cubemars_profile(
     mit_velocity/mit_kp/mit_kd/mit_torque_ff スロットはcontrol_mode=2のときのみ
     参照される。クランプ範囲(スライダーの範囲欄)はファーム側config.hppの
     CUBEMARS_MIT_*と必ず一致させ、実機のR-Link設定と揃えること
-    (マニュアルにAK40-10のMITパラメータ表が無いため暫定値になっている)。
+    (velocity/torqueはAK Series Module Driver Manual V1.0.18 5.3節のAK40-10行の値。
+    ファーム側を書き換えた場合はここも合わせて調整すること)。
     """
     tx: List[ChannelDef] = []
     rx: List[ChannelDef] = []
@@ -390,10 +391,10 @@ def make_cubemars_profile(
         m = i + 1
         group_cmd = f"M{m} 指令"
         tx.append(ChannelDef(8 + i, f"M{m} mit_velocity", MOTOR, group=group_cmd,
-                              min=-5000, max=5000, scale=0.01, unit="rad/s", decimals=2,
+                              min=-4550, max=4550, scale=0.01, unit="rad/s", decimals=2,
                               note="MITモード用の目標速度(control_mode=2のときのみ参照)。"
-                                   "0.01rad/s/LSB。範囲欄はconfig.hppのCUBEMARS_MIT_V_MIN/MAX_RADPSと"
-                                   "実機のR-Link設定に合わせて調整すること"))
+                                   "0.01rad/s/LSB、レンジ±45.5rad/s(config.hppのCUBEMARS_MIT_V_MIN/MAX_RADPSと"
+                                   "一致させること。ファーム側で変更した場合はここも合わせて調整すること)"))
     for i in range(4):
         m = i + 1
         group_cmd = f"M{m} 指令"
@@ -412,10 +413,10 @@ def make_cubemars_profile(
         m = i + 1
         group_cmd = f"M{m} 指令"
         tx.append(ChannelDef(20 + i, f"M{m} mit_torque_ff", MOTOR, group=group_cmd,
-                              min=-1800, max=1800, scale=0.01, unit="N・m", decimals=2,
+                              min=-500, max=500, scale=0.01, unit="N・m", decimals=2,
                               note="MITモード用のトルクFF(control_mode=2のときのみ参照)。"
-                                   "0.01N・m/LSB。範囲欄はconfig.hppのCUBEMARS_MIT_T_MIN/MAX_NMと"
-                                   "実機のR-Link設定に合わせて調整すること"))
+                                   "0.01N・m/LSB、レンジ±5.0N・m(config.hppのCUBEMARS_MIT_T_MIN/MAX_NMと"
+                                   "一致させること。ファーム側で変更した場合はここも合わせて調整すること)"))
 
     for i in range(4):
         m = i + 1
@@ -457,8 +458,8 @@ def make_cubemars_profile(
             "を最大4台まで制御する。アクチュエータ内蔵のクローズドループがそのまま追従する"
             "ためホスト側PIDは無し。MITモードはKp/Kdを使ったインピーダンス制御で、"
             "mit_velocity/mit_kp/mit_kd/mit_torque_ffのクランプ範囲(スライダー範囲欄)は"
-            "マニュアルにAK40-10のパラメータ表が無いため暫定値。実機のR-Link設定・"
-            "ファーム側config.hppのCUBEMARS_MIT_*と必ず一致させること。CAN IDはファーム側"
+            "実機のR-Link設定・ファーム側config.hppのCUBEMARS_MIT_*と必ず一致させること。"
+            "CAN IDはファーム側"
             "config.hppのCUBEMARS_MOTOR_ID_nで固定、R-Linkの設定と一致させること。"
             "このバス(1Mbps固定)には他のros2canノード(500kbps)を混在させないこと。"
         ),

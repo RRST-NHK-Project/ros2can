@@ -180,17 +180,19 @@ Copyright (c) 2025 RRST-NHK-Project. All rights reserved.
 // 下記のP/V/T(位置・速度・トルク)レンジはホスト側のエンコード基準であり、
 // モータ側のデコード基準(ファーム内蔵、R-Linkからは変更不可)と一致していないと
 // 指令値の意味(rad, rad/s, N・m)がズレて意図しない速度・トルクが出力される。
-// マニュアルのパラメータ表にAK40-10の掲載が無いため、他モータ(AK70-9/AK80-9等)の
-// 値から類推した暫定値になっている。使用前に必ずCubeMars公式の最新AK40-10
-// データシート、またはR-Link(CubeMarsTool)のMIT Controlタブで実機の値を確認し、
-// 書き換えること。Kp/Kdレンジ(0-500 / 0-5)は全モータ共通の値としてマニュアルに
-// 明記されているためそのまま使用してよい。
+// 値は AK Series Module Driver Manual V1.0.18 (AK 2.0 Robotic Actuator向け) 5.3節
+// Parameter rangeテーブルのAK40-10行から採用。ただし同マニュアルはAK 2.0世代向けで
+// あり、本機のAK40-10 V3.0(AK Series Module Product Manual V3.2.0对象、AK 3.0
+// Robotic Actuator向け)にはAK40-10自体の記載が無い。ハードウェア世代差の影響は
+// 小さいと考えられるが、使用前にR-Link(CubeMarsTool)のMIT Controlタブで実機の値を
+// 確認することが望ましい。Kp/Kdレンジ(0-500 / 0-5)は全モータ共通の値として両
+// マニュアルに明記されているためそのまま使用してよい。
 #define CUBEMARS_MIT_P_MIN_RAD -12.5f
 #define CUBEMARS_MIT_P_MAX_RAD 12.5f
-#define CUBEMARS_MIT_V_MIN_RADPS -50.0f
-#define CUBEMARS_MIT_V_MAX_RADPS 50.0f
-#define CUBEMARS_MIT_T_MIN_NM -18.0f
-#define CUBEMARS_MIT_T_MAX_NM 18.0f
+#define CUBEMARS_MIT_V_MIN_RADPS -45.5f
+#define CUBEMARS_MIT_V_MAX_RADPS 45.5f
+#define CUBEMARS_MIT_T_MIN_NM -5.0f
+#define CUBEMARS_MIT_T_MAX_NM 5.0f
 #define CUBEMARS_MIT_KP_MIN 0.0f
 #define CUBEMARS_MIT_KP_MAX 500.0f
 #define CUBEMARS_MIT_KD_MIN 0.0f
