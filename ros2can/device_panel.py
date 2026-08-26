@@ -150,6 +150,13 @@ class DevicePanel(QWidget):
 
         bottom.addStretch(1)
 
+        self.zero_encoders_btn = QPushButton("エンコーダ原点セット(全チャンネル)")
+        self.zero_encoders_btn.setToolTip(
+            "マイコン側の値は変更せず、全24チャンネルの現在値をゼロ点として記録する"
+            "(以後 serial_rx_[ID]_zeroed / Monitorタブの表示が相対値になる)。")
+        self.zero_encoders_btn.clicked.connect(self._on_zero_all_channels_clicked)
+        bottom.addWidget(self.zero_encoders_btn)
+
         self.zero_btn = QPushButton("全スロットを0にして送信")
         self.zero_btn.setStyleSheet("background-color:#c0392b; color:white; font-weight:bold;")
         self.zero_btn.clicked.connect(self._on_zero_clicked)
@@ -223,8 +230,11 @@ class DevicePanel(QWidget):
             self.channel.sim_rx_override.add(chdef.index)
             row = ChannelControlRow(chdef)
             row.valueChanged.connect(self._on_sim_rx_changed)
+            row.zeroRequested.connect(self._on_zero_channel_requested)
             return row
-        return ChannelMonitorRow(chdef)
+        row = ChannelMonitorRow(chdef)
+        row.zeroRequested.connect(self._on_zero_channel_requested)
+        return row
 
     def _rebuild_for_profile(self) -> None:
         profile = self.current_profile()
@@ -351,6 +361,16 @@ class DevicePanel(QWidget):
             row.set_raw_value(0)
         self.raw_tx_table.set_values(self.channel.tx_data)
 
+    def _on_zero_channel_requested(self, index: int) -> None:
+        """Monitorタブ1行分の「原点セット」ボタン。マイコン側は変更せず、
+        GUI側のオフセットのみ更新する(backend.zero_channel参照)。"""
+        self.backend.zero_channel(self.device_id, index)
+        self.refresh_from_rx()
+
+    def _on_zero_all_channels_clicked(self) -> None:
+        self.backend.zero_all_channels(self.device_id)
+        self.refresh_from_rx()
+
     def sync_estop_state(self) -> None:
         """E-STOP などパネル外からの状態反映。
 
@@ -401,7 +421,7 @@ class DevicePanel(QWidget):
         self.title_label.setText(f"<b>Device ID {self.device_id}</b> ({mode_title})")
 
         for index, row in self.monitor_rows.items():
-            row.set_raw_value(ch.rx_data[index])
+            row.set_raw_value(ch.rx_data[index], self.backend.zeroed_value(self.device_id, index))
         self.raw_rx_table.set_values(ch.rx_data)
 
         info_lines = [

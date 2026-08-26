@@ -66,6 +66,10 @@ class ChannelDef:
     decimals: int = 0
     options: Optional[List[Tuple[int, str]]] = None
     note: str = ""
+    # 「原点セット」ボタン(GUI)/zero_channelサービスの対象にするか。
+    # 角度・位置・カウンタ等、蓄積されて機構上の原点とズレうる値にのみTrueにする。
+    # 同じREADOUT種別でも速度/電流/温度等の瞬時値には付けない(原点という概念が無い)。
+    zeroable: bool = False
 
     def display_value(self, raw: int) -> float:
         return raw * self.scale
@@ -151,9 +155,11 @@ def _append_generic_io_node_channels(
         rx.append(ChannelDef(base + s, f"N{node_no} SW{s + 1}", DIGITAL_IN, group=group_fb,
                               note=f"SERVO{s + 1} とピン共有。MULTI{s + 1}=0(スイッチ)のときのみ有効"))
     if slots_per_node > 3:
-        rx.append(ChannelDef(base + 3, f"N{node_no} ENC1", COUNTER, group=group_fb, unit="count"))
+        rx.append(ChannelDef(base + 3, f"N{node_no} ENC1", COUNTER, group=group_fb, unit="count",
+                              zeroable=True))
     if slots_per_node > 4:
-        rx.append(ChannelDef(base + 4, f"N{node_no} ENC2", COUNTER, group=group_fb, unit="count"))
+        rx.append(ChannelDef(base + 4, f"N{node_no} ENC2", COUNTER, group=group_fb, unit="count",
+                              zeroable=True))
 
 
 def _append_foc_motor_node_channels(
@@ -177,7 +183,7 @@ def _append_foc_motor_node_channels(
                           unit="rpm", note="出力軸rpm、スケール無し(robomas互換)"))
 
     rx.append(ChannelDef(base + 0, f"N{node_no} angle", READOUT, group=group_fb,
-                          scale=0.1, unit="deg", decimals=1))
+                          scale=0.1, unit="deg", decimals=1, zeroable=True))
     rx.append(ChannelDef(base + 1, f"N{node_no} velocity", READOUT, group=group_fb,
                           unit="rpm", decimals=0))
     rx.append(ChannelDef(base + 2, f"N{node_no} current_q", READOUT, group=group_fb,
@@ -305,7 +311,7 @@ def make_robomas_profile(
     for i in range(4):
         m = i + 1
         rx.append(ChannelDef(i, f"M{m} angle", READOUT, group="ロボマス 帰還",
-                              scale=0.1, unit="deg", decimals=1, note="出力軸角度"))
+                              scale=0.1, unit="deg", decimals=1, note="出力軸角度", zeroable=True))
     for i in range(4):
         m = i + 1
         rx.append(ChannelDef(4 + i, f"M{m} velocity", READOUT, group="ロボマス 帰還",
@@ -422,7 +428,7 @@ def make_cubemars_profile(
         m = i + 1
         group_fb = f"M{m} 帰還"
         rx.append(ChannelDef(i, f"M{m} position", READOUT, group=group_fb,
-                              scale=0.1, unit="deg", decimals=1))
+                              scale=0.1, unit="deg", decimals=1, zeroable=True))
     for i in range(4):
         m = i + 1
         group_fb = f"M{m} 帰還"
@@ -506,6 +512,7 @@ def _channel_to_dict(c: ChannelDef) -> dict:
         "index": c.index, "label": c.label, "kind": c.kind, "group": c.group,
         "min": c.min, "max": c.max, "step": c.step, "unit": c.unit,
         "scale": c.scale, "decimals": c.decimals, "options": c.options, "note": c.note,
+        "zeroable": c.zeroable,
     }
 
 
@@ -518,7 +525,7 @@ def _channel_from_dict(d: dict) -> ChannelDef:
         kind=d.get("kind", RAW_OUT), group=d.get("group", ""),
         min=d.get("min", -32768), max=d.get("max", 32767), step=d.get("step", 1),
         unit=d.get("unit", ""), scale=d.get("scale", 1.0), decimals=d.get("decimals", 0),
-        options=options, note=d.get("note", ""),
+        options=options, note=d.get("note", ""), zeroable=d.get("zeroable", False),
     )
 
 

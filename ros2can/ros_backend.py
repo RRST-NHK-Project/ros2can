@@ -38,6 +38,8 @@ from std_msgs.msg import Int16MultiArray, Int32MultiArray
 
 from PyQt5.QtCore import QObject, pyqtSignal
 
+from ros2can_interfaces.srv import ZeroChannel
+
 from .counter_unwrapper import CounterUnwrapper
 from .device_profiles import DEFAULT_PROFILE_KEY, SLOT_COUNT
 from .hardware_manager import HardwareConfig, HardwareManager
@@ -90,6 +92,15 @@ class DeviceChannel:
     unwrapped_publisher = None
     unwrappers: List[CounterUnwrapper] = field(
         default_factory=lambda: [CounterUnwrapper(_COUNTS_PER_WRAP) for _ in range(SLOT_COUNT)])
+    # _publish_unwrapped() が更新する連続値のキャッシュ(MODE_HARDWARE/MODE_SIMULATORのみ)。
+    # エンコーダ原点セット(zero_channel)がオフセットの基準として参照する。
+    rx_unwrapped: List[int] = field(default_factory=lambda: [0] * SLOT_COUNT)
+    # エンコーダ原点セット機能: マイコン側の値は変更せず、GUI側だけが保持するオフセット。
+    # 「ゼロ点からの相対値」= 現在値(rx_unwrapped、topic_clientはrx_data) - zero_offset。
+    # serial_rx_[ID]_zeroed (Int32MultiArray) として配信する(zero_channel/zero_all_channels参照)。
+    zero_offset: List[int] = field(default_factory=lambda: [0] * SLOT_COUNT)
+    # serial_rx_[ID]_zeroed (Int32MultiArray) 用。unwrapped_publisherと同じ条件でのみ作る。
+    zeroed_publisher = None
 
     @property
     def connected(self) -> bool:
@@ -132,6 +143,8 @@ class RosBackend(QObject):
         self.hardware.deviceClaimed.connect(self._on_hardware_claimed)
         self.hardware.frameReceived.connect(self._on_hardware_frame)
         self.hardware.linkStateChanged.connect(self._on_hardware_link_state)
+
+        self._create_zero_channel_service()
 
     def _load_hardware_config_from_params(self) -> HardwareConfig:
         """serial_bridge.yaml と同名のパラメータでハードウェア直結の挙動を設定する。
@@ -222,6 +235,8 @@ class RosBackend(QObject):
             Int16MultiArray, f"serial_rx_{device_id}", 10)
         ch.unwrapped_publisher = self.node.create_publisher(
             Int32MultiArray, f"serial_rx_{device_id}_unwrapped", 10)
+        ch.zeroed_publisher = self.node.create_publisher(
+            Int32MultiArray, f"serial_rx_{device_id}_zeroed", 10)
         ch.subscription = self.node.create_subscription(
             Int16MultiArray, f"serial_tx_{device_id}",
             lambda msg, did=device_id: self._on_hardware_tx_command(did, msg), 10)
@@ -292,11 +307,15 @@ class RosBackend(QObject):
         self.rxUpdated.emit(device_id)
 
     def _publish_unwrapped(self, ch: DeviceChannel) -> None:
-        if ch.unwrapped_publisher is None:
-            return
-        msg = Int32MultiArray()
-        msg.data = [u.update(v) for u, v in zip(ch.unwrappers, ch.rx_data)]
-        ch.unwrapped_publisher.publish(msg)
+        ch.rx_unwrapped = [u.update(v) for u, v in zip(ch.unwrappers, ch.rx_data)]
+        if ch.unwrapped_publisher is not None:
+            msg = Int32MultiArray()
+            msg.data = list(ch.rx_unwrapped)
+            ch.unwrapped_publisher.publish(msg)
+        if ch.zeroed_publisher is not None:
+            msg = Int32MultiArray()
+            msg.data = [u - o for u, o in zip(ch.rx_unwrapped, ch.zero_offset)]
+            ch.zeroed_publisher.publish(msg)
 
     def _on_hardware_link_state(self, device_id: int, _connected: bool) -> None:
         # デバイス一覧への反映(ポート情報等)のトリガーとして使う
@@ -328,6 +347,8 @@ class RosBackend(QObject):
             Int16MultiArray, f"serial_rx_{device_id}", 10)
         ch.unwrapped_publisher = self.node.create_publisher(
             Int32MultiArray, f"serial_rx_{device_id}_unwrapped", 10)
+        ch.zeroed_publisher = self.node.create_publisher(
+            Int32MultiArray, f"serial_rx_{device_id}_zeroed", 10)
         ch.subscription = self.node.create_subscription(
             Int16MultiArray, f"serial_tx_{device_id}",
             lambda msg, did=device_id: self._on_simulator_tx_command(did, msg), 10)
@@ -399,6 +420,71 @@ class RosBackend(QObject):
         self._publish_unwrapped(ch)
         self.rxUpdated.emit(device_id)
 
+    # ---------------- エンコーダ原点セット (zero_offset) ----------------
+    #
+    # ロボマス内蔵/CubeMars内蔵/汎用AMTエンコーダのいずれも、自動化中の脱調や
+    # 再起動をまたいだ蓄積誤差でマイコン側の値と機構上の原点がズレることがある。
+    # マイコン側の値を直接書き換える手段は無い(ロボマスの多回転カウンタや
+    # CubeMars内蔵エンコーダの生値をリセットするコマンドは実装していない)ため、
+    # ros2can側がソフトウェアオフセットを持ち、「現在値 - オフセット」を
+    # serial_rx_[ID]_zeroed (Int32MultiArray, 24スロット) として別配信する方式にした。
+    # GUI(Monitorタブの「原点セット」ボタン)、ROS 2サービス(zero_channel、外部
+    # ノードから利用可)のどちらからも同じ zero_channel()/zero_all_channels() を呼ぶ。
+    #
+    # MODE_HARDWARE/MODE_SIMULATORはPCNTラップアラウンドを解決した rx_unwrapped
+    # を基準にする(多回転する関節でズレなく原点セットできる)。MODE_TOPIC_CLIENTは
+    # ラップアラウンド解決を行っていない(counter_unwrapper.py先頭コメント参照:
+    # ROSトピック経由はサンプルが疎になり得るため誤unwrapのリスクがある)ため、
+    # 素のrx_dataを基準にする(1回のラップ幅=32768countを跨ぐ原点セットはズレ得る)。
+
+    def _current_value_for_zero(self, ch: DeviceChannel, index: int) -> int:
+        if ch.mode in (MODE_HARDWARE, MODE_SIMULATOR):
+            return ch.rx_unwrapped[index]
+        return ch.rx_data[index]
+
+    def zero_channel(self, device_id: int, index: int) -> bool:
+        """指定チャンネルについて、現在値をゼロ点として記録する(マイコン側は変更しない)。"""
+        ch = self.devices.get(device_id)
+        if ch is None or not (0 <= index < SLOT_COUNT):
+            return False
+        ch.zero_offset[index] = self._current_value_for_zero(ch, index)
+        return True
+
+    def zero_all_channels(self, device_id: int) -> bool:
+        """デバイスの全24チャンネルについて、現在値をまとめてゼロ点として記録する。"""
+        ch = self.devices.get(device_id)
+        if ch is None:
+            return False
+        for index in range(SLOT_COUNT):
+            ch.zero_offset[index] = self._current_value_for_zero(ch, index)
+        return True
+
+    def zeroed_value(self, device_id: int, index: int) -> Optional[int]:
+        """ゼロ点からの相対値(GUI表示用)。デバイス/チャンネルが無ければNone。"""
+        ch = self.devices.get(device_id)
+        if ch is None or not (0 <= index < SLOT_COUNT):
+            return None
+        return self._current_value_for_zero(ch, index) - ch.zero_offset[index]
+
+    def _create_zero_channel_service(self) -> None:
+        self.node.create_service(ZeroChannel, "zero_channel", self._on_zero_channel_request)
+
+    def _on_zero_channel_request(self, request, response):
+        device_id = request.device_id
+        index = request.channel_index
+        if index < 0:
+            ok = self.zero_all_channels(device_id)
+            target = "全チャンネル"
+        else:
+            ok = self.zero_channel(device_id, index)
+            target = f"チャンネル{index}"
+        response.success = ok
+        response.message = (
+            f"device_id={device_id} の{target}を原点セットしました" if ok
+            else f"device_id={device_id} が見つからないか、channel_indexが不正です"
+        )
+        return response
+
     # ---------------- device management: common ----------------
 
     def remove_device(self, device_id: int) -> None:
@@ -409,6 +495,8 @@ class RosBackend(QObject):
             self.node.destroy_publisher(ch.publisher)
         if ch.unwrapped_publisher is not None:
             self.node.destroy_publisher(ch.unwrapped_publisher)
+        if ch.zeroed_publisher is not None:
+            self.node.destroy_publisher(ch.zeroed_publisher)
         if ch.subscription is not None:
             self.node.destroy_subscription(ch.subscription)
         if ch.mode == MODE_HARDWARE:

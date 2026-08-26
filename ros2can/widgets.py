@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from typing import Optional
+
 from PyQt5.QtCore import Qt, QSize, pyqtSignal
 from PyQt5.QtWidgets import (
     QWidget, QLabel, QSlider, QDoubleSpinBox, QHBoxLayout,
@@ -90,9 +92,15 @@ class ChannelControlRow(QWidget):
     DIGITAL_OUT/ENUM_OUT と同じ操作系(トグル/コンボ)で問題ないため、
     仮想デバイス(simulator)のRXスロットをGUIから手動設定する用途にも
     そのまま流用する(device_panel._make_monitor_row 参照)。
+
+    chdef.zeroable=True の場合(=仮想デバイスのENC等、原点セット対象のRXを
+    このクラスで代用しているケース。TX側のchdefでzeroable=Trueになることは無い)
+    のみ「原点セット」ボタンを表示する。ChannelMonitorRowと同じ
+    zeroRequestedシグナルを発行する。
     """
 
     valueChanged = pyqtSignal(int, int)  # (slot_index, raw_value)
+    zeroRequested = pyqtSignal(int)  # chdef.index
 
     def __init__(self, chdef: ChannelDef, parent=None):
         super().__init__(parent)
@@ -172,6 +180,18 @@ class ChannelControlRow(QWidget):
             self.range_max_spin.valueChanged.connect(self._on_range_max)
             layout.addWidget(self.range_max_spin)
 
+        self.zeroed_label = None
+        if chdef.zeroable:
+            self.zeroed_label = QLabel("")
+            self.zeroed_label.setStyleSheet("color:#4a90d9;")
+            layout.addWidget(self.zeroed_label)
+            zero_btn = QPushButton("原点セット")
+            zero_btn.setToolTip(
+                "現在値をゼロ点として記録する(マイコン側の値は変更しない)。"
+                "以後、この値からの相対値を () 内と serial_rx_[ID]_zeroed に表示/配信する。")
+            zero_btn.clicked.connect(lambda: self.zeroRequested.emit(chdef.index))
+            layout.addWidget(zero_btn)
+
         self.setLayout(layout)
 
     def _emit(self, raw: int) -> None:
@@ -236,7 +256,7 @@ class ChannelControlRow(QWidget):
         self.slider.setMaximum(raw)
         self.spin.setMaximum(raw * self.chdef.scale)
 
-    def set_raw_value(self, raw: int) -> None:
+    def set_raw_value(self, raw: int, zeroed: Optional[int] = None) -> None:
         """外部(Rawタブなど)からの反映。シグナルは発行しない。"""
         self._updating = True
         try:
@@ -253,9 +273,26 @@ class ChannelControlRow(QWidget):
             self._updating = False
         self._raw_value = raw
 
+        if self.zeroed_label is not None and zeroed is not None:
+            zdisplay = self.chdef.display_value(zeroed)
+            if self.chdef.scale != 1.0:
+                self.zeroed_label.setText(f"(ゼロ点から: {zdisplay:.{max(1, self.chdef.decimals)}f})")
+            else:
+                self.zeroed_label.setText(f"(ゼロ点から: {zeroed})")
+
 
 class ChannelMonitorRow(QWidget):
-    """RX (マイコン -> ROS) の 1 チャンネル分のセンサ値表示行。"""
+    """RX (マイコン -> ROS) の 1 チャンネル分のセンサ値表示行。
+
+    chdef.zeroable=True のチャンネル(角度・位置・カウンタ等、蓄積・多回転しうる値。
+    同じREADOUT種別でも速度/電流/温度等の瞬時値には付けない)には「原点セット」
+    ボタンを表示する。押すとzeroRequestedを発行し、GUI側は
+    現在値をオフセットとして記録するだけでマイコン側の値は変更しない
+    (RosBackend.zero_channel参照)。押した後は、以後 set_raw_value に渡される
+    zeroed引数(ゼロ点からの相対値)を () 内に表示する。
+    """
+
+    zeroRequested = pyqtSignal(int)  # chdef.index
 
     def __init__(self, chdef: ChannelDef, parent=None):
         super().__init__(parent)
@@ -271,6 +308,7 @@ class ChannelMonitorRow(QWidget):
             name_label.setToolTip(chdef.note)
         layout.addWidget(name_label)
 
+        self.zeroed_label = None
         if chdef.kind == DIGITAL_IN:
             self.led = LedIndicator()
             layout.addWidget(self.led)
@@ -283,12 +321,22 @@ class ChannelMonitorRow(QWidget):
             layout.addWidget(self.value_label)
             if chdef.unit:
                 layout.addWidget(QLabel(chdef.unit))
+            if chdef.zeroable:
+                self.zeroed_label = QLabel("")
+                self.zeroed_label.setStyleSheet("color:#4a90d9;")
+                layout.addWidget(self.zeroed_label)
+                zero_btn = QPushButton("原点セット")
+                zero_btn.setToolTip(
+                    "現在値をゼロ点として記録する(マイコン側の値は変更しない)。"
+                    "以後、この値からの相対値を () 内と serial_rx_[ID]_zeroed に表示/配信する。")
+                zero_btn.clicked.connect(lambda: self.zeroRequested.emit(chdef.index))
+                layout.addWidget(zero_btn)
             layout.addStretch(1)
             self.led = None
 
         self.setLayout(layout)
 
-    def set_raw_value(self, raw: int) -> None:
+    def set_raw_value(self, raw: int, zeroed: Optional[int] = None) -> None:
         if self.chdef.kind == DIGITAL_IN:
             self.led.set_state(bool(raw))
         elif self.chdef.kind == ENUM_IN:
@@ -304,6 +352,13 @@ class ChannelMonitorRow(QWidget):
                 self.value_label.setText(f"{display:.{max(1, self.chdef.decimals)}f}")
             else:
                 self.value_label.setText(str(raw))
+
+        if self.zeroed_label is not None and zeroed is not None:
+            zdisplay = self.chdef.display_value(zeroed)
+            if self.chdef.scale != 1.0:
+                self.zeroed_label.setText(f"(ゼロ点から: {zdisplay:.{max(1, self.chdef.decimals)}f})")
+            else:
+                self.zeroed_label.setText(f"(ゼロ点から: {zeroed})")
 
 
 class RawSlotTable(QTableWidget):
