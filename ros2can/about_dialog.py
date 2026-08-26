@@ -7,6 +7,8 @@ from PyQt5.QtWidgets import QDialog, QVBoxLayout, QLabel, QDialogButtonBox
 
 from .app_info import logo_pixmap, package_version, repo_url
 
+SERIAL_BRIDGE_URL = "https://github.com/RRST-NHK-Project/serial_bridge"
+
 
 class AboutDialog(QDialog):
     def __init__(self, parent=None):
@@ -26,7 +28,9 @@ class AboutDialog(QDialog):
         version_label.setAlignment(Qt.AlignCenter)
         layout.addWidget(version_label)
 
-        powered_by_label = QLabel("Powered By serial_bridge")
+        powered_by_label = QLabel(
+            f'Powered By <a href="{SERIAL_BRIDGE_URL}">serial_bridge</a>')
+        powered_by_label.setOpenExternalLinks(True)
         powered_by_label.setAlignment(Qt.AlignCenter)
         powered_by_label.setStyleSheet("color: #888;")
         powered_by_label.setToolTip("ros2can は serial_bridge をベースに開発しています。")
