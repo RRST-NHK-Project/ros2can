@@ -31,6 +31,11 @@ DEFAULT_SETTINGS: Dict[str, Any] = {
     "scan_interval_ms": 5000,
     "probe_timeout_sec": 2.0,
     "probe_settle_sec": 0.5,
+    # device_id とプロファイルキーの対応表。"device_id:profile_key" 形式の文字列の
+    # リスト (ROS 2 パラメータは辞書型を直接扱えないため文字列配列で表現する)。
+    # 新規デバイス検出時、ここに載っているdevice_idはそのプロファイルを初期選択する。
+    # 例: ["101:cubemars_ak_driver", "102:robomas_driver"]
+    "device_profile_map": [],
 }
 
 
@@ -91,3 +96,19 @@ def reset_user_settings() -> None:
     path = user_settings_path()
     if os.path.exists(path):
         os.remove(path)
+
+
+def parse_device_profile_map(raw: Any) -> Dict[int, str]:
+    """device_profile_map設定 (["101:cubemars_ak_driver", ...] 形式) を
+    {device_id: profile_key} の辞書に変換する。"id:key" の形になっていない要素は無視する。"""
+    result: Dict[int, str] = {}
+    for entry in raw or []:
+        if not isinstance(entry, str) or ":" not in entry:
+            continue
+        id_part, _, key_part = entry.partition(":")
+        id_part = id_part.strip()
+        key_part = key_part.strip()
+        if not id_part.isdigit() or not key_part:
+            continue
+        result[int(id_part)] = key_part
+    return result

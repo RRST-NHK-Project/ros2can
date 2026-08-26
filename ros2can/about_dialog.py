@@ -26,6 +26,12 @@ class AboutDialog(QDialog):
         version_label.setAlignment(Qt.AlignCenter)
         layout.addWidget(version_label)
 
+        powered_by_label = QLabel("Powered By serial_bridge")
+        powered_by_label.setAlignment(Qt.AlignCenter)
+        powered_by_label.setStyleSheet("color: #888;")
+        powered_by_label.setToolTip("ros2can は serial_bridge をベースに開発しています。")
+        layout.addWidget(powered_by_label)
+
         url = repo_url()
         if url:
             link_label = QLabel(f'<a href="{url}">{url}</a>')

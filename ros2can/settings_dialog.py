@@ -8,21 +8,28 @@
 
 from __future__ import annotations
 
+from typing import Dict, Optional
+
 from PyQt5.QtWidgets import (
     QDialog, QVBoxLayout, QFormLayout, QHBoxLayout, QLineEdit,
     QDoubleSpinBox, QSpinBox, QLabel, QDialogButtonBox, QPushButton,
+    QGroupBox, QTableWidget, QComboBox, QMessageBox, QHeaderView,
 )
 
 from . import settings_store
 from .hardware_manager import HardwareConfig
+from .device_profiles import all_profiles
 
 
 class SettingsDialog(QDialog):
-    def __init__(self, config: HardwareConfig, parent=None):
+    def __init__(self, config: HardwareConfig, device_profile_map: Dict[int, str], parent=None):
         super().__init__(parent)
         self.setWindowTitle("設定")
-        self.resize(480, 320)
+        self.resize(560, 620)
         self._config = config
+        # 呼び出し元 (RosBackend) が持つ辞書そのものへの参照。保存時はこれを
+        # in-place で更新する(config の各属性を直接書き換えているのと同じ方式)。
+        self._device_profile_map = device_profile_map
 
         layout = QVBoxLayout(self)
         note = QLabel(
@@ -71,6 +78,36 @@ class SettingsDialog(QDialog):
 
         layout.addLayout(form)
 
+        map_group = QGroupBox("device_id ↔ プロファイル対応表")
+        map_layout = QVBoxLayout(map_group)
+        map_note = QLabel(
+            "ここに登録したdevice_idのデバイスが検出されると、対応するプロファイルが\n"
+            "自動的に初期選択されます(GUIで手動選択したプロファイルはこの表を上書きしません)。\n"
+            "チーム共通の既定値にしたい場合は、保存後に config/ros2can.yaml の\n"
+            "device_profile_map へ転記してください。")
+        map_note.setStyleSheet("color: #888;")
+        map_layout.addWidget(map_note)
+
+        self.profile_map_table = QTableWidget(0, 2)
+        self.profile_map_table.setHorizontalHeaderLabels(["Device ID", "プロファイル"])
+        self.profile_map_table.horizontalHeader().setSectionResizeMode(1, QHeaderView.Stretch)
+        self.profile_map_table.verticalHeader().setVisible(False)
+        for device_id, profile_key in sorted(device_profile_map.items()):
+            self._add_profile_map_row(device_id, profile_key)
+        map_layout.addWidget(self.profile_map_table)
+
+        map_btn_row = QHBoxLayout()
+        add_row_btn = QPushButton("行を追加")
+        add_row_btn.clicked.connect(lambda: self._add_profile_map_row())
+        map_btn_row.addWidget(add_row_btn)
+        remove_row_btn = QPushButton("選択行を削除")
+        remove_row_btn.clicked.connect(self._on_remove_profile_map_row)
+        map_btn_row.addWidget(remove_row_btn)
+        map_btn_row.addStretch(1)
+        map_layout.addLayout(map_btn_row)
+
+        layout.addWidget(map_group)
+
         reset_row = QHBoxLayout()
         reset_btn = QPushButton("既定値を読み込む (config/ros2can.yaml)")
         reset_btn.setToolTip("ローカルの上書きは保存するまで反映されません。")
@@ -93,10 +130,66 @@ class SettingsDialog(QDialog):
         self.probe_timeout_spin.setValue(defaults.get("probe_timeout_sec", 2.0))
         self.probe_settle_spin.setValue(defaults.get("probe_settle_sec", 0.5))
 
+        self.profile_map_table.setRowCount(0)
+        default_map = settings_store.parse_device_profile_map(defaults.get("device_profile_map", []))
+        for device_id, profile_key in sorted(default_map.items()):
+            self._add_profile_map_row(device_id, profile_key)
+
+    # ---------------- device_id <-> プロファイル対応表 ----------------
+
+    def _add_profile_map_row(self, device_id: int = 0, profile_key: Optional[str] = None) -> None:
+        row = self.profile_map_table.rowCount()
+        self.profile_map_table.insertRow(row)
+
+        id_spin = QSpinBox()
+        id_spin.setRange(0, 255)
+        id_spin.setValue(device_id)
+        self.profile_map_table.setCellWidget(row, 0, id_spin)
+
+        combo = QComboBox()
+        profiles = all_profiles()
+        # 未知のプロファイルキー(カスタムプロファイルが削除された等)を選択肢に無い
+        # まま保存してしまうと別プロファイルにすり替わるため、先頭にそのまま残す。
+        if profile_key and profile_key not in profiles:
+            combo.addItem(f"(不明なプロファイル: {profile_key})", profile_key)
+        current_index = 0
+        for key in sorted(profiles.keys(), key=lambda k: profiles[k].name):
+            combo.addItem(profiles[key].name, key)
+            combo.setItemData(combo.count() - 1, profiles[key].description, 3)  # Qt.ToolTipRole
+            if key == profile_key:
+                current_index = combo.count() - 1
+        combo.setCurrentIndex(current_index)
+        self.profile_map_table.setCellWidget(row, 1, combo)
+
+    def _on_remove_profile_map_row(self) -> None:
+        row = self.profile_map_table.currentRow()
+        if row >= 0:
+            self.profile_map_table.removeRow(row)
+
+    def _collect_device_profile_map(self) -> Optional[Dict[int, str]]:
+        mapping: Dict[int, str] = {}
+        for row in range(self.profile_map_table.rowCount()):
+            id_spin = self.profile_map_table.cellWidget(row, 0)
+            combo = self.profile_map_table.cellWidget(row, 1)
+            device_id = id_spin.value()
+            profile_key = combo.currentData()
+            if device_id in mapping:
+                QMessageBox.warning(
+                    self, "設定",
+                    f"Device ID {device_id} が対応表に複数回指定されています。"
+                    "重複行を削除してから保存してください。")
+                return None
+            mapping[device_id] = profile_key
+        return mapping
+
     def _on_save(self) -> None:
         excluded = sorted({
             p.strip() for p in self.excluded_ports_edit.text().split(",") if p.strip()
         })
+        device_profile_map = self._collect_device_profile_map()
+        if device_profile_map is None:
+            return
+
         values = {
             "excluded_ports": excluded,
             "rx_timeout_sec": self.rx_timeout_spin.value(),
@@ -104,6 +197,10 @@ class SettingsDialog(QDialog):
             "scan_interval_ms": self.scan_interval_spin.value(),
             "probe_timeout_sec": self.probe_timeout_spin.value(),
             "probe_settle_sec": self.probe_settle_spin.value(),
+            "device_profile_map": [
+                f"{device_id}:{profile_key}"
+                for device_id, profile_key in sorted(device_profile_map.items())
+            ],
         }
 
         self._config.excluded_ports = set(excluded)
@@ -112,6 +209,8 @@ class SettingsDialog(QDialog):
         self._config.scan_interval_sec = values["scan_interval_ms"] / 1000.0
         self._config.probe_timeout_sec = values["probe_timeout_sec"]
         self._config.probe_settle_sec = values["probe_settle_sec"]
+        self._device_profile_map.clear()
+        self._device_profile_map.update(device_profile_map)
 
         settings_store.save_user_settings(values)
         self.accept()

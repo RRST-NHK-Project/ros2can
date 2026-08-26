@@ -43,7 +43,7 @@ from ros2can_interfaces.srv import ZeroChannel
 from .counter_unwrapper import CounterUnwrapper
 from .device_profiles import DEFAULT_PROFILE_KEY, SLOT_COUNT
 from .hardware_manager import HardwareConfig, HardwareManager
-from .settings_store import load_settings
+from .settings_store import load_settings, parse_device_profile_map
 
 TOPIC_RE = re.compile(r"^/?(serial_tx|serial_rx)_(\d+)$")
 
@@ -135,6 +135,7 @@ class RosBackend(QObject):
         super().__init__()
         self.node: Node = rclpy.create_node(node_name)
         self.devices: Dict[int, DeviceChannel] = {}
+        self.device_profile_map: Dict[int, str] = self._load_device_profile_map_from_params()
 
         if hardware_config is None:
             hardware_config = self._load_hardware_config_from_params()
@@ -145,6 +146,20 @@ class RosBackend(QObject):
         self.hardware.linkStateChanged.connect(self._on_hardware_link_state)
 
         self._create_zero_channel_service()
+
+    def _load_device_profile_map_from_params(self) -> Dict[int, str]:
+        """device_id とプロファイルキーの対応表 (settings_store.py の
+        device_profile_map、config/ros2can.yaml や ~/.config/ros2can/settings.yaml、
+        あるいは launch から渡されるROS 2パラメータで上書き可能) を読み込む。
+        新規デバイス検出時の初期プロファイル選択 (_initial_profile_key) に使う。"""
+        defaults = load_settings()
+        self.node.declare_parameter(
+            "device_profile_map", [str(v) for v in defaults["device_profile_map"]])
+        raw = self.node.get_parameter("device_profile_map").value or []
+        return parse_device_profile_map(raw)
+
+    def _initial_profile_key(self, device_id: int) -> str:
+        return self.device_profile_map.get(device_id, DEFAULT_PROFILE_KEY)
 
     def _load_hardware_config_from_params(self) -> HardwareConfig:
         """serial_bridge.yaml と同名のパラメータでハードウェア直結の挙動を設定する。
@@ -209,7 +224,9 @@ class RosBackend(QObject):
         if device_id in self.devices:
             return self.devices[device_id]
 
-        ch = DeviceChannel(device_id=device_id, mode=MODE_TOPIC_CLIENT, manual=manual)
+        ch = DeviceChannel(
+            device_id=device_id, mode=MODE_TOPIC_CLIENT, manual=manual,
+            profile_key=self._initial_profile_key(device_id))
         ch.publisher = self.node.create_publisher(
             Int16MultiArray, f"serial_tx_{device_id}", 10)
         ch.subscription = self.node.create_subscription(
@@ -260,7 +277,9 @@ class RosBackend(QObject):
                 self.deviceListChanged.emit()
             return
 
-        ch = DeviceChannel(device_id=device_id, mode=MODE_HARDWARE, port=port, manual=False)
+        ch = DeviceChannel(
+            device_id=device_id, mode=MODE_HARDWARE, port=port, manual=False,
+            profile_key=self._initial_profile_key(device_id))
         self._attach_hardware_pubsub(ch, device_id)
         self.devices[device_id] = ch
         self.deviceListChanged.emit()
@@ -340,9 +359,9 @@ class RosBackend(QObject):
         if device_id in self.devices:
             return self.devices[device_id]
 
-        ch = DeviceChannel(device_id=device_id, mode=MODE_SIMULATOR, manual=True)
-        if profile_key:
-            ch.profile_key = profile_key
+        ch = DeviceChannel(
+            device_id=device_id, mode=MODE_SIMULATOR, manual=True,
+            profile_key=profile_key or self._initial_profile_key(device_id))
         ch.publisher = self.node.create_publisher(
             Int16MultiArray, f"serial_rx_{device_id}", 10)
         ch.unwrapped_publisher = self.node.create_publisher(

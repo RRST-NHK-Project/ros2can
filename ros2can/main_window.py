@@ -13,6 +13,7 @@ from PyQt5.QtWidgets import (
     QMainWindow, QListWidget, QListWidgetItem,
     QToolBar, QAction, QLabel, QInputDialog,
     QMessageBox, QSplitter, QMenu, QWidget, QSizePolicy,
+    QVBoxLayout,
 )
 
 from .ros_backend import RosBackend
@@ -57,17 +58,33 @@ class MainWindow(QMainWindow):
         splitter.addWidget(self.device_list)
 
         self.stack = SizedStackedWidget()
-        self.placeholder = QLabel(
-            "マイコンが検出されていません。\n\n"
+        self.placeholder = QWidget()
+        placeholder_layout = QVBoxLayout(self.placeholder)
+        placeholder_layout.addStretch(2)
+
+        placeholder_text = QLabel(
+            "マイコン(CANホスト)が検出されていません。\n\n"
             "・xiao_esp32_s3_smd_serial_bridge (MODE_CAN_HOST) または serial_bridge の\n"
-            "  ファームウェアを書き込んだマイコンをUSB接続してください。ros2can が\n"
-            "  自動検出します。\n"
+            "  ファームウェアを書き込んだマイコンをUSB接続してください。\n"
+            "  ros2can が自動検出します。\n"
             "・別プロセスが既に握っているトピックに相乗りしたい場合は、\n"
             "  上部の「デバイスを手動追加」を使用してください。\n"
-            "・実機なしで動作確認をしたい場合は、上部の「デバッグデバイスを追加」\n"
-            "  から仮想デバイスを追加してください(TXの値がそのままRXにループバックされます)。")
-        self.placeholder.setAlignment(Qt.AlignCenter)
-        self.placeholder.setStyleSheet("color: #888; font-size: 11pt;")
+            "・実機なしで動作確認をしたい場合は、上部の「デバッグデバイスを追加」から\n"
+            "  仮想デバイスを追加してください(TXの値がそのままRXにループバックされます)。")
+        placeholder_text.setAlignment(Qt.AlignCenter)
+        placeholder_text.setStyleSheet("color: #888; font-size: 11pt;")
+        placeholder_layout.addWidget(placeholder_text)
+        placeholder_layout.addStretch(2)
+
+        pixmap = logo_pixmap()
+        if pixmap is not None:
+            placeholder_logo = QLabel()
+            placeholder_logo.setPixmap(pixmap.scaledToHeight(160, Qt.SmoothTransformation))
+            placeholder_logo.setAlignment(Qt.AlignCenter)
+            placeholder_layout.addWidget(placeholder_logo)
+
+        placeholder_layout.addStretch(2)
+
         self.stack.addWidget(self.placeholder)
         splitter.addWidget(self.stack)
         splitter.setStretchFactor(0, 0)
@@ -190,7 +207,7 @@ class MainWindow(QMainWindow):
         self._can_monitor_dialog.activateWindow()
 
     def _on_open_settings(self) -> None:
-        SettingsDialog(self.backend.hardware.config, self).exec_()
+        SettingsDialog(self.backend.hardware.config, self.backend.device_profile_map, self).exec_()
 
     def _on_open_about(self) -> None:
         AboutDialog(self).exec_()

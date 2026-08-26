@@ -21,3 +21,15 @@ ros2can_gui:
 
     # ポートを開いた直後の安定待ち時間（秒）: USB CDCの立ち上がり待ち
     probe_settle_sec: 0.5
+
+    # device_id とプロファイルキーの対応表。"device_id:profile_key" 形式の文字列で
+    # 列挙する(ROS 2 パラメータが辞書型を扱えないため文字列配列で表現している)。
+    # ここに載っているdevice_idを持つデバイスが検出されると、そのプロファイルが
+    # 初期選択される(GUIで手動選択したプロファイルはこの表を上書きしない)。
+    # profile_keyは device_profiles.py の BUILTIN_PROFILES のキー、または
+    # カスタムプロファイル(プロファイル編集で保存したもの)のキーを指定する。
+    # 例:
+    #   device_profile_map:
+    #     - "101:cubemars_ak_driver"
+    #     - "102:robomas_driver"
+    device_profile_map: []
