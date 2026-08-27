@@ -23,6 +23,7 @@ from .widgets import SizedStackedWidget
 from .app_info import logo_pixmap, package_version
 from .settings_dialog import SettingsDialog
 from .about_dialog import AboutDialog
+from .encoder_init_panel import EncoderInitPanel
 
 UI_REFRESH_MS = 200
 TOPIC_RESCAN_MS = 1000
@@ -53,6 +54,12 @@ class MainWindow(QMainWindow):
         self.device_list.setMinimumWidth(220)
         self.device_list.setMaximumWidth(320)
         self.device_list.currentItemChanged.connect(self._on_selection_changed)
+        # currentItemChanged は選択が実際に変わった時しか発火しないため、
+        # 「エンコーダ初期化」ページ(device_listの選択とは独立にstackを切り替える)
+        # から、既に選択済みだったデバイス行を再クリックして戻ろうとしても
+        # 反応しない問題があった。クリックには常に反応するitemClickedも
+        # 併用し、同じ行の再クリックでも該当パネルへ確実に戻れるようにする。
+        self.device_list.itemClicked.connect(self._on_device_item_clicked)
         self.device_list.setContextMenuPolicy(Qt.CustomContextMenu)
         self.device_list.customContextMenuRequested.connect(self._on_device_list_context_menu)
         splitter.addWidget(self.device_list)
@@ -86,6 +93,10 @@ class MainWindow(QMainWindow):
         placeholder_layout.addStretch(2)
 
         self.stack.addWidget(self.placeholder)
+
+        self.encoder_panel = EncoderInitPanel(self.backend)
+        self.stack.addWidget(self.encoder_panel)
+
         splitter.addWidget(self.stack)
         splitter.setStretchFactor(0, 0)
         splitter.setStretchFactor(1, 1)
@@ -95,6 +106,7 @@ class MainWindow(QMainWindow):
         self.statusBar().showMessage("起動しました。トピックをスキャンしています…")
 
         self.backend.deviceListChanged.connect(self._refresh_device_list)
+        self.backend.deviceListChanged.connect(self.encoder_panel.rebuild)
         self.backend.rxUpdated.connect(self._on_rx_updated)
         # backend にコンストラクタ時点で既に登録済みのデバイスがあれば取りこぼさないよう反映する
         self._refresh_device_list()
@@ -130,6 +142,13 @@ class MainWindow(QMainWindow):
             "TXに書き込んだ値がそのままRXへループバックされます。")
         add_debug_action.triggered.connect(self._on_add_debug_device)
         toolbar.addAction(add_debug_action)
+
+        encoder_init_action = QAction("🧭 エンコーダ初期化…", self)
+        encoder_init_action.setToolTip(
+            "検出済み全デバイスの原点セット対象チャンネル(角度/位置/カウンタ系)を"
+            "1画面にまとめて表示し、行/デバイス単位/全デバイス一括で原点セットできます。")
+        encoder_init_action.triggered.connect(self._on_open_encoder_init)
+        toolbar.addAction(encoder_init_action)
 
         can_monitor_action = QAction("CANモニター…", self)
         can_monitor_action.setToolTip(
@@ -197,6 +216,20 @@ class MainWindow(QMainWindow):
         self.backend.add_simulated_device(device_id)
         self._refresh_device_list()
         self._select_device(device_id)
+
+    def _on_open_encoder_init(self) -> None:
+        """全デバイス横断のエンコーダ初期化ページに切り替える。
+
+        device_list の選択とは独立させてある: QListWidget は最初に表示された
+        時点で選択が無ければ先頭の項目を自動選択してしまう(Qtの仕様)ため、
+        このページを device_list の項目として組み込むと、実機がまだ検出
+        されていない起動直後にこのページが勝手に自動選択されてしまい、
+        かつ以後は「未選択なら実デバイスを自動選択する」ロジックも働かなく
+        なる不具合があった。ツールバーの独立ボタンにすることでその影響を
+        受けないようにしている。
+        """
+        self.encoder_panel.rebuild()
+        self.stack.setCurrentWidget(self.encoder_panel)
 
     def _on_open_can_monitor(self) -> None:
         """MODE_CAN_MONITOR機のシリアル出力を見るための独立ウィンドウを開く(モードレス)。"""
@@ -284,6 +317,12 @@ class MainWindow(QMainWindow):
         if panel is not None:
             self.stack.setCurrentWidget(panel)
 
+    def _on_device_item_clicked(self, item: QListWidgetItem) -> None:
+        device_id = item.data(Qt.UserRole)
+        panel = self.panels.get(device_id)
+        if panel is not None:
+            self.stack.setCurrentWidget(panel)
+
     def _select_device(self, device_id: int) -> None:
         for i in range(self.device_list.count()):
             item = self.device_list.item(i)
@@ -303,6 +342,8 @@ class MainWindow(QMainWindow):
         current = self.stack.currentWidget()
         if isinstance(current, DevicePanel):
             current.refresh_from_rx()
+        elif current is self.encoder_panel:
+            self.encoder_panel.refresh_values()
         connected = sum(1 for c in self.backend.devices.values() if c.connected)
         direct = sum(1 for c in self.backend.devices.values() if c.direct_tx)
         self.statusBar().showMessage(
