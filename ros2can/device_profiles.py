@@ -70,12 +70,6 @@ class ChannelDef:
     # 角度・位置・カウンタ等、蓄積されて機構上の原点とズレうる値にのみTrueにする。
     # 同じREADOUT種別でも速度/電流/温度等の瞬時値には付けない(原点という概念が無い)。
     zeroable: bool = False
-    # RosBackendの_unwrapped(CounterUnwrapper)がこのチャンネルに使うラップ幅。
-    # Noneなら既定値(ros_backend.py _COUNTS_PER_WRAP=32768、PCNT駆動カウンタ実測値)
-    # を使う。CAN受信バイト列を直接int16化しただけでPCNTを経由しない値(CubeMars
-    # M{n} position等)は標準的な2の補数の65536幅でラップするはずなのでここで
-    # 上書きする(counter_unwrapper.py冒頭コメント参照)。
-    wrap_counts: Optional[int] = None
 
     def display_value(self, raw: int) -> float:
         return raw * self.scale
@@ -437,11 +431,7 @@ def make_cubemars_profile(
         m = i + 1
         group_fb = f"M{m} 帰還"
         rx.append(ChannelDef(i, f"M{m} position", READOUT, group=group_fb,
-                              scale=0.1, unit="deg", decimals=1, zeroable=True,
-                              wrap_counts=65536,
-                              note="CAN受信バイト列を直接int16化した値(PCNT非経由)。"
-                                   "_unwrappedは標準的な2の補数65536幅でラップする"
-                                   "前提で復元する(counter_unwrapper.py参照)"))
+                              scale=0.1, unit="deg", decimals=1, zeroable=True))
     for i in range(4):
         m = i + 1
         group_fb = f"M{m} 帰還"
@@ -529,7 +519,7 @@ def _channel_to_dict(c: ChannelDef) -> dict:
         "index": c.index, "label": c.label, "kind": c.kind, "group": c.group,
         "min": c.min, "max": c.max, "step": c.step, "unit": c.unit,
         "scale": c.scale, "decimals": c.decimals, "options": c.options, "note": c.note,
-        "zeroable": c.zeroable, "wrap_counts": c.wrap_counts,
+        "zeroable": c.zeroable,
     }
 
 
@@ -543,7 +533,6 @@ def _channel_from_dict(d: dict) -> ChannelDef:
         min=d.get("min", -32768), max=d.get("max", 32767), step=d.get("step", 1),
         unit=d.get("unit", ""), scale=d.get("scale", 1.0), decimals=d.get("decimals", 0),
         options=options, note=d.get("note", ""), zeroable=d.get("zeroable", False),
-        wrap_counts=d.get("wrap_counts"),
     )
 
 

@@ -32,15 +32,6 @@ h_lim=32767, l_lim=-32768 から、このリセット幅は正負どちらの方
 (静止中のノイズ程度の微小変動を含む)は、この判定を一切使わず素直に絶対値最小を
 採用する(曖昧でない場合にまでトレンド判定を適用すると、静止中の符号反転する
 微小ノイズを誤って1周期分の大ジャンプとして扱ってしまうため)。
-
-[counts_per_wrapはチャンネルの生成元ごとに異なりうる]
-上記32768はPCNT駆動のカウンタ(ENC1/ENC2等)に限った実測値。CubeMars AKシリーズの
-M{n} positionのようにCAN受信バイト列を直接int16へキャストしただけの値
-(firmware/xiao-esp32-s3_can2io/src/cubemars.cpp参照、PCNTを一切経由しない)は、
-標準的な2の補数の65536幅でラップする(= 32767の次は-32768、その逆も同様)はずで、
-これは32768とは異なる。呼び出し元(RosBackend._sync_wrap_counts)は
-ChannelDef.wrap_counts(device_profiles.py)を見てチャンネルごとにset_counts_per_wrap()
-で上書きする。
 """
 
 from __future__ import annotations
@@ -56,7 +47,6 @@ class CounterUnwrapper:
         trend_noise_floor: int = 4,
     ) -> None:
         self._counts_per_wrap = counts_per_wrap
-        self._ambiguous_margin_ratio = ambiguous_margin_ratio
         self._half_wrap = counts_per_wrap / 2.0
         self._ambiguous_threshold = self._half_wrap * (1.0 - ambiguous_margin_ratio)
         self._trend_noise_floor = trend_noise_floor
@@ -69,21 +59,6 @@ class CounterUnwrapper:
         self._prev_raw = None
         self._unwrapped = 0
         self._trend_sign = 0
-
-    def set_counts_per_wrap(self, counts_per_wrap: int) -> None:
-        """ラップ幅を変更する(蓄積済みのunwrapped値・履歴はリセットしない)。
-
-        呼び出し元(RosBackend._sync_wrap_counts)はプロファイル切替時にのみ呼ぶ
-        想定。生成元によってラップ幅が異なるチャンネル(例: CubeMarsのM{n}
-        positionはCANペイロードのint16そのままなので標準的な2の補数65536幅で
-        ラップするはずで、PCNTカウンタ(ENC等)向けの既定32768とは異なる。
-        device_profiles.py の ChannelDef.wrap_counts / counter_unwrapper.py
-        冒頭コメント参照)。"""
-        if counts_per_wrap == self._counts_per_wrap:
-            return
-        self._counts_per_wrap = counts_per_wrap
-        self._half_wrap = counts_per_wrap / 2.0
-        self._ambiguous_threshold = self._half_wrap * (1.0 - self._ambiguous_margin_ratio)
 
     def update(self, raw: int) -> int:
         if self._prev_raw is None:
