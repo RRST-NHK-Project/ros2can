@@ -41,7 +41,7 @@ from PyQt5.QtCore import QObject, pyqtSignal
 from ros2can_interfaces.srv import ZeroChannel
 
 from .counter_unwrapper import CounterUnwrapper
-from .device_profiles import DEFAULT_PROFILE_KEY, SLOT_COUNT
+from .device_profiles import DEFAULT_PROFILE_KEY, SLOT_COUNT, all_profiles
 from .hardware_manager import HardwareConfig, HardwareManager
 from .settings_store import load_settings, parse_device_profile_map
 
@@ -92,6 +92,10 @@ class DeviceChannel:
     unwrapped_publisher = None
     unwrappers: List[CounterUnwrapper] = field(
         default_factory=lambda: [CounterUnwrapper(_COUNTS_PER_WRAP) for _ in range(SLOT_COUNT)])
+    # _sync_wrap_counts()が最後にunwrappersへ反映したprofile_key。all_profiles()は
+    # ディスクI/Oを伴うため、profile_keyが変わった(=プロファイル切替が起きた)ときだけ
+    # 再計算するためのキャッシュキー。
+    _wrap_counts_profile_key: Optional[str] = None
     # _publish_unwrapped() が更新する連続値のキャッシュ(MODE_HARDWARE/MODE_SIMULATORのみ)。
     # エンコーダ原点セット(zero_channel)がオフセットの基準として参照する。
     rx_unwrapped: List[int] = field(default_factory=lambda: [0] * SLOT_COUNT)
@@ -325,7 +329,26 @@ class RosBackend(QObject):
         self._publish_unwrapped(ch)
         self.rxUpdated.emit(device_id)
 
+    def _sync_wrap_counts(self, ch: DeviceChannel) -> None:
+        """チャンネルのunwrappersのラップ幅を、現在のプロファイル定義
+        (ChannelDef.wrap_counts、device_profiles.py参照)に合わせる。
+
+        既定の_COUNTS_PER_WRAP(32768)はPCNT駆動カウンタ(ENC等)向けの実測値で、
+        CubeMarsのM{n} positionのようにPCNTを経由しない値には合わない
+        (counter_unwrapper.py冒頭コメント参照)。all_profiles()はディスクの
+        カスタムプロファイルを読むため、profile_key不変の間はスキップする。"""
+        if ch.profile_key == ch._wrap_counts_profile_key:
+            return
+        profile = all_profiles().get(ch.profile_key)
+        rx_by_index = profile.rx_by_index() if profile is not None else {}
+        for index, unwrapper in enumerate(ch.unwrappers):
+            chdef = rx_by_index.get(index)
+            counts = chdef.wrap_counts if (chdef is not None and chdef.wrap_counts) else _COUNTS_PER_WRAP
+            unwrapper.set_counts_per_wrap(counts)
+        ch._wrap_counts_profile_key = ch.profile_key
+
     def _publish_unwrapped(self, ch: DeviceChannel) -> None:
+        self._sync_wrap_counts(ch)
         ch.rx_unwrapped = [u.update(v) for u, v in zip(ch.unwrappers, ch.rx_data)]
         if ch.unwrapped_publisher is not None:
             msg = Int32MultiArray()

@@ -77,3 +77,44 @@ def test_reset_clears_state():
     u.update(-32000)
     u.reset()
     assert u.update(5) == 5
+
+
+def _to_twos_complement_int16(true_val: int) -> int:
+    """CubeMars M{n} positionのような、CAN受信バイト列を直接int16化しただけの値を模す
+    (標準的な2の補数、全域65536幅で単純にロールオーバーする)。"""
+    v = true_val % 65536
+    return v - 65536 if v >= 32768 else v
+
+
+def test_set_counts_per_wrap_unwraps_standard_twos_complement_int16():
+    # 既定(PCNT向け32768)のままだとCubeMarsのような標準int16ラップ(65536幅)を
+    # 誤って復元することの確認、およびset_counts_per_wrap(65536)でこれが直ることの確認。
+    # root_theta_jointの外部減速(96/7)相当で、AK40-10出力軸が継続回転するケースを模す。
+    u_wrong = CounterUnwrapper(32768)
+    u_fixed = CounterUnwrapper(65536)
+    u_fixed.set_counts_per_wrap(65536)
+    true_val = 0
+    mismatched = False
+    for _ in range(4000):
+        true_val += 97  # 継続回転(片方向)
+        raw = _to_twos_complement_int16(true_val)
+        if u_wrong.update(raw) != true_val:
+            mismatched = True
+        assert u_fixed.update(raw) == true_val
+    assert mismatched, "32768固定のままでは標準2の補数ラップで復元を誤るはず"
+
+
+def test_set_counts_per_wrap_is_noop_when_unchanged():
+    u = CounterUnwrapper(65536)
+    u.update(100)
+    u.set_counts_per_wrap(65536)
+    assert u.update(200) == 200
+
+
+def test_set_counts_per_wrap_preserves_accumulated_value():
+    u = CounterUnwrapper(32768)
+    u.update(1000)
+    u.update(2000)
+    before = u.update(3000)
+    u.set_counts_per_wrap(65536)
+    assert u.update(3100) == before + 100

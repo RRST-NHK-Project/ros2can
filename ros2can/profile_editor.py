@@ -32,6 +32,9 @@ class _SlotTable(QTableWidget):
     def __init__(self, kinds: List[str], parent=None):
         super().__init__(SLOT_COUNT, len(COLUMNS), parent)
         self.kinds = kinds
+        # zeroable/wrap_counts等、このテーブルの列に無い属性をcollect()で失わない
+        # ようload()時点の元定義を保持しておく(index -> ChannelDef)。
+        self._original_by_index: dict = {}
         self.setHorizontalHeaderLabels(COLUMNS)
         self.verticalHeader().setVisible(False)
         for i in range(SLOT_COUNT):
@@ -55,6 +58,7 @@ class _SlotTable(QTableWidget):
 
     def load(self, defs: List[ChannelDef]) -> None:
         by_index = {c.index: c for c in defs}
+        self._original_by_index = by_index
         for i in range(SLOT_COUNT):
             c = by_index.get(i)
             if c is None:
@@ -91,9 +95,15 @@ class _SlotTable(QTableWidget):
             except ValueError:
                 scale = 1.0
             note = self.item(i, 8).text().strip()
+            # このテーブルに列の無い属性(zeroable/wrap_counts)は元定義から引き継ぐ
+            # (無いとload()前の値に静かに戻ってしまう。例: CubeMarsのM{n} positionの
+            # wrap_counts=65536をプロファイル編集で保存すると失われる不具合になる)。
+            orig = self._original_by_index.get(i)
             result.append(ChannelDef(
                 index=i, label=label, kind=kind, group=group,
                 min=min_v, max=max_v, unit=unit, scale=scale, note=note,
+                zeroable=orig.zeroable if orig is not None else False,
+                wrap_counts=orig.wrap_counts if orig is not None else None,
             ))
         return result
 
