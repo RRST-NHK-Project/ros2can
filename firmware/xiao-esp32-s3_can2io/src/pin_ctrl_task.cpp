@@ -13,6 +13,7 @@ Copyright (c) 2025 RRST-NHK-Project. All rights reserved.
 
 constexpr uint32_t CTRL_PERIOD_MS = 5; // ピン更新周期（ミリ秒）
 
+void IO_MD_Output();
 void IO_Servo_Outout();
 void IO_ENC_Input();
 void IO_SW_Input();
@@ -26,6 +27,7 @@ void IO_Task(void *) {
     IO_init();
 
     while (1) {
+        IO_MD_Output();
         IO_Servo_Outout();
         IO_ENC_Input();
         IO_SW_Input();
@@ -35,7 +37,35 @@ void IO_Task(void *) {
 
 // ================= 関数 =================
 // マイコンや基板の不具合に対応するためにfor文は使っていない
-// 実機は DCモータ非搭載 (ENCx2, SWx3, SERVOx3のみ。SW/SERVOはピン共有でconfig.hppのMULTI1-3により切替)
+// 実機は ENCx2, SWx3, SERVOx3のみ (SW/SERVOはピン共有でconfig.hppのMULTI1-3により切替、
+// ENC/MDはピン共有でconfig.hppのENC1_MD/ENC2_MDにより切替)
+
+void IO_MD_Output() {
+    // MD出力処理 (ENC1_MD/ENC2_MDでMDに切替えたチャンネルのみ)
+#if defined(MODE_CAN) || defined(MODE_CAN_HOST)
+#if ENC1_MD == 1
+    int md1 = constrain((int)CanIoRxData[3], -MD_PWM_MAX, MD_PWM_MAX);
+    digitalWrite(MD1D, md1 > 0 ? HIGH : LOW);
+    ledcWrite(0, abs(md1));
+#endif
+#if ENC2_MD == 1
+    int md2 = constrain((int)CanIoRxData[4], -MD_PWM_MAX, MD_PWM_MAX);
+    digitalWrite(MD2D, md2 > 0 ? HIGH : LOW);
+    ledcWrite(1, abs(md2));
+#endif
+#else
+#if ENC1_MD == 1
+    int md1 = constrain((int)Rx_16Data[1], -MD_PWM_MAX, MD_PWM_MAX);
+    digitalWrite(MD1D, md1 > 0 ? HIGH : LOW);
+    ledcWrite(0, abs(md1));
+#endif
+#if ENC2_MD == 1
+    int md2 = constrain((int)Rx_16Data[2], -MD_PWM_MAX, MD_PWM_MAX);
+    digitalWrite(MD2D, md2 > 0 ? HIGH : LOW);
+    ledcWrite(1, abs(md2));
+#endif
+#endif
+}
 
 void IO_Servo_Outout() {
 #if defined(MODE_CAN) || defined(MODE_CAN_HOST)
@@ -90,20 +120,20 @@ void IO_Servo_Outout() {
 }
 
 void IO_ENC_Input() {
-    // ENC入力処理
-#if defined(MODE_CAN) || defined(MODE_CAN_HOST)
+    // ENC入力処理 (ENC1_MD/ENC2_MDでMDに切替えたチャンネルは0のまま送る)
     int16_t enc1 = 0;
     int16_t enc2 = 0;
+#if ENC1_MD == 0
     pcnt_get_counter_value(PCNT_UNIT_0, &enc1);
+#endif
+#if ENC2_MD == 0
     pcnt_get_counter_value(PCNT_UNIT_1, &enc2);
+#endif
+#if defined(MODE_CAN) || defined(MODE_CAN_HOST)
     CanIoTxData[3] = enc1;
     CanIoTxData[4] = enc2;
 #elif !defined(MODE_CAN_HOST)
     // ホストモードでは CAN からのフィードバックを優先して、ローカルエンコーダ値で上書きしない
-    int16_t enc1 = 0;
-    int16_t enc2 = 0;
-    pcnt_get_counter_value(PCNT_UNIT_0, &enc1);
-    pcnt_get_counter_value(PCNT_UNIT_1, &enc2);
     Tx_16Data[1] = enc1;
     Tx_16Data[2] = enc2;
 #endif

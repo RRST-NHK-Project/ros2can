@@ -11,10 +11,10 @@ This firmware targets a XIAO ESP32-S3 based board (with an MCP2561 CAN transceiv
 - a **dedicated DJI RoboMaster (M3508/M2006/GM6020) driver** for up to 4 motors on its own CAN bus (`MODE_ROBOMAS`, see section 9), or
 - a **dedicated CubeMars AK-series (e.g. AK40-10) driver** for up to 4 actuators on its own CAN bus, using the Servo(CAN) and MIT (Force Control) protocols (`MODE_CUBEMARS`, see section 10).
 
-Each board exposes the same local I/O set (no DC motor driver on this board):
+Each board exposes the same local I/O set:
 
 - 3x shared MULTI ports, each configurable per-port as either a digital switch input or a servo PWM output (`MULTI1..3` in `config.hpp`)
-- 2x quadrature encoder inputs (ENC1, ENC2)
+- 2x quadrature encoder inputs (ENC1, ENC2), each independently reconfigurable as a brushed-DC motor driver output (PWM+DIR) instead, via `ENC1_MD`/`ENC2_MD` in `config.hpp` (see section 4)
 
 The CAN transport reuses the existing 24-slot int16 serial payload (`Tx_16Data` / `Rx_16Data`) as the common data model; it does not introduce a separate protocol.
 
@@ -77,14 +77,16 @@ Each node's 5 slots are split into two dedicated I/O arrays (`src/frame_data.hpp
 | 0 | SERVO1 angle command (only used if `MULTI1 == 1`) |
 | 1 | SERVO2 angle command (only used if `MULTI2 == 1`) |
 | 2 | SERVO3 angle command (only used if `MULTI3 == 1`) |
-| 3-4 | unused / reserved (no motor driver on this board) |
+| 3 | MD1 PWM command (only used if `ENC1_MD == 1`): sign = direction, magnitude = duty, clamped to `±MD_PWM_MAX` |
+| 4 | MD2 PWM command (only used if `ENC2_MD == 1`): sign = direction, magnitude = duty, clamped to `±MD_PWM_MAX` |
 
 **Feedback direction (node -> host), `CanIoTxData[5]`:**
 
 | Index | Meaning |
 |---:|:---|
 | 0-2 | SW1-3 switch state (`0` if the corresponding `MULTIx` port is configured as a servo) |
-| 3-4 | ENC1-2 raw pulse counter value |
+| 3 | ENC1 raw pulse counter value (always `0` if `ENC1_MD == 1`) |
+| 4 | ENC2 raw pulse counter value (always `0` if `ENC2_MD == 1`) |
 
 Each 5-slot block is transmitted as two CAN frames (`identifier = 0x100 + node_index*16 + chunk`): chunk 0 carries 4 int16 values, chunk 1 carries the remaining 1 value. `twai_message_t.data` holds each value big-endian.
 
@@ -99,12 +101,12 @@ Each 5-slot block is transmitted as two CAN frames (`identifier = 0x100 + node_i
 3. `canTask` drains CAN feedback frames from the 3 external nodes into a persistent buffer (slots are only overwritten when new frames arrive, so a node's last known value is retained until it reports again), and fills node 0's own slot range directly from the host's local `CanIoTxData` (its own switches/encoders).
 4. That merged 24-slot buffer is published to `Tx_16Data` every host loop iteration.
 5. `serialTask` sends `Tx_16Data` back to the PC every `CAN_TX_PERIOD_MS` (5 ms).
-6. `IO_Task` runs locally on the host exactly as it would on a node, driving SERVO1-3 outputs from `CanIoRxData` and reading switch/encoder state into `CanIoTxData`.
+6. `IO_Task` runs locally on the host exactly as it would on a node, driving SERVO1-3 / MD1-2 outputs from `CanIoRxData` and reading switch/encoder state into `CanIoTxData`.
 
 ### Node mode (`MODE_CAN`)
 
 1. `canTask` receives only CAN frames addressed to `CAN_NODE_INDEX` and applies them to local `CanIoRxData`.
-2. `IO_Task` drives SERVO1-3 outputs from `CanIoRxData` (for ports configured as servo via `MULTIx`) and writes SW1-3 / ENC1-2 into `CanIoTxData`.
+2. `IO_Task` drives SERVO1-3 outputs from `CanIoRxData` (for ports configured as servo via `MULTIx`) and MD1-2 outputs from `CanIoRxData` (for channels configured as MD via `ENCx_MD`), and writes SW1-3 / ENC1-2 into `CanIoTxData` (ENC slots read `0` for channels configured as MD).
 3. Every `CAN_TX_PERIOD_MS` (5 ms), `CanIoTxData` is packed into this node's slot block and sent back to the host over CAN.
 
 ### CAN monitor mode (`MODE_CAN_MONITOR`)
@@ -122,15 +124,17 @@ Each 5-slot block is transmitted as two CAN frames (`identifier = 0x100 + node_i
 3. Set `CAN_ID` (3-digit: bus digit + node number, e.g. `101`..`104`). This also determines `CAN_NODE_INDEX`.
 4. Choose exactly one mode macro (`MODE_IO`, `MODE_CAN`, `MODE_CAN_HOST`, `MODE_CAN_MONITOR`, or `MODE_DEBUG`).
 5. Set `MULTI1`/`MULTI2`/`MULTI3` per board (`0` = switch input, `1` = servo output) to match the wiring.
-6. Adjust PWM, servo range, and pin settings if required.
-7. Build and flash with PlatformIO.
+6. Set `ENC1_MD`/`ENC2_MD` per board (`0` = encoder input, `1` = MD PWM+DIR output) to match the wiring. `ENCn_A` becomes the MD PWM pin and `ENCn_B` becomes the MD DIR pin when switched to MD.
+7. Adjust PWM, servo range, MD PWM frequency/resolution, and pin settings if required.
+8. Build and flash with PlatformIO.
 
 ---
 
 ## 7. Notes / Known Limitations
 
 - The CAN transport intentionally reuses the serial slot model rather than a fully separate protocol.
-- This board has no DC motor driver. Each node has exactly 2 encoder channels (ENC1, ENC2) and 3 MULTI ports (SW1-3 / SERVO1-3, pin-shared per port via `MULTI1..3`), all reachable over CAN.
+- Each node has exactly 2 encoder/MD channels (ENC1/MD1, ENC2/MD2, pin-shared per channel via `ENC1_MD`/`ENC2_MD`) and 3 MULTI ports (SW1-3 / SERVO1-3, pin-shared per port via `MULTI1..3`), all reachable over CAN.
+- A channel switched to MD (`ENCx_MD == 1`) cannot report encoder feedback at the same time (its `CanIoTxData`/`Tx_16Data` slot always reads `0`); the driver has no feedback (open-loop PWM+DIR) unless a separate sensor is wired elsewhere.
 - `MODE_CAN_MONITOR` is read-only and does not drive any outputs; use it to verify wiring/IDs before switching a board to `MODE_CAN` or `MODE_CAN_HOST`.
 
 ---

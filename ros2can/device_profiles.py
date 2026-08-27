@@ -1,4 +1,4 @@
-"""xiao_esp32_s3_smd_serial_bridge (MODE_CAN_HOST) のスロット割り当て定義。
+"""xiao-esp32-s3_can2io (MODE_CAN_HOST) のスロット割り当て定義。
 
 この基板は USB-シリアルで ROS 2 (serial_bridge) とつながる「CANホスト」であり、
 自身の配下に CAN バス経由で最大 CAN_NODE_COUNT 台の子マイコン(ノード)をぶら下げ、
@@ -6,16 +6,18 @@
 ホストは USB 側では通常の serial_bridge フレーム (24 x int16, TX/RX) を使い、
 その 24 スロットを CAN バス上の各ノードへ分配/集約する。
 
-[xiao_esp32_s3_smd_serial_bridge/src/frame_data.hpp, can_task.cpp, config.hpp より]
+[xiao-esp32-s3_can2io/src/frame_data.hpp, can_task.cpp, config.hpp より]
 
-  実機はDCモータ非搭載。ENCx2, SWx3, SERVOx3のみで、SERVOn/SWn はピン共有
-  (config.hpp の MULTIn で切替、0=スイッチ入力/1=サーボ出力)。
+  ENCx2/MDx2, SWx3, SERVOx3。SERVOn/SWn はピン共有 (config.hpp の MULTIn で切替、
+  0=スイッチ入力/1=サーボ出力)。ENCn/MDn もピン共有 (config.hpp の ENCn_MD で切替、
+  0=エンコーダ入力/1=MD(PWM+DIR)出力)。MDn は符号=方向、絶対値=PWMデューティ
+  (±MD_PWM_MAX、config.hppのMD_PWM_RESOLUTIONから算出、既定8bitで255)。
 
   ノードごとの担当スロット (CAN_SLOTS_PER_NODE = 5):
     指令 (ROS -> ホスト -> CAN -> ノード):
-      0: SERVO1, 1: SERVO2, 2: SERVO3, 3: 予備, 4: 予備
+      0: SERVO1, 1: SERVO2, 2: SERVO3, 3: MD1(ENC1_MD=1時), 4: MD2(ENC2_MD=1時)
     帰還 (ノード -> CAN -> ホスト -> ROS):
-      0: SW1, 1: SW2, 2: SW3, 3: ENC1, 4: ENC2
+      0: SW1, 1: SW2, 2: SW3, 3: ENC1(ENC1_MD=0時のみ非0), 4: ENC2(ENC2_MD=0時のみ非0)
 
   グローバルスロット index = node_index * CAN_SLOTS_PER_NODE + local_index
   (node_index は 0-origin。ノードの CAN_ID は 101,102,103,104 のように
@@ -36,6 +38,8 @@ SLOT_COUNT = 24
 # ファームウェア既定値 (config.hpp)
 DEFAULT_CAN_NODE_COUNT = 4
 DEFAULT_CAN_SLOTS_PER_NODE = 5
+DEFAULT_MD_PWM_RESOLUTION = 8
+DEFAULT_MD_PWM_MAX = (1 << DEFAULT_MD_PWM_RESOLUTION) - 1  # config.hppのMD_PWM_RESOLUTION既定値(8bit)から算出。255
 
 # --- 送信 (ROS -> ホスト -> CAN -> ノード, actuator command) ---
 MOTOR = "motor"          # 双極 PWM 指令 (DCモータ)
@@ -133,10 +137,14 @@ def _append_generic_io_node_channels(
     tx: List[ChannelDef], rx: List[ChannelDef],
     node: int, slots_per_node: int,
     servo_min_deg: int, servo_max_deg: int,
+    md_pwm_max: int = DEFAULT_MD_PWM_MAX,
 ) -> None:
-    """汎用IOノード (xiao_esp32_s3_smd_serial_bridge 系, ENCx2/SWx3/SERVOx3) の
+    """汎用IOノード (xiao-esp32-s3_can2io 系, ENCx2/MDx2/SWx3/SERVOx3) の
     1ノード分のチャンネルを tx/rx に追加する。SERVOn と SWn はピン共有
     (ファームウェア config.hpp の MULTIn で入出力を切替、n=1..3、0=スイッチ入力/1=サーボ出力)。
+    ENCn と MDn もピン共有 (config.hpp の ENCn_MD で入出力を切替、n=1..2、
+    0=エンコーダ入力/1=MD(PWM+DIR)出力)。MDn は符号=方向、絶対値=PWMデューティ
+    (±MD_PWM_MAX、config.hppのMD_PWM_RESOLUTIONから算出、既定8bitで255)。
     """
     base = node * slots_per_node
     node_no = node + 1
@@ -154,12 +162,25 @@ def _append_generic_io_node_channels(
     for s in range(sw_slots):
         rx.append(ChannelDef(base + s, f"N{node_no} SW{s + 1}", DIGITAL_IN, group=group_fb,
                               note=f"SERVO{s + 1} とピン共有。MULTI{s + 1}=0(スイッチ)のときのみ有効"))
+
     if slots_per_node > 3:
+        tx.append(ChannelDef(base + 3, f"N{node_no} MD1", MOTOR, group=group_cmd,
+                              min=-md_pwm_max, max=md_pwm_max,
+                              note="ENC1 とピン共有。ENC1_MD=1(MD)のときのみ有効。"
+                                   "符号=方向、絶対値=PWMデューティ"))
         rx.append(ChannelDef(base + 3, f"N{node_no} ENC1", COUNTER, group=group_fb, unit="count",
-                              zeroable=True))
+                              zeroable=True,
+                              note="MD1 とピン共有。ENC1_MD=0(エンコーダ)のときのみ有効"
+                                   "(ENC1_MD=1の間は常に0)"))
     if slots_per_node > 4:
+        tx.append(ChannelDef(base + 4, f"N{node_no} MD2", MOTOR, group=group_cmd,
+                              min=-md_pwm_max, max=md_pwm_max,
+                              note="ENC2 とピン共有。ENC2_MD=1(MD)のときのみ有効。"
+                                   "符号=方向、絶対値=PWMデューティ"))
         rx.append(ChannelDef(base + 4, f"N{node_no} ENC2", COUNTER, group=group_fb, unit="count",
-                              zeroable=True))
+                              zeroable=True,
+                              note="MD2 とピン共有。ENC2_MD=0(エンコーダ)のときのみ有効"
+                                   "(ENC2_MD=1の間は常に0)"))
 
 
 def _append_foc_motor_node_channels(
@@ -197,16 +218,18 @@ def make_can_host_profile(
     slots_per_node: int = DEFAULT_CAN_SLOTS_PER_NODE,
     servo_min_deg: int = 0,
     servo_max_deg: int = 270,
+    md_pwm_max: int = DEFAULT_MD_PWM_MAX,
 ) -> DeviceProfile:
-    """xiao_esp32_s3_smd_serial_bridge MODE_CAN_HOST 用プロファイル。
+    """xiao-esp32-s3_can2io MODE_CAN_HOST 用プロファイル。
 
-    実機はDCモータ非搭載。ENCx2, SWx3, SERVOx3のみで、SERVOn と SWn は
-    ピン共有 (ファームウェア config.hpp の MULTIn で入出力を切替、
-    n=1..3, 0=スイッチ入力/1=サーボ出力)。
+    ENCx2/MDx2, SWx3, SERVOx3。SERVOn と SWn はピン共有 (ファームウェア
+    config.hpp の MULTIn で入出力を切替、n=1..3, 0=スイッチ入力/1=サーボ出力)。
+    ENCn と MDn もピン共有 (config.hpp の ENCn_MD で入出力を切替、n=1..2、
+    0=エンコーダ入力/1=MD(PWM+DIR)出力)。
 
     24スロットを CAN バス上の最大 node_count ノードへ slots_per_node ずつ分配する。
     各ノード (既定 5スロット):
-      指令: SERVO1, SERVO2, SERVO3, (予備, 予備)
+      指令: SERVO1, SERVO2, SERVO3, MD1, MD2
       帰還: SW1, SW2, SW3, ENC1, ENC2
     CAN_ID は 101,102,103,104 のようにノード番号 (1-origin) を下2桁に持つ。
     """
@@ -214,7 +237,8 @@ def make_can_host_profile(
     rx: List[ChannelDef] = []
 
     for node in range(node_count):
-        _append_generic_io_node_channels(tx, rx, node, slots_per_node, servo_min_deg, servo_max_deg)
+        _append_generic_io_node_channels(tx, rx, node, slots_per_node, servo_min_deg, servo_max_deg,
+                                          md_pwm_max)
 
     tx = _fill_remaining(tx, _raw_out)
     rx = _fill_remaining(rx, _raw_in)
@@ -223,10 +247,11 @@ def make_can_host_profile(
         key=key,
         name=name,
         description=(
-            f"MODE_CAN_HOST 用。実機はDCモータ非搭載。24スロットを CAN バス上の最大"
+            f"MODE_CAN_HOST 用。24スロットを CAN バス上の最大"
             f"{node_count}ノードへ{slots_per_node}スロットずつ分配する。各ノードは "
-            "SERVO1-3 (指令) / SW1-3 + ENC1-2 (帰還) を担当 (SERVOn/SWnはピン共有、"
-            "config.hppのMULTInで切替)。ノード数・スロット数はプロファイル編集で変更可能。"
+            "SERVO1-3 + MD1-2 (指令) / SW1-3 + ENC1-2 (帰還) を担当 (SERVOn/SWnはピン共有・"
+            "config.hppのMULTInで切替、ENCn/MDnはピン共有・config.hppのENCn_MDで切替)。"
+            "ノード数・スロット数はプロファイル編集で変更可能。"
         ),
         tx=tx,
         rx=rx,
@@ -243,12 +268,13 @@ def make_can_host_with_foc_node_profile(
     foc_node_index: int = 1,
     servo_min_deg: int = 0,
     servo_max_deg: int = 270,
+    md_pwm_max: int = DEFAULT_MD_PWM_MAX,
 ) -> DeviceProfile:
     """xiao-esp32-s3_can2io (MODE_CAN_HOST) 配下に b-g431-esc1_can2io (SimpleFOCの
     CANノード、速度制御のみ) を1台混在させたプロファイル。
 
     foc_node_index 番目のノードだけFOCモータ用チャンネルにし、それ以外は
-    make_can_host_profile と同じ汎用IOノード(SERVO/SW/ENC)のまま扱う。
+    make_can_host_profile と同じ汎用IOノード(SERVO/SW/ENC/MD)のまま扱う。
 
     デフォルト値は現在の実機構成(ホスト自身がnode0、b-g431がCAN_ID=102→node1の
     計2台のみ接続、firmware/xiao-esp32-s3_can2io/src/config.hppのCAN_NODE_COUNT=2)
@@ -261,7 +287,8 @@ def make_can_host_with_foc_node_profile(
         if node == foc_node_index:
             _append_foc_motor_node_channels(tx, rx, node, slots_per_node)
         else:
-            _append_generic_io_node_channels(tx, rx, node, slots_per_node, servo_min_deg, servo_max_deg)
+            _append_generic_io_node_channels(tx, rx, node, slots_per_node, servo_min_deg, servo_max_deg,
+                                              md_pwm_max)
 
     tx = _fill_remaining(tx, _raw_out)
     rx = _fill_remaining(rx, _raw_in)
@@ -272,9 +299,9 @@ def make_can_host_with_foc_node_profile(
         description=(
             f"MODE_CAN_HOST 用。ノード{foc_node_index + 1}を b-g431-esc1_can2io "
             "(SimpleFOC, 速度制御のみ、xiao-esp32-s3_can2io の MODE_ROBOMAS と互換の"
-            "データモデル) に割り当て、残りは汎用IOノード (SERVO1-3指令 / SW1-3+ENC1-2帰還) "
-            "として扱う。FOCノードのゲインはCAN経由では変更できず、ファーム側config.hppの"
-            "コンパイル時定数固定。"
+            "データモデル) に割り当て、残りは汎用IOノード (SERVO1-3+MD1-2指令 / "
+            "SW1-3+ENC1-2帰還) として扱う。FOCノードのゲインはCAN経由では変更できず、"
+            "ファーム側config.hppのコンパイル時定数固定。"
         ),
         tx=tx,
         rx=rx,

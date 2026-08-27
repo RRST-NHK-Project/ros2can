@@ -34,11 +34,15 @@ void IO_init() {
         ledcAttachPin(SERVO3, 6);
     }
 
+#if ENC1_MD == 1
+    // MD1の初期化 (ENC1_A/ENC1_BをPWM/DIRとして使用)
+    pinMode(MD1D, OUTPUT);
+    ledcSetup(0, MD_PWM_FREQ, MD_PWM_RESOLUTION);
+    ledcAttachPin(MD1P, 0);
+#else
     // プルアップを有効化
     gpio_set_pull_mode((gpio_num_t)ENC1_A, GPIO_PULLUP_ONLY);
     gpio_set_pull_mode((gpio_num_t)ENC1_B, GPIO_PULLUP_ONLY);
-    gpio_set_pull_mode((gpio_num_t)ENC2_A, GPIO_PULLUP_ONLY);
-    gpio_set_pull_mode((gpio_num_t)ENC2_B, GPIO_PULLUP_ONLY);
 
     // パルスカウンタの設定
     pcnt_config_t pcnt_config1 = {};
@@ -65,6 +69,29 @@ void IO_init() {
     pcnt_config2.unit = PCNT_UNIT_0;
     pcnt_config2.channel = PCNT_CHANNEL_1;
 
+    pcnt_unit_config(&pcnt_config1);
+    pcnt_unit_config(&pcnt_config2);
+
+    pcnt_counter_pause(PCNT_UNIT_0);
+    pcnt_counter_clear(PCNT_UNIT_0);
+    pcnt_counter_resume(PCNT_UNIT_0);
+
+    // チャタリング防止のフィルターを有効化
+    pcnt_filter_enable(PCNT_UNIT_0);
+    pcnt_set_filter_value(PCNT_UNIT_0, PCNT_FILTER_VALUE);
+#endif
+
+#if ENC2_MD == 1
+    // MD2の初期化 (ENC2_A/ENC2_BをPWM/DIRとして使用)
+    pinMode(MD2D, OUTPUT);
+    ledcSetup(1, MD_PWM_FREQ, MD_PWM_RESOLUTION);
+    ledcAttachPin(MD2P, 1);
+#else
+    // プルアップを有効化
+    gpio_set_pull_mode((gpio_num_t)ENC2_A, GPIO_PULLUP_ONLY);
+    gpio_set_pull_mode((gpio_num_t)ENC2_B, GPIO_PULLUP_ONLY);
+
+    // パルスカウンタの設定
     pcnt_config_t pcnt_config3 = {};
     pcnt_config3.pulse_gpio_num = ENC2_A;
     pcnt_config3.ctrl_gpio_num = ENC2_B;
@@ -89,28 +116,17 @@ void IO_init() {
     pcnt_config4.unit = PCNT_UNIT_1;
     pcnt_config4.channel = PCNT_CHANNEL_1;
 
-    // パルスカウンタの初期化
-    pcnt_unit_config(&pcnt_config1);
-    pcnt_unit_config(&pcnt_config2);
     pcnt_unit_config(&pcnt_config3);
     pcnt_unit_config(&pcnt_config4);
 
-    pcnt_counter_pause(PCNT_UNIT_0);
     pcnt_counter_pause(PCNT_UNIT_1);
-
-    pcnt_counter_clear(PCNT_UNIT_0);
     pcnt_counter_clear(PCNT_UNIT_1);
-
-    pcnt_counter_resume(PCNT_UNIT_0);
     pcnt_counter_resume(PCNT_UNIT_1);
 
     // チャタリング防止のフィルターを有効化
-    pcnt_filter_enable(PCNT_UNIT_0);
     pcnt_filter_enable(PCNT_UNIT_1);
-
-    // フィルター値を設定
-    pcnt_set_filter_value(PCNT_UNIT_0, PCNT_FILTER_VALUE);
     pcnt_set_filter_value(PCNT_UNIT_1, PCNT_FILTER_VALUE);
+#endif
 
     // SW ピン初期化
     if (MULTI1 == 0) {

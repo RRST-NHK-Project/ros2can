@@ -11,21 +11,28 @@ Copyright (c) 2025 RRST-NHK-Project. All rights reserved.
 // ================= 基本設定 =================
 
 // IDの設定，シリアルフレームのDEVICE_IDとして使用します。
-#define DEVICE_ID 11
+#define DEVICE_ID 101
 
 // CAN_IDは3桁形式で指定します。
 // 1桁目はバス番号、末尾2桁はノード番号を表します。
 // 例: 101, 102, 103, 104
-#define CAN_ID 111
+#define CAN_ID 101
 
 // モードの設定，どれか一つをコメントアウト解除すること
 // #define MODE_CAN
-// define MODE_CAN_HOST
+#define MODE_CAN_HOST
 // #define MODE_IO
 // #define MODE_DEBUG
 // #define MODE_CAN_MONITOR
 // #define MODE_ROBOMAS
-#define MODE_CUBEMARS
+// #define MODE_CUBEMARS
+
+// ================= MD関連 =================
+// ENC1_MD/ENC2_MD(下記)でENCポートをMDへ切替えた場合のみ有効。
+// MDはENCのA/Bピンを流用するため、実機はDCモータ非搭載の想定のまま
+// (この設定は使わずENC1_MD=0/ENC2_MD=0のまま)でも変更不要。
+#define MD_PWM_FREQ 20000   // MDのPWM周波数（Hz）
+#define MD_PWM_RESOLUTION 8 // MDのPWM分解能（bit）
 
 // ================= サーボ関連 =================
 
@@ -67,6 +74,12 @@ Copyright (c) 2025 RRST-NHK-Project. All rights reserved.
 #define MULTI1 0
 #define MULTI2 0
 #define MULTI3 0
+
+// ENC/MDポートの設定（エンコーダ:0, MD:1）
+// ENC1(ENC1_A/ENC1_B)をMD1のPWM/DIRへ、ENC2(ENC2_A/ENC2_B)をMD2のPWM/DIRへ転用する。
+// MDに切替えたチャンネルはエンコーダとして読めなくなる(帰還スロットは0固定になる)。
+#define ENC1_MD 1
+#define ENC2_MD 1
 
 // CANのノード割り当て設定
 // 1つのCANバス上で最大4ノードまで対応し、1ノードあたり5スロットをCANで送受信する
