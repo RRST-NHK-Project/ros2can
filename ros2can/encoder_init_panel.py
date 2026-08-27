@@ -4,6 +4,14 @@
 ボタンはあるが、デバイスを1つずつ選び直す必要がある。起動時の一括初期化
 (全デバイスのエンコーダ/位置カウンタをまとめてゼロ点セットしたい場面)向けに、
 検出済み全デバイスの zeroable チャンネルを1画面に並べたページを提供する。
+
+上記の「原点セット」はGUI側のソフトウェアオフセット(マイコン側の値は変更しない)
+だが、これとは別に、実機のエンコーダ自体に原点を書き込むタイプの初期化
+(例: CubeMars本体へのSet Origin CANコマンド送信)はros2can自身の機能ではなく、
+対象ノード(soki_sim/trajectory_follower_nodeの/set_root_theta_origin等)が
+提供するstd_srvs/Triggerサービス経由で行う。ros2canはCAN通信を直接扱う汎用
+ツールでプロジェクト固有のノード名を知らないため、任意のTriggerサービス名を
+指定して呼び出せる汎用パネルをここに追加した(2026-08-27)。
 """
 
 from __future__ import annotations
@@ -12,8 +20,9 @@ from typing import Dict, Tuple
 
 from PyQt5.QtWidgets import (
     QWidget, QLabel, QVBoxLayout, QHBoxLayout, QGroupBox, QScrollArea,
-    QPushButton,
+    QPushButton, QLineEdit,
 )
+from std_srvs.srv import Trigger
 
 from .device_profiles import all_profiles
 from .ros_backend import RosBackend
@@ -36,6 +45,8 @@ class EncoderInitPanel(QWidget):
         super().__init__(parent)
         self.backend = backend
         self.rows: Dict[Tuple[int, int], ChannelMonitorRow] = {}
+        # std_srvs/Triggerサービス呼び出し用クライアント(サービス名ごとに遅延生成)。
+        self._trigger_clients = {}
 
         outer = QVBoxLayout(self)
 
@@ -59,6 +70,25 @@ class EncoderInitPanel(QWidget):
         info.setWordWrap(True)
         info.setStyleSheet("color:#888;")
         outer.addWidget(info)
+
+        trigger_box = QGroupBox("外部ノードのTriggerサービス呼び出し")
+        trigger_layout = QHBoxLayout(trigger_box)
+        trigger_layout.addWidget(QLabel("サービス名:"))
+        self.trigger_service_edit = QLineEdit("/set_root_theta_origin")
+        trigger_layout.addWidget(self.trigger_service_edit, 1)
+        self.trigger_call_btn = QPushButton("呼び出し")
+        self.trigger_call_btn.setToolTip(
+            "std_srvs/Trigger型の任意のROS 2サービスを呼び出す(本機自身の機能ではなく、"
+            "他ノードが提供するサービスを叩くための汎用ボタン)。\n"
+            "例: /set_root_theta_origin (soki_sim/trajectory_follower_node、"
+            "root_theta_jointのCubeMars本体へSet Origin CANコマンドを送信)。\n"
+            "呼び出し前に対象の実機・ノードが正しい状態か確認すること。")
+        self.trigger_call_btn.clicked.connect(self._on_trigger_call_clicked)
+        trigger_layout.addWidget(self.trigger_call_btn)
+        self.trigger_status_label = QLabel("")
+        self.trigger_status_label.setWordWrap(True)
+        trigger_layout.addWidget(self.trigger_status_label, 1)
+        outer.addWidget(trigger_box)
 
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
@@ -140,3 +170,34 @@ class EncoderInitPanel(QWidget):
         for device_id in list(self.backend.devices.keys()):
             self.backend.zero_all_channels(device_id)
         self.refresh_values()
+
+    def _on_trigger_call_clicked(self) -> None:
+        service_name = self.trigger_service_edit.text().strip()
+        if not service_name:
+            return
+        client = self._trigger_clients.get(service_name)
+        if client is None:
+            client = self.backend.node.create_client(Trigger, service_name)
+            self._trigger_clients[service_name] = client
+        if not client.service_is_ready():
+            self.trigger_status_label.setText(f"{service_name}: サービス未起動です")
+            self.trigger_status_label.setStyleSheet("color:#c00;")
+            return
+        self.trigger_call_btn.setEnabled(False)
+        self.trigger_status_label.setText(f"{service_name}: 呼び出し中...")
+        self.trigger_status_label.setStyleSheet("color:#888;")
+        future = client.call_async(Trigger.Request())
+        future.add_done_callback(
+            lambda fut, name=service_name: self._on_trigger_response(name, fut))
+
+    def _on_trigger_response(self, service_name: str, future) -> None:
+        self.trigger_call_btn.setEnabled(True)
+        try:
+            response = future.result()
+        except Exception as exc:
+            self.trigger_status_label.setText(f"{service_name}: 失敗 ({exc})")
+            self.trigger_status_label.setStyleSheet("color:#c00;")
+            return
+        color = "#080" if response.success else "#c00"
+        self.trigger_status_label.setText(f"{service_name}: {response.message}")
+        self.trigger_status_label.setStyleSheet(f"color:{color};")

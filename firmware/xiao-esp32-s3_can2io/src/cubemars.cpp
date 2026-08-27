@@ -23,7 +23,11 @@ AK40-10等のAKシリーズはアクチュエータ内蔵のクローズドル�
            マニュアル4.3.1の帰還フレーム位置フィールドと同一スケール
          - control_mode=2(MIT): 目標位置、0.1deg/LSB (position/positionループと同一
            スケール。CAN送信直前にradへ変換する)
-    4-7: control_mode (モータ1-4): 0=速度ループ, 1=位置ループ, 2=MIT(Force Control)
+    4-7: control_mode (モータ1-4): 0=速度ループ, 1=位置ループ, 2=MIT(Force Control),
+         3=Set Origin(原点設定、マニュアル4.1節。target[m]をorigin_modeとして
+         流用: 0=一時原点/1=永久原点(フラッシュ保存)/2=デフォルト原点へ復元。
+         フラッシュ書き込みを避けるためエッジ検出で1回だけ送信し、以後は
+         mode=3が継続していても再送しない。詳細はcubemars.cpp本体のコメント参照)
          全ゼロ(E-STOP/未接続時のデフォルト)で0=速度・target=0となり、
          安全にゼロ速度指令(その場停止)になる設計。位置ジャンプは発生しない。
     8-11:  MITモード用 目標速度(モータ1-4)、0.01rad/s/LSB (control_mode=2のみ参照)
@@ -57,6 +61,11 @@ namespace {
 // Servo(CAN)モードの制御モードID (マニュアル4.1節)
 constexpr uint32_t CUBEMARS_CMD_RPM = 3; // Velocity Loop Mode
 constexpr uint32_t CUBEMARS_CMD_POS = 4; // Position Loop Mode
+// Set Origin Mode (マニュアル4.1節。RPM=3/POS=4と同じ制御モードID体系の続き番号。
+// 実機のR-Link/マニュアル記載と一致するか要確認 [2026-08-27時点未検証]。
+// data[0](1byte): 0=一時原点(電源off/onで消える) / 1=永久原点(フラッシュ保存)
+// / 2=デフォルト原点へ復元)
+constexpr uint32_t CUBEMARS_CMD_SET_ORIGIN = 5;
 // Force Control(MIT)モードの制御モードID (マニュアル4.2節、Servo(CAN)モードと
 // 同じ拡張ID方式(control_mode_id<<8 | driver_id)を共有する)
 constexpr uint32_t CUBEMARS_CMD_MIT = 8;
@@ -66,6 +75,7 @@ constexpr uint32_t CUBEMARS_FEEDBACK_FUNCTION_ID = 0x29; // 定期帰還フレ�
 constexpr int16_t CUBEMARS_MODE_VELOCITY = 0;
 constexpr int16_t CUBEMARS_MODE_POSITION = 1;
 constexpr int16_t CUBEMARS_MODE_MIT = 2;
+constexpr int16_t CUBEMARS_MODE_SET_ORIGIN = 3;
 
 // MITモード用の追加スロット (target/control_modeは0-7を流用、cubemars.cpp先頭コメント参照)
 constexpr int MIT_SLOT_VELOCITY = 8;   // 8-11
@@ -105,6 +115,16 @@ void sendExtended(uint32_t cmd_id, uint8_t motor_can_id, const uint8_t *data, ui
     if (twai_transmit(&tx, pdMS_TO_TICKS(20)) != ESP_OK) {
         Serial.println("[ERR] cubemars: twai_transmit failed");
     }
+}
+
+// Set Originコマンド送信済みフラグ(モータごと)。mode=3が複数周期にわたって
+// 継続送信されても、フラッシュ書き込みを伴う実コマンドは1回だけ送るための
+// エッジ検出用(sendCommands()参照)。
+bool g_origin_cmd_sent[CUBEMARS_MOTOR_COUNT] = {false};
+
+void sendSetOriginCommand(uint8_t motor_can_id, uint8_t origin_mode) {
+    uint8_t buffer[1] = {origin_mode};
+    sendExtended(CUBEMARS_CMD_SET_ORIGIN, motor_can_id, buffer, 1);
 }
 
 void sendInt32Command(uint32_t cmd_id, uint8_t motor_can_id, int32_t value) {
@@ -155,6 +175,20 @@ void sendCommands() {
     for (int m = 0; m < CUBEMARS_MOTOR_COUNT; m++) {
         int16_t target = Rx_16Data[m];
         int16_t mode = Rx_16Data[4 + m];
+
+        if (mode == CUBEMARS_MODE_SET_ORIGIN) {
+            // フラッシュ書き込みを伴うため、ホスト側がmode=3を複数周期保持していても
+            // 実際のCANコマンドはエッジ検出で1回だけ送る(毎5ms送り続けると不要な
+            // 再送・フラッシュ摩耗になるため)。原点設定完了までは速度/位置/MIT
+            // 指令を送らずその場停止のままにする。
+            if (!g_origin_cmd_sent[m]) {
+                int16_t origin_mode_raw = std::min<int16_t>(std::max<int16_t>(target, 0), 2);
+                sendSetOriginCommand(kMotorCanId[m], (uint8_t)origin_mode_raw);
+                g_origin_cmd_sent[m] = true;
+            }
+            continue;
+        }
+        g_origin_cmd_sent[m] = false;
 
         if (mode == CUBEMARS_MODE_MIT) {
             float pos_rad = (float)(target * MIT_POSITION_LSB_DEG) * DEG_TO_RAD;
