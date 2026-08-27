@@ -238,6 +238,8 @@ void cubemarsTask(void *pvParameters) {
     while (1) {
         receiveFeedback();
         sendCommands();
-        vTaskDelay(1);
+        // 200Hz。ロボマス/センサノードと1Mbpsバスを共有する構成での帯域見積りは
+        // README.md参照(1kHzのままだと合計がバス容量を超える)。
+        vTaskDelay(5);
     }
 }

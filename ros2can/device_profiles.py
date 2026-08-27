@@ -331,8 +331,11 @@ def make_robomas_profile(
             "MODE_ROBOMAS用。ノード/スロット分配は行わず、独立デバイスとしてロボマス"
             "(M3508/M2006/GM6020のいずれか、config.hppのROBOMAS_MOTOR_TYPEで固定)を"
             "最大4台まで速度制御する。速度PIDゲインはCAN経由では変更できず、ファーム側"
-            "config.hppのコンパイル時固定。このボードのCANバス(1Mbps固定)には他の"
-            "ros2canノード(500kbps)を混在させないこと。"
+            "config.hppのコンパイル時固定。ノード/スロット分配側(MODE_CAN等)も1Mbpsに"
+            "統一済みのため同一物理バスへの混在は可能(CAN IDは重ならない設計)だが、"
+            "帯域を確保するため指令送信は200Hzに固定(ファーム側robomas.cpp)。台数を"
+            "増やす場合はバス帯域の余裕を確認すること(firmware/xiao-esp32-s3_can2io/"
+            "README.md参照)。"
         ),
         tx=tx,
         rx=rx,
@@ -467,7 +470,11 @@ def make_cubemars_profile(
             "実機のR-Link設定・ファーム側config.hppのCUBEMARS_MIT_*と必ず一致させること。"
             "CAN IDはファーム側"
             "config.hppのCUBEMARS_MOTOR_ID_nで固定、R-Linkの設定と一致させること。"
-            "このバス(1Mbps固定)には他のros2canノード(500kbps)を混在させないこと。"
+            "ノード/スロット分配側(MODE_CAN等)も1Mbpsに統一済みのため同一物理バスへの"
+            "混在は可能(CAN IDは重ならない設計)だが、帯域を確保するため指令送信は"
+            "200Hzに固定(ファーム側cubemars.cpp)。アクチュエータ自身の帰還フレームは"
+            "指令頻度に関係なく自律送信されるため、台数を増やす場合はバス帯域の余裕を"
+            "確認すること(firmware/xiao-esp32-s3_can2io/README.md参照)。"
         ),
         tx=tx,
         rx=rx,

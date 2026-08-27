@@ -209,8 +209,9 @@ void robomasTask(void *pvParameters) {
             target_rpm[i] = Rx_16Data[i];
         }
 
-        // ループ周期は約1msなので millis() では量子化誤差が dt の100%に達し、
-        // 積分項のレートがそのまま揺れる。micros() で測る。
+        // ループ周期は約5ms(200Hz、CubeMars/センサノードと1Mbpsバスを共有するため
+        // 指令送信頻度を落としてある)。millis()では量子化誤差がdtに対して無視でき
+        // ない比率になるため、引き続きmicros()で測る。
         unsigned long now = micros();
         float dt = (unsigned long)(now - g_last_pid_time) / 1000000.0f;
         if (dt <= 0)
@@ -236,6 +237,8 @@ void robomasTask(void *pvParameters) {
             Tx_16Data[8 + i] = (int16_t)(current_a[i] * 1000.0f);
         }
 
-        vTaskDelay(1);
+        // 200Hz。CubeMars/センサノードと1Mbpsバスを共有する構成での帯域見積りは
+        // README.md参照(1kHzのままだと合計がバス容量を超える)。
+        vTaskDelay(5);
     }
 }

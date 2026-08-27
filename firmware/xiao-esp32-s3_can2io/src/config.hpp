@@ -70,6 +70,10 @@ Copyright (c) 2025 RRST-NHK-Project. All rights reserved.
 
 // CANのノード割り当て設定
 // 1つのCANバス上で最大4ノードまで対応し、1ノードあたり5スロットをCANで送受信する
+// ビットレートは1Mbps固定(can_task.cpp)。MODE_ROBOMAS/MODE_CUBEMARSと同じ物理バスに
+// 同居させる場合でも指令/帰還のCAN ID帯が重ならないよう設計されているが、CAN_NODE_COUNT
+// を大きくしすぎるとロボマス側のID帯(0x1FE, 0x200-0x208)に近づくため、増やす場合は
+// 帰還ID(0x180 + node*16 + chunk)の上限がそこへ届かないことを確認すること。
 // 重要: ここは「対応可能な最大数」ではなく「実際にバスへ接続されているノード数
 // (ホスト自身を含む)」に必ず合わせること。ホストは毎周期、自分以外の
 // [0, CAN_NODE_COUNT) 全ノードへ指令フレームを送信するため、存在しないノード宛の
@@ -92,11 +96,13 @@ Copyright (c) 2025 RRST-NHK-Project. All rights reserved.
 #define CAN_MONITOR_MAX_NODES 16     // 要約デコード対象のノード数上限(CAN_NODE_COUNTと無関係)
 
 // ================= ロボマス関連 (MODE_ROBOMASのみ有効) =================
-// MODE_ROBOMASはxiao-esp32-s3_can2ioのノード/スロット分配方式(CAN 500kbps)とは
-// 別系統で、DJI RoboMasterシリーズのCANプロトコル(1Mbps固定, ID固定)を直接喋る
-// 独立デバイスとして動作する。1マイコン(1バス)には同一機種のみ最大4台まで接続可能。
-// このバスにxiao-esp32-s3_can2ioの他ノード(MODE_CAN等)を混在させることはできない
-// (ビットレートが異なるため)。詳細はREADME.md参照。
+// MODE_ROBOMASはxiao-esp32-s3_can2ioのノード/スロット分配方式とは別系統で、
+// DJI RoboMasterシリーズのCANプロトコル(1Mbps固定, ID固定)を直接喋る独立デバイス
+// として動作する。1マイコン(1バス)には同一機種のみ最大4台まで接続可能。
+// ノード/スロット分配方式(MODE_CAN等)側もcan_task.cppで1Mbpsに統一してあるため、
+// 同一物理バスへの混在自体は可能(CAN IDが重ならないよう設計されている)。ただし
+// robomasTaskの指令送信は200Hzに落としてある(1kHzのままだとCubeMars/センサノードと
+// 合計したバス帯域を超えるため)。詳細・帯域見積りはREADME.md参照。
 
 #define ROBOMAS_MOTOR_M3508 1  // C620 + M3508 (メカナム/足回り等、ギア比19.2)
 #define ROBOMAS_MOTOR_M2006 2  // C610 + M2006 (小型アクチュエータ等、ギア比36.0)
@@ -156,11 +162,17 @@ Copyright (c) 2025 RRST-NHK-Project. All rights reserved.
 
 // ================= CubeMars AK関連 (MODE_CUBEMARSのみ有効) =================
 // MODE_CUBEMARSはMODE_ROBOMASと同様、xiao-esp32-s3_can2ioのノード/スロット分配方式
-// (CAN 500kbps)とは別系統で、CubeMars AKシリーズのServo(CAN)モードプロトコル
-// (1Mbps固定、AK Series Module Product Manual V3.2.0 4.1節)を直接喋る独立デバイス
-// として動作する。速度/位置ともアクチュエータ内蔵のクローズドループがそのまま
-// 追従するため、ロボマスのGM6020のようなホスト側速度PIDは不要。
+// とは別系統で、CubeMars AKシリーズのServo(CAN)モードプロトコル(1Mbps固定、
+// AK Series Module Product Manual V3.2.0 4.1節)を直接喋る独立デバイスとして動作
+// する。速度/位置ともアクチュエータ内蔵のクローズドループがそのまま追従するため、
+// ロボマスのGM6020のようなホスト側速度PIDは不要。
 // 1マイコン(1バス)には最大 CUBEMARS_MOTOR_COUNT 台まで接続可能。
+// ノード/スロット分配方式・MODE_ROBOMASとは1Mbpsに統一済みのため同一物理バスへの
+// 混在も可能(CAN IDは重ならない設計)。cubemarsTaskの指令送信は200Hzに落として
+// あり、1kHzのままだと合計バス帯域を超える点に注意(README.md参照)。
+// AKアクチュエータ自身の帰還フレーム(function ID 0x29)はホストの指令頻度とは
+// 無関係にアクチュエータ側のタイマで自律送信されるため、こちらの帯域は
+// robomasTask/cubemarsTaskの送信頻度を下げても減らない。
 
 #define CUBEMARS_MOTOR_COUNT 4 // 1バスあたりの接続台数(最大4)
 

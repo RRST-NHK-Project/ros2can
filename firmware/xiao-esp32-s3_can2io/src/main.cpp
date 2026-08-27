@@ -148,9 +148,10 @@ void setup() {
 
 #elif defined(MODE_ROBOMAS)
     // ロボマス専用モード初期化
-    // xiao-esp32-s3_can2ioの他モードが使うノード/スロット分配プロトコル(500kbps)とは
+    // xiao-esp32-s3_can2ioの他モードが使うノード/スロット分配プロトコルとは
     // 別系統で、DJI RoboMasterシリーズのCANプロトコル(1Mbps固定)を直接喋る独立デバイス
     // として動作する。canInit()/canTask()は使わず、robomas.cpp側で独自にCANを初期化する。
+    // ノード/スロット分配側も1Mbpsに統一済みのため同一物理バスへの混在が可能。
     robomasInit();
     xTaskCreate(
         robomasTask,   // タスク関数
@@ -162,10 +163,11 @@ void setup() {
 
 #elif defined(MODE_CUBEMARS)
     // CubeMars AKシリーズ専用モード初期化
-    // xiao-esp32-s3_can2ioの他モードが使うノード/スロット分配プロトコル(500kbps)とは
+    // xiao-esp32-s3_can2ioの他モードが使うノード/スロット分配プロトコルとは
     // 別系統で、CubeMars AKシリーズのServo(CAN)モードプロトコル(1Mbps固定)を直接喋る
     // 独立デバイスとして動作する。canInit()/canTask()は使わず、cubemars.cpp側で
-    // 独自にCANを初期化する。
+    // 独自にCANを初期化する。ノード/スロット分配側も1Mbpsに統一済みのため
+    // 同一物理バスへの混在が可能。
     cubemarsInit();
     xTaskCreate(
         cubemarsTask,   // タスク関数

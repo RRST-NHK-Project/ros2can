@@ -29,7 +29,10 @@ constexpr uint8_t CAN_CHUNK_COUNT_PER_NODE = (CAN_SLOTS_PER_NODE + CAN_VALUES_PE
 constexpr uint32_t CAN_TX_PERIOD_MS = 5;
 
 static twai_general_config_t g_config = TWAI_GENERAL_CONFIG_DEFAULT((gpio_num_t)CAN_TX, (gpio_num_t)CAN_RX, TWAI_MODE_NORMAL);
-static twai_timing_config_t t_config = TWAI_TIMING_CONFIG_500KBITS();
+// MODE_ROBOMAS/MODE_CUBEMARSと同一バスに同居できるよう1Mbpsに統一。
+// (以前は500kbps固定だった。ロボマス/CubeMarsは仕様上1Mbps固定で変更不可なため、
+// 混在させる場合はこちら側を合わせる必要がある。単独バスで使う場合も1Mbpsで動作する)
+static twai_timing_config_t t_config = TWAI_TIMING_CONFIG_1MBITS();
 static twai_filter_config_t f_config = TWAI_FILTER_CONFIG_ACCEPT_ALL();
 static portMUX_TYPE g_can_frame_lock = portMUX_INITIALIZER_UNLOCKED;
 
@@ -300,7 +303,7 @@ void canInit() {
     ESP_ERROR_CHECK(twai_driver_install(&g_config, &t_config, &f_config));
     ESP_ERROR_CHECK(twai_start());
 
-    Serial.println("[CAN] TWAI started (500kbit).");
+    Serial.println("[CAN] TWAI started (1Mbit).");
 }
 
 #if defined(MODE_CAN_HOST)

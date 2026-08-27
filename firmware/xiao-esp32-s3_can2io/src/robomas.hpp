@@ -3,8 +3,10 @@
 ・MODE_ROBOMAS(DJI RoboMasterシリーズ CANドライバ)のヘッダーファイル
 
 MODE_ROBOMASは、xiao-esp32-s3_can2ioの他モード(MODE_IO/MODE_CAN/MODE_CAN_HOST)
-が使うノード/スロット分配プロトコル(CAN 500kbps)とは別系統で、DJIのCANプロトコル
-(1Mbps固定, ID固定)を直接喋る独立デバイスとして動作する。
+が使うノード/スロット分配プロトコルとは別系統で、DJIのCANプロトコル
+(1Mbps固定, ID固定)を直接喋る独立デバイスとして動作する。ノード/スロット分配側も
+can_task.cppで1Mbpsに統一してあるため同一物理バスへの混在が可能(CAN IDは重ならない
+設計。指令送信は200Hzに抑えてある。詳細はREADME.md参照)。
 1マイコン(1バス)には同一機種のロボマスを最大4台まで接続する構成を想定する。
 
 指令(PC -> 本機, Rx_16Data)/帰還(本機 -> PC, Tx_16Data)のスロット割り当ては

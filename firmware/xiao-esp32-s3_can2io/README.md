@@ -140,12 +140,25 @@ Each 5-slot block is transmitted as two CAN frames (`identifier = 0x100 + node_i
 Unlike every other mode above, `MODE_ROBOMAS` does not participate in the node/slot
 CAN protocol at all. DJI's C620 (M3508), C610 (M2006) and GM6020 controllers speak a
 fixed protocol at a fixed **1Mbps** bitrate with fixed CAN IDs that cannot be changed
-in firmware — this is incompatible with the 500kbps node/slot bus used by
-`MODE_CAN`/`MODE_CAN_HOST`/`MODE_CAN_MONITOR`. A board in `MODE_ROBOMAS` therefore acts
-as a **standalone device**: its own USB-serial link straight to the PC (own
-`DEVICE_ID`), and its own dedicated CAN bus with up to `NUM_MOTOR` (4) RoboMaster
-motors of a **single model** (mixing M3508/M2006/GM6020 on the same bus is not
-supported). Do not put any other `ros2can` node board on this same physical CAN bus.
+in firmware. A board in `MODE_ROBOMAS` therefore acts as a **standalone device**: its
+own USB-serial link straight to the PC (own `DEVICE_ID`), and its own dedicated CAN
+bus with up to `NUM_MOTOR` (4) RoboMaster motors of a **single model** (mixing
+M3508/M2006/GM6020 on the same bus is not supported).
+
+`can_task.cpp`'s node/slot bitrate is now also **1Mbps** (`TWAI_TIMING_CONFIG_1MBITS()`),
+so a `MODE_CAN`/`MODE_CAN_HOST`/`MODE_CAN_MONITOR` board *can* share the same physical
+CAN bus with a `MODE_ROBOMAS` board — the two protocols use non-overlapping CAN ID
+ranges (node/slot: `0x100-0x1xx` standard IDs, sized by `CAN_NODE_COUNT`; RoboMaster:
+`0x1FE`/`0x200-0x208` standard IDs — see the ID table below). Keep `CAN_NODE_COUNT`
+small enough that the node/slot feedback ID range (`0x180 + node*16 + chunk`) doesn't
+reach `0x1FE`; the default `CAN_NODE_COUNT` (2-4) is well clear of that.
+
+Bus bandwidth is the real constraint when mixing, not ID collisions — see
+[Bus Bandwidth When Mixing Modes](#12-bus-bandwidth-when-mixing-modes-on-one-can-bus)
+below. `robomasTask` sends its current command at **200Hz** (`vTaskDelay(5)` in
+`robomas.cpp`) rather than 1kHz specifically so it leaves headroom for other traffic
+on a shared bus; if this board is on its own dedicated bus with nothing else on it,
+this rate is still fine for velocity control.
 
 Select the motor model at compile time in `src/config.hpp`:
 
@@ -192,16 +205,28 @@ Like `MODE_ROBOMAS`, `MODE_CUBEMARS` does not participate in the node/slot CAN
 protocol at all. CubeMars AK-series actuators (e.g. AK40-10) speak the Servo(CAN)
 protocol described in the *AK Series Module Product Manual V3.2.0* (section 4.1),
 plus the Force Control (MIT) protocol from the same manual (section 4.2), at a
-fixed **1Mbps** bitrate — incompatible with the 500kbps node/slot bus used by
-`MODE_CAN`/`MODE_CAN_HOST`/`MODE_CAN_MONITOR`. A board in `MODE_CUBEMARS` therefore
-acts as a **standalone device**: its own USB-serial link straight to the PC (own
-`DEVICE_ID`), and its own dedicated CAN bus with up to `CUBEMARS_MOTOR_COUNT` (4) AK
-actuators. Unlike DJI's GM6020 in `MODE_ROBOMAS`, AK actuators run their own onboard
-closed-loop position/velocity control (FOC), so this mode does **not** run a
-host-side PID loop — it only forwards commands and parses feedback. In MIT mode the
-actuator itself computes `torque = Kp*(p_des - p) + Kd*(v_des - v) + t_ff`, so what
-looks like a host-side gain (Kp/Kd) is actually just forwarded to the actuator's own
+fixed **1Mbps** bitrate. A board in `MODE_CUBEMARS` therefore acts as a **standalone
+device**: its own USB-serial link straight to the PC (own `DEVICE_ID`), and its own
+dedicated CAN bus with up to `CUBEMARS_MOTOR_COUNT` (4) AK actuators. Unlike DJI's
+GM6020 in `MODE_ROBOMAS`, AK actuators run their own onboard closed-loop
+position/velocity control (FOC), so this mode does **not** run a host-side PID
+loop — it only forwards commands and parses feedback. In MIT mode the actuator
+itself computes `torque = Kp*(p_des - p) + Kd*(v_des - v) + t_ff`, so what looks
+like a host-side gain (Kp/Kd) is actually just forwarded to the actuator's own
 control law every cycle.
+
+`can_task.cpp`'s node/slot bitrate is now also **1Mbps**, so a
+`MODE_CAN`/`MODE_CAN_HOST`/`MODE_CAN_MONITOR` board, and/or a `MODE_ROBOMAS` board,
+can share the same physical CAN bus with a `MODE_CUBEMARS` board — CubeMars always
+uses **extended (29-bit)** IDs (`(control_mode_id << 8) | motor_can_id`, see the ID
+table below), which with the default `CUBEMARS_MOTOR_ID_n` values (101-104) land at
+`0x300`+, well clear of both the node/slot range and RoboMaster's `0x1FE`/`0x200-0x208`.
+`cubemarsTask` sends commands at **200Hz** (`vTaskDelay(5)` in `cubemars.cpp`) for the
+same bus-sharing headroom reason as `MODE_ROBOMAS` above — see
+[Bus Bandwidth When Mixing Modes](#12-bus-bandwidth-when-mixing-modes-on-one-can-bus).
+Note that lowering this doesn't reduce the actuator's own feedback traffic: the
+periodic status frame (function ID `0x29`) is broadcast by the actuator on its own
+internal timer, independent of how often the host sends commands.
 
 Set each actuator's CAN ID at compile time in `src/config.hpp`, matching the ID
 configured on the actuator itself via R-Link/CubeMarsTool:
@@ -311,7 +336,49 @@ motor disable) from the manual are not used by this firmware.
 
 ---
 
-## 11. Credits
+## 12. Bus Bandwidth When Mixing Modes on One CAN Bus
+
+`MODE_ROBOMAS`, `MODE_CUBEMARS`, and the node/slot protocol (`MODE_IO`/`MODE_CAN`/
+`MODE_CAN_HOST`) can now share one physical 1Mbps CAN bus without CAN ID collisions
+(see sections 9/10 above). ID collisions aren't the binding constraint, though —
+bus bandwidth is. Ballpark bit cost per 8-byte data frame at 1Mbps, including typical
+bit-stuffing overhead:
+
+| Frame type | Approx. time |
+|:---|---:|
+| Standard ID (11-bit) — used by node/slot and RoboMaster | ~130µs |
+| Extended ID (29-bit) — used by CubeMars | ~150µs |
+
+Rough utilization for 2x RoboMaster motors + 2x CubeMars actuators + one node/slot
+board (`CAN_NODE_COUNT=2`, `CAN_SLOTS_PER_NODE=5`), assuming each RoboMaster/CubeMars
+motor's own feedback frame streams at roughly 1kHz (typical for this class of ESC,
+independent of host command rate):
+
+| Source | Command | Feedback | Subtotal |
+|:---|---:|---:|---:|
+| RoboMaster (200Hz cmd, 2 motors) | ~2.6% | ~26% | ~29% |
+| CubeMars (200Hz cmd, 2 motors) | ~6% | ~30% | ~36% |
+| Node/slot sensor board | ~10% | ~10% | ~21% |
+| **Total** | | | **~86%** |
+
+That's why `robomasTask` and `cubemarsTask` send commands at 200Hz
+(`vTaskDelay(5)`) rather than the 1kHz an unshared bus could support at 1ms —
+at 1kHz command rate the same mix would exceed 100% of bus capacity (command-side
+alone roughly doubles, pushing the total past what the bus can carry, with feedback
+traffic unchanged since it's driven by the ESC/actuator's own internal timer, not by
+how often the host polls). Even at 200Hz, ~86% leaves limited headroom, so:
+
+- Adding more motors, or a busier sensor board, can push this over 100%.
+- Verify on real hardware with `twai_get_status_info()` (see `printHostCanDiagnostics()`
+  in `can_task.cpp` for a usage example) — watch the TX error/queue counters rather
+  than trusting this estimate alone.
+- If it doesn't fit, the fallback is splitting the sensor board onto its own separate
+  physical CAN bus (own transceiver wiring, 500kbps is fine there since nothing else
+  is on it) rather than trying to shrink the RoboMaster/CubeMars traffic further.
+
+---
+
+## 13. Credits
 
 Developed by NHK Project, RRST, Ritsumeikan University, Japan.
 - Official Website: https://www.rrst.jp
