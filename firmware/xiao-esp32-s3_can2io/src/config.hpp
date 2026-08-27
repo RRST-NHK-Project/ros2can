@@ -80,7 +80,7 @@ Copyright (c) 2025 RRST-NHK-Project. All rights reserved.
 // 分だけACKエラーが発生し続け、ホスト自身のCANコントローラがBus-Offに陥る
 // (実測: 4ノード設定・実接続2台の場合、起動後約40msでBus-Off)。
 // 現在の実接続: ホスト(node0)+STM32 b-g431-esc1_can2io(node1)の2台のみ。
-#define CAN_NODE_COUNT 2
+#define CAN_NODE_COUNT 4
 #define CAN_SLOTS_PER_NODE 5
 // CAN_ID の下位2桁をノード番号として使用する。
 // 例: CAN_ID=101 -> node 1, CAN_ID=102 -> node 2, CAN_ID=103 -> node 3, CAN_ID=104 -> node 4
