@@ -3,16 +3,33 @@
 ・MODE_ROBOMAS(DJI RoboMasterシリーズ CANドライバ)の実装ファイル
 
 config.hppのROBOMAS_MOTOR_TYPEで選択した機種(M3508/M2006/GM6020)を、
-同一バス上に最大NUM_MOTOR(4)台まで速度制御する。他機種との混在は非対応。
+同一バス上に最大NUM_MOTOR(4)台まで制御する。他機種との混在は非対応。
+
+速度ループ(既存)に加え、CubeMarsのMIT(Force Control)モードと対称的な位置PD制御
+モード(MIT)にも対応する。ただしロボマス側ESC(C610/C620)やGM6020はCANで生の電流
+指令しか受け付けずアクチュエータ内蔵の位置/トルク制御が無いため、CubeMarsのように
+専用CANフレームを別途持つのではなく、位置PD制御ループ自体をこのマイコン側で計算し
+既存のsendCurrentCommand()(電流指令)へ渡すだけになる。位置フィードバックは
+ロボマス内蔵ロータエンコーダ(angle[]/vel[])を使う(config.hppのMIT関連コメント参照)。
+モータごとにcontrol_modeスロットで速度⇔MITを毎周期選択できる。
 
 スロット割り当て (frame_data.hppのTx_16Data/Rx_16Dataを使用、独立デバイスとして
 24スロットをそのまま使う。ノード/スロット分配は行わない):
 
   Rx_16Data (PC -> 本機, 指令):
-    0-3: target_rpm (モータ1-4、生のrpm値、スケール無し)
-    4-23: 未使用
+    0-3:   target        速度モード: target_rpm、出力軸rpm、生値スケール無し(既存/後方互換)
+                          MITモード:  目標位置、1deg/LSB(出力軸角度、範囲±32767deg=約±91回転。
+                                      0.1deg/LSBだと±9.1回転までしか指令できずz/r軸等では
+                                      不足するため粗くしてある。config.hppのROBOMAS_MIT_POSITION_LSB_DEG参照)
+    4-7:   control_mode  モータ1-4: 0=速度ループ(既定), 1=MIT(位置PD制御)
+                          全ゼロ(E-STOP/未接続時の既定)で0=速度・target=0となり、
+                          安全にゼロ速度指令(その場停止)になる(既存動作から変更無し)。
+    8-11:  mit_velocity_ff (モータ1-4): MITモード時のみ参照。目標速度FF、1rpm/LSB
+    12-15: mit_kp          (モータ1-4): MITモード時のみ参照。比例ゲイン、0.001(A/deg)/LSB
+    16-19: mit_kd          (モータ1-4): MITモード時のみ参照。微分ゲイン、0.0001(A/rpm)/LSB
+    20-23: mit_current_ff  (モータ1-4): MITモード時のみ参照。電流FF、0.001A/LSB
 
-  Tx_16Data (本機 -> PC, 帰還):
+  Tx_16Data (本機 -> PC, 帰還。速度/MIT共通、変更無し):
     0-3: angle  [0.1deg単位] (出力軸換算、M3508/M2006はギア比込み)
     4-7: velocity [rpm]      (出力軸換算)
     8-11: current [mA単位]   (実電流換算値)
@@ -29,6 +46,16 @@ Copyright (c) 2025 RRST-NHK-Project. All rights reserved.
 #include <Arduino.h>
 
 namespace {
+
+// PC側(Rx_16Data)のcontrol_mode enum値 (cubemars.cppのCUBEMARS_MODE_*と同じパターン)
+constexpr int16_t ROBOMAS_MODE_VELOCITY = 0;
+constexpr int16_t ROBOMAS_MODE_MIT = 1;
+
+// MITモード用の追加スロット (target/control_modeは0-7を流用、robomas.cpp先頭コメント参照)
+constexpr int MIT_SLOT_VELOCITY_FF = 8;  // 8-11
+constexpr int MIT_SLOT_KP = 12;          // 12-15
+constexpr int MIT_SLOT_KD = 16;          // 16-19
+constexpr int MIT_SLOT_CURRENT_FF = 20;  // 20-23
 
 // -------- 状態量 (CAN受信フィードバック) -------- //
 int16_t encoder_count[NUM_MOTOR] = {0};
@@ -205,10 +232,6 @@ void robomasInit() {
 
 void robomasTask(void *pvParameters) {
     while (1) {
-        for (int i = 0; i < NUM_MOTOR; i++) {
-            target_rpm[i] = Rx_16Data[i];
-        }
-
         // ループ周期は約5ms(200Hz、CubeMars/センサノードと1Mbpsバスを共有するため
         // 指令送信頻度を落としてある)。millis()では量子化誤差がdtに対して無視でき
         // ない比率になるため、引き続きmicros()で測る。
@@ -223,9 +246,30 @@ void robomasTask(void *pvParameters) {
         receiveFeedback();
 
         for (int i = 0; i < NUM_MOTOR; i++) {
-            vel_pid[i].set_target(target_rpm[i]);
-            float vel_out = vel_pid[i].update(vel[i], dt);
-            motor_output_current[i] = constrainFloat(vel_out * ROBOMAS_OUTPUT_GAIN, -ROBOMAS_MAX_CURRENT_A, ROBOMAS_MAX_CURRENT_A);
+            int16_t control_mode = Rx_16Data[4 + i];
+
+            if (control_mode == ROBOMAS_MODE_MIT) {
+                float target_pos_deg = Rx_16Data[i] * ROBOMAS_MIT_POSITION_LSB_DEG;
+                float target_vel_ff_rpm = Rx_16Data[MIT_SLOT_VELOCITY_FF + i] * ROBOMAS_MIT_VELOCITY_FF_LSB_RPM;
+                float kp = Rx_16Data[MIT_SLOT_KP + i] * ROBOMAS_MIT_KP_LSB;
+                float kd = Rx_16Data[MIT_SLOT_KD + i] * ROBOMAS_MIT_KD_LSB;
+                float current_ff = Rx_16Data[MIT_SLOT_CURRENT_FF + i] * ROBOMAS_MIT_CURRENT_FF_LSB_A;
+
+                float pos_error = target_pos_deg - angle[i];
+                float vel_error = target_vel_ff_rpm - vel[i];
+                motor_output_current[i] = constrainFloat(
+                    kp * pos_error + kd * vel_error + current_ff,
+                    -ROBOMAS_MAX_CURRENT_A, ROBOMAS_MAX_CURRENT_A);
+
+                // 速度モードへ戻したときにI項が汚染されていないよう、MIT中は
+                // 毎周期リセットして待機させておく。
+                vel_pid[i].reset();
+            } else {
+                target_rpm[i] = Rx_16Data[i];
+                vel_pid[i].set_target(target_rpm[i]);
+                float vel_out = vel_pid[i].update(vel[i], dt);
+                motor_output_current[i] = constrainFloat(vel_out * ROBOMAS_OUTPUT_GAIN, -ROBOMAS_MAX_CURRENT_A, ROBOMAS_MAX_CURRENT_A);
+            }
         }
 
         sendCurrentCommand(motor_output_current);

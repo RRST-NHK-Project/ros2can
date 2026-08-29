@@ -170,10 +170,29 @@ Select the motor model at compile time in `src/config.hpp`:
 #define ROBOMAS_MOTOR_TYPE ROBOMAS_MOTOR_M3508 // or ROBOMAS_MOTOR_M2006 / ROBOMAS_MOTOR_GM6020
 ```
 
-Only velocity control is implemented. Velocity PID gains (`ROBOMAS_KP_VEL` /
-`ROBOMAS_KI_VEL` / `ROBOMAS_KD_VEL`) are fixed compile-time constants in `config.hpp`;
-they cannot be changed from `ros2can`/the PC side at runtime — tune them in firmware
-and reflash.
+Two control modes are implemented, selectable **per motor, every cycle** via the
+`control_mode` slot below:
+
+- **Velocity (mode 0, default)** — unchanged from before. Velocity PID gains
+  (`ROBOMAS_KP_VEL` / `ROBOMAS_KI_VEL` / `ROBOMAS_KD_VEL`) are fixed compile-time
+  constants in `config.hpp`; they cannot be changed from `ros2can`/the PC side at
+  runtime — tune them in firmware and reflash.
+- **MIT (mode 1)** — a position PD control loop, symmetric in spirit to CubeMars'
+  MIT (Force Control) mode (§10 below), but implemented very differently: DJI's
+  C610/C620 ESCs and the GM6020 only ever accept a raw current command over CAN —
+  there is no actuator-side position/torque control to hand a dedicated frame to.
+  So instead of a new wire protocol to the motor, the PD loop is computed on this
+  board (`robomasTask`, 200Hz) and its output current is fed into the exact same
+  `sendCurrentCommand()` used by velocity mode. Position feedback comes from the
+  RoboMaster's **built-in rotor encoder** (`angle[]`/`vel[]`) — unlike CubeMars
+  actuators, there's no way for this board to see an external encoder, so any
+  backlash/elasticity in an external belt/pulley transmission is *not* corrected
+  for. `mit_kp`/`mit_kd`/`mit_current_ff` are sent fresh from the PC every cycle
+  (unlike the velocity mode's fixed gains) — see `config.hpp`'s `ROBOMAS_MIT_*`
+  scale constants.
+
+All-zero (the default when nothing is connected / E-STOP) still means mode 0
+(velocity) with target 0 — i.e. safe zero-velocity stop, same as before adding MIT.
 
 Slot mapping reuses the standalone 24-slot `Tx_16Data`/`Rx_16Data` frame directly (no
 node/slot chunking, since this board is not a node on the host's bus):
@@ -182,10 +201,14 @@ node/slot chunking, since this board is not a node on the host's bus):
 
 | Index | Meaning |
 |---:|:---|
-| 0-3 | target velocity for motor 1-4, raw rpm (output-shaft rpm), no scaling |
-| 4-23 | unused |
+| 0-3 | target for motor 1-4. Velocity mode: raw rpm (output-shaft rpm), no scaling. MIT mode: target position, scale 1 deg/LSB (output-shaft degrees, range ±32767° ≈ ±91 turns — coarser than the 0.1 deg/LSB angle feedback below on purpose, since 0.1 deg/LSB would only reach ±9.1 turns, too little headroom for e.g. soki's z/r axes) |
+| 4-7 | control_mode for motor 1-4: 0 = velocity loop (default), 1 = MIT (position PD) |
+| 8-11 | MIT mode only: target velocity feed-forward for motor 1-4, scale 1 rpm/LSB (output-shaft rpm) |
+| 12-15 | MIT mode only: Kp for motor 1-4, scale `ROBOMAS_MIT_KP_LSB` (A/deg per LSB) |
+| 16-19 | MIT mode only: Kd for motor 1-4, scale `ROBOMAS_MIT_KD_LSB` (A/rpm per LSB) |
+| 20-23 | MIT mode only: current feed-forward for motor 1-4, scale `ROBOMAS_MIT_CURRENT_FF_LSB_A` (A per LSB) |
 
-**Feedback (board -> PC), `Tx_16Data`:**
+**Feedback (board -> PC), `Tx_16Data`:** unchanged, shared by both control modes.
 
 | Index | Meaning |
 |---:|:---|

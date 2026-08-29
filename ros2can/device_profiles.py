@@ -323,29 +323,59 @@ def make_robomas_profile(
     モータ機種(M3508/M2006/GM6020のいずれか)はファーム側config.hppの
     ROBOMAS_MOTOR_TYPEでコンパイル時固定。速度PIDゲインもCAN経由では変更できず
     ファーム側固定(config.hppのROBOMAS_KP_VEL等)。1バスには単一機種のみ、最大4台。
+
+    control_mode (0=速度ループ/1=MIT)で毎周期モータごとに制御方式を切り替えられる。
+    MIT(位置PD制御)はCubeMarsのMITモードと対称的だが、ロボマス側ESC/GM6020は
+    CANで生の電流指令しか受け付けないため、位置PD制御ループ自体はマイコン側
+    (robomas.cpp)で計算する。位置フィードバックはロボマス内蔵ロータエンコーダを使う
+    (外付けエンコーダのバックラッシュ補正等は行わない)。mit_kp/mit_kd/mit_current_ff
+    はCAN経由で毎周期送る可変値(速度PIDと異なりファーム側固定ではない)。
+    スケール値はconfig.hppのROBOMAS_MIT_*と必ず一致させること。
     """
     tx: List[ChannelDef] = []
     rx: List[ChannelDef] = []
 
     for i in range(4):
         m = i + 1
-        tx.append(ChannelDef(i, f"M{m} target_velocity", MOTOR, group="ロボマス 指令",
-                              min=-450, max=450,
-                              unit="rpm",
-                              note="出力軸rpm(ギア比込み)、スケール無し。モータ機種はconfig.hppで固定。"
-                                   "GUIのスライダー横の範囲欄で上下限を変更可能(デフォルト±450rpm)"))
+        group_cmd = f"M{m} 指令"
+        tx.append(ChannelDef(i, f"M{m} target", MOTOR, group=group_cmd,
+                              min=-32768, max=32767,
+                              note="control_modeが速度ループのとき出力軸rpm(ギア比込み)、"
+                                   "生値スケール無し。MITのとき目標位置、1deg/LSB、出力軸角度"
+                                   "(range±32767=約±91回転。config.hppのROBOMAS_MIT_POSITION_LSB_DEGと"
+                                   "一致させること)。モータ機種はconfig.hppで固定。GUI上はスケール無しの"
+                                   "生値(速度ループのデフォルト範囲は概ね±450rpm相当、範囲欄で変更可能)"))
+        tx.append(ChannelDef(4 + i, f"M{m} control_mode", ENUM_OUT, group=group_cmd,
+                              options=[(0, "速度ループ"), (1, "MIT(位置PD)")],
+                              note="全ゼロ(未接続/E-STOP時の既定)で速度ループ・target=0となり、"
+                                   "安全にその場停止する(位置ジャンプは発生しない)。MIT選択時は"
+                                   "mit_velocity_ff/mit_kp/mit_kd/mit_current_ffも参照される"))
+        tx.append(ChannelDef(8 + i, f"M{m} mit_velocity_ff", MOTOR, group=group_cmd,
+                              min=-32768, max=32767, unit="rpm",
+                              note="MITモード用の目標速度フィードフォワード(control_mode=MITの"
+                                   "ときのみ参照)。1rpm/LSB、出力軸rpm(M{m} velocity帰還と同スケール)"))
+        tx.append(ChannelDef(12 + i, f"M{m} mit_kp", MOTOR, group=group_cmd,
+                              min=0, max=32767, scale=0.001, unit="A/deg", decimals=3,
+                              note="MITモード用の比例ゲイン(control_mode=MITのときのみ参照)。"
+                                   "0.001(A/deg)/LSB(config.hppのROBOMAS_MIT_KP_LSBと一致させること)"))
+        tx.append(ChannelDef(16 + i, f"M{m} mit_kd", MOTOR, group=group_cmd,
+                              min=0, max=32767, scale=0.0001, unit="A/rpm", decimals=4,
+                              note="MITモード用の微分ゲイン(control_mode=MITのときのみ参照)。"
+                                   "0.0001(A/rpm)/LSB(config.hppのROBOMAS_MIT_KD_LSBと一致させること)"))
+        tx.append(ChannelDef(20 + i, f"M{m} mit_current_ff", MOTOR, group=group_cmd,
+                              min=-32768, max=32767, scale=0.001, unit="A", decimals=3,
+                              note="MITモード用の電流フィードフォワード(control_mode=MITのときのみ"
+                                   "参照)。0.001A/LSB(config.hppのROBOMAS_MIT_CURRENT_FF_LSB_Aと"
+                                   "一致させること)"))
 
     for i in range(4):
         m = i + 1
-        rx.append(ChannelDef(i, f"M{m} angle", READOUT, group="ロボマス 帰還",
+        group_fb = f"M{m} 帰還"
+        rx.append(ChannelDef(i, f"M{m} angle", READOUT, group=group_fb,
                               scale=0.1, unit="deg", decimals=1, note="出力軸角度", zeroable=True))
-    for i in range(4):
-        m = i + 1
-        rx.append(ChannelDef(4 + i, f"M{m} velocity", READOUT, group="ロボマス 帰還",
+        rx.append(ChannelDef(4 + i, f"M{m} velocity", READOUT, group=group_fb,
                               unit="rpm", decimals=0, note="出力軸rpm"))
-    for i in range(4):
-        m = i + 1
-        rx.append(ChannelDef(8 + i, f"M{m} current", READOUT, group="ロボマス 帰還",
+        rx.append(ChannelDef(8 + i, f"M{m} current", READOUT, group=group_fb,
                               scale=0.001, unit="A", decimals=3))
 
     tx = _fill_remaining(tx, _raw_out)
@@ -357,8 +387,12 @@ def make_robomas_profile(
         description=(
             "MODE_ROBOMAS用。ノード/スロット分配は行わず、独立デバイスとしてロボマス"
             "(M3508/M2006/GM6020のいずれか、config.hppのROBOMAS_MOTOR_TYPEで固定)を"
-            "最大4台まで速度制御する。速度PIDゲインはCAN経由では変更できず、ファーム側"
-            "config.hppのコンパイル時固定。ノード/スロット分配側(MODE_CAN等)も1Mbpsに"
+            "最大4台まで制御する。control_modeで速度ループ(既定、速度PIDゲインはCAN経由"
+            "では変更できずファーム側config.hppのコンパイル時固定)とMIT(位置PD制御、"
+            "Kp/Kd/current_ffはCAN経由で毎周期変更可能)をモータごとに切替できる。MITは"
+            "ロボマス内蔵ロータエンコーダを位置フィードバックに使い、位置PD制御ループ"
+            "自体をマイコン側(robomas.cpp)で計算する(CubeMarsのMITと異なりモータへの"
+            "専用CANフレームは無い)。ノード/スロット分配側(MODE_CAN等)も1Mbpsに"
             "統一済みのため同一物理バスへの混在は可能(CAN IDは重ならない設計)だが、"
             "帯域を確保するため指令送信は200Hzに固定(ファーム側robomas.cpp)。台数を"
             "増やす場合はバス帯域の余裕を確認すること(firmware/xiao-esp32-s3_can2io/"

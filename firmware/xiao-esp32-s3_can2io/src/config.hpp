@@ -11,7 +11,7 @@ Copyright (c) 2025 RRST-NHK-Project. All rights reserved.
 // ================= 基本設定 =================
 
 // IDの設定，シリアルフレームのDEVICE_IDとして使用します。
-#define DEVICE_ID 101
+#define DEVICE_ID 21
 
 // CAN_IDは3桁形式で指定します。
 // 1桁目はバス番号、末尾2桁はノード番号を表します。
@@ -20,11 +20,11 @@ Copyright (c) 2025 RRST-NHK-Project. All rights reserved.
 
 // モードの設定，どれか一つをコメントアウト解除すること
 // #define MODE_CAN
-#define MODE_CAN_HOST
+// #define MODE_CAN_HOST
 // #define MODE_IO
 // #define MODE_DEBUG
 // #define MODE_CAN_MONITOR
-// #define MODE_ROBOMAS
+#define MODE_ROBOMAS
 // #define MODE_CUBEMARS
 
 // ================= MD関連 =================
@@ -122,7 +122,7 @@ Copyright (c) 2025 RRST-NHK-Project. All rights reserved.
 #define ROBOMAS_MOTOR_GM6020 3 // GM6020 (ダイレクトドライブ、ギア無し)
 
 // 使用するモータ機種を1つ選択すること。
-#define ROBOMAS_MOTOR_TYPE ROBOMAS_MOTOR_GM6020
+#define ROBOMAS_MOTOR_TYPE ROBOMAS_MOTOR_M2006
 
 // 速度PIDゲイン。ros2can(PC)側からは変更できない固定値。チューニングはここで行う。
 #if ROBOMAS_MOTOR_TYPE == ROBOMAS_MOTOR_M3508
@@ -172,6 +172,29 @@ Copyright (c) 2025 RRST-NHK-Project. All rights reserved.
 #else
 #error "ROBOMAS_MOTOR_TYPE: unknown motor type"
 #endif
+
+// ---- MIT(位置PD制御)モード関連 ----
+// CubeMarsのMITモードと異なり、ロボマス側ESC(C610/C620)やGM6020はCANで生の電流指令
+// しか受け付けずアクチュエータ内蔵の位置/トルク制御が無いため、位置PD制御ループ
+// 自体をこのマイコン(ESP32)側で計算し、結果をそのまま既存のsendCurrentCommand()
+// (電流指令)へ渡す(モータへの新しいCANフレーム形式は不要、robomas.cpp参照)。
+// 位置フィードバックはロボマス内蔵ロータエンコーダ(angle[]/vel[])を使うため、
+// ベルト・プーリー等の外部伝達機構のバックラッシュ/弾性誤差はここでは補正できない
+// (外付けエンコーダを真値とする用途に使う場合は許容できるか要検討、
+// note/hardware_mapping.txtのz_joint/r_joint節参照)。
+// Kp/Kd/current_ffは速度モードのROBOMAS_KP_VEL等と異なりコンパイル時固定値ではなく、
+// CAN経由で毎周期ROSから送られる可変値(robomas.cppのcontrol_mode=ROBOMAS_MODE_MIT
+// 時のみ参照)。値は暫定のスケール定数であり、実機チューニングで変更してよい。
+// 目標位置(target流用)はint16スロットなので、0.1deg/LSBのままだと±3276.7deg
+// (出力軸換算で約±9.1回転)までしか指令できない。soki z/r軸のように出力軸換算で
+// 約9回転に迫る可動域がある用途向けに1deg/LSBへ粗くし、±32767deg(約±91回転)
+// まで拡張してある(プーリー半径11.46mm相当の機構なら1deg≈0.2mmでまだ十分な分解能)。
+// 更に多回転が必要になった場合は、2スロットを結合してint32化する等の対応が必要。
+#define ROBOMAS_MIT_POSITION_LSB_DEG 1.0f    // 目標位置(target流用)。1deg/LSB、出力軸角度
+#define ROBOMAS_MIT_VELOCITY_FF_LSB_RPM 1.0f // 目標速度FF。1rpm/LSB、出力軸rpm
+#define ROBOMAS_MIT_KP_LSB 0.001f            // 比例ゲイン。0.001(A/deg)/LSB
+#define ROBOMAS_MIT_KD_LSB 0.0001f           // 微分ゲイン。0.0001(A/rpm)/LSB
+#define ROBOMAS_MIT_CURRENT_FF_LSB_A 0.001f  // 電流フィードフォワード。0.001A/LSB
 
 // ================= CubeMars AK関連 (MODE_CUBEMARSのみ有効) =================
 // MODE_CUBEMARSはMODE_ROBOMASと同様、xiao-esp32-s3_can2ioのノード/スロット分配方式
