@@ -42,7 +42,7 @@ setup(
         ('share/' + package_name + '/launch', ['launch/ros2can.launch.py']),
         ('share/' + package_name + '/config', ['config/ros2can.yaml']),
         ('share/' + package_name + '/resources',
-         ['resources/logo.png', 'resources/git_version.txt']),
+         ['resources/logo.png', 'resources/soki_logo.png', 'resources/git_version.txt']),
     ],
     install_requires=['setuptools'],
     zip_safe=True,

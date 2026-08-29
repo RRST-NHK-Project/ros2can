@@ -73,6 +73,7 @@ class HardwareManager(QObject):
     frameReceived = pyqtSignal(int, list)     # device_id, values(24)
     linkStateChanged = pyqtSignal(int, bool)  # device_id, connected
     deviceClaimed = pyqtSignal(int, str)      # device_id, port (新規専有時)
+    logMessage = pyqtSignal(str)              # 接続/切断/フレーム異常などの通知ログ
 
     def __init__(self, config: Optional[HardwareConfig] = None, parent=None):
         super().__init__(parent)
@@ -80,6 +81,12 @@ class HardwareManager(QObject):
         self.links: Dict[int, SerialLink] = {}
         self._last_reconnect_attempt: Dict[int, float] = {}
         self._last_rx_time: Dict[int, float] = {}
+        # 新規ファームウェア開発時の通信テストでフレーム同期ずれに気付けるよう、
+        # FrameParser(frame_codec.py)が数えている checksum_errors/dropped_bytes の
+        # 増分をログ化する際の基準値。SerialLink.open()のたびにパーサが作り直され
+        # カウントは0に戻るため、再接続時にリセットする。
+        self._last_checksum_errors: Dict[int, int] = {}
+        self._last_dropped_bytes: Dict[int, int] = {}
 
         self._scanner = _ScannerThread(self.config)
         self._scanner.set_skip_ports_provider(self._owned_ports)
@@ -122,8 +129,11 @@ class HardwareManager(QObject):
 
         self.links[device_id] = link
         self._last_rx_time[device_id] = time.monotonic()
+        self._last_checksum_errors[device_id] = 0
+        self._last_dropped_bytes[device_id] = 0
         self.deviceClaimed.emit(device_id, port)
         self.linkStateChanged.emit(device_id, True)
+        self.logMessage.emit(f"[HW] id={device_id} port={port} を検出し接続しました")
 
     # ---------------- periodic IO ----------------
 
@@ -137,7 +147,9 @@ class HardwareManager(QObject):
 
             try:
                 frames = link.read_frames()
-            except SerialLinkError:
+            except SerialLinkError as exc:
+                self.logMessage.emit(
+                    f"[HW] id={device_id} port={link.port} でI/Oエラー: {exc}")
                 self._handle_disconnect(device_id, link)
                 continue
 
@@ -147,13 +159,45 @@ class HardwareManager(QObject):
                 self._last_rx_time[device_id] = now
                 self.frameReceived.emit(device_id, values)
 
+            self._check_parser_errors(device_id, link)
+
             if now - self._last_rx_time.get(device_id, now) >= self.config.rx_timeout_sec:
+                self.logMessage.emit(
+                    f"[HW] id={device_id} port={link.port} からのRXが"
+                    f"{self.config.rx_timeout_sec:.1f}秒途絶えたため切断扱いにします")
                 self._handle_disconnect(device_id, link)
+
+    def _check_parser_errors(self, device_id: int, link: SerialLink) -> None:
+        """フレーム同期ずれ(チェックサム不一致/同期外れバイト破棄)が増えていたら
+        通知する。新規ファームウェア開発時の通信テストで、フレーミング仕様の
+        バグ(長さ計算ミス、チェックサム計算ミス等)に気付く手掛かりになる。"""
+        checksum_errors = link.parser.checksum_errors
+        last_checksum = self._last_checksum_errors.get(device_id, 0)
+        checksum_delta = checksum_errors - last_checksum
+        if checksum_delta > 0:
+            self._last_checksum_errors[device_id] = checksum_errors
+            self.logMessage.emit(
+                f"[HW] id={device_id} port={link.port} チェックサム不一致 x{checksum_delta} "
+                f"(フレーム同期ずれの可能性、累計{checksum_errors})")
+
+        # dropped_bytes はチェックサム不一致でも1byteずつ加算されるため、それ以外の
+        # 原因(START_BYTE不一致/LENGTH異常による再同期)で増えた分だけを別掲する。
+        dropped_bytes = link.parser.dropped_bytes
+        last_dropped = self._last_dropped_bytes.get(device_id, 0)
+        dropped_delta = dropped_bytes - last_dropped
+        if dropped_delta > 0:
+            self._last_dropped_bytes[device_id] = dropped_bytes
+            extra = dropped_delta - checksum_delta
+            if extra > 0:
+                self.logMessage.emit(
+                    f"[HW] id={device_id} port={link.port} 不正な同期バイトを{extra}byte破棄 "
+                    f"(START_BYTE不一致 or LENGTH異常、累計{dropped_bytes})")
 
     def _handle_disconnect(self, device_id: int, link: SerialLink) -> None:
         link.close()
         self._last_reconnect_attempt[device_id] = time.monotonic()
         self.linkStateChanged.emit(device_id, False)
+        self.logMessage.emit(f"[HW] id={device_id} port={link.port} から切断されました")
 
     def _maybe_reconnect(self, device_id: int, link: SerialLink, now: float) -> None:
         last_attempt = self._last_reconnect_attempt.get(device_id, 0.0)
@@ -163,7 +207,10 @@ class HardwareManager(QObject):
         try:
             link.open()
             self._last_rx_time[device_id] = now
+            self._last_checksum_errors[device_id] = 0
+            self._last_dropped_bytes[device_id] = 0
             self.linkStateChanged.emit(device_id, True)
+            self.logMessage.emit(f"[HW] id={device_id} port={link.port} へ再接続しました")
         except Exception:
             pass
 
@@ -174,6 +221,8 @@ class HardwareManager(QObject):
             link.close()
         self._last_reconnect_attempt.pop(device_id, None)
         self._last_rx_time.pop(device_id, None)
+        self._last_checksum_errors.pop(device_id, None)
+        self._last_dropped_bytes.pop(device_id, None)
 
     def write(self, device_id: int, data: List[int]) -> None:
         link = self.links.get(device_id)

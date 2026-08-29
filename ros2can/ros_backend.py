@@ -129,6 +129,7 @@ class DeviceChannel:
 class RosBackend(QObject):
     deviceListChanged = pyqtSignal()
     rxUpdated = pyqtSignal(int)
+    logMessage = pyqtSignal(str)  # 通信ログ(接続/切断/エラー/デバイス増減)。log_dialog.py が購読する
 
     def __init__(self, node_name: str = "ros2can_gui",
                  hardware_config: Optional[HardwareConfig] = None):
@@ -144,6 +145,7 @@ class RosBackend(QObject):
         self.hardware.deviceClaimed.connect(self._on_hardware_claimed)
         self.hardware.frameReceived.connect(self._on_hardware_frame)
         self.hardware.linkStateChanged.connect(self._on_hardware_link_state)
+        self.hardware.logMessage.connect(self.logMessage)
 
         self._create_zero_channel_service()
 
@@ -234,6 +236,8 @@ class RosBackend(QObject):
             lambda msg, did=device_id: self._on_topic_rx(did, msg), 10)
         self.devices[device_id] = ch
         self.deviceListChanged.emit()
+        via = "手動追加" if manual else "トピック自動検出"
+        self.logMessage.emit(f"[TOPIC] id={device_id} を追加しました({via}、既存トピックへ相乗り)")
         return ch
 
     def _on_topic_rx(self, device_id: int, msg: Int16MultiArray) -> None:
@@ -373,6 +377,7 @@ class RosBackend(QObject):
             lambda msg, did=device_id: self._on_simulator_tx_command(did, msg), 10)
         self.devices[device_id] = ch
         self.deviceListChanged.emit()
+        self.logMessage.emit(f"[SIM] id={device_id} をデバッグ(仮想)デバイスとして追加しました")
         return ch
 
     def _on_simulator_tx_command(self, device_id: int, msg: Int16MultiArray) -> None:
@@ -521,6 +526,7 @@ class RosBackend(QObject):
         if ch.mode == MODE_HARDWARE:
             self.hardware.release(device_id)
         self.deviceListChanged.emit()
+        self.logMessage.emit(f"[DEV] id={device_id} を削除しました")
 
     # ---------------- tx ----------------
 
@@ -568,6 +574,7 @@ class RosBackend(QObject):
         外部ノードが指令を送り続けている場合に _on_hardware_tx_command が
         即座に非ゼロ値を書き込み直してしまい、E-STOPの意味がなくなる。
         """
+        self.logMessage.emit("[E-STOP] 全デバイスへゼロ指令を送信し、送信経路を停止しました")
         for device_id, ch in self.devices.items():
             ch.direct_tx = False
             ch.topic_passthrough = False

@@ -6,27 +6,34 @@
 
 from __future__ import annotations
 
+import time
 from typing import Dict, Optional
 
-from PyQt5.QtCore import Qt, QTimer, QSettings
+from PyQt5.QtCore import Qt, QTimer, QSettings, QSize
+from PyQt5.QtGui import QIcon
 from PyQt5.QtWidgets import (
     QMainWindow, QListWidget, QListWidgetItem,
     QToolBar, QAction, QLabel, QInputDialog,
     QMessageBox, QSplitter, QMenu, QWidget, QSizePolicy,
-    QVBoxLayout,
+    QVBoxLayout, QFrame,
 )
 
 from .ros_backend import RosBackend
 from .device_panel import DevicePanel
 from .can_monitor import CanMonitorDialog
-from .widgets import SizedStackedWidget
-from .app_info import logo_pixmap, package_version
+from .log_dialog import LogDialog
+from .widgets import SizedStackedWidget, DeviceListRow, SpinnerLabel
+from .app_info import logo_pixmap, sub_logo_pixmap, app_icon_pixmap, package_version
 from .settings_dialog import SettingsDialog
-from .about_dialog import AboutDialog
+from .about_dialog import AboutDialog, SERIAL_BRIDGE_URL
 from .encoder_init_panel import EncoderInitPanel
 
 UI_REFRESH_MS = 200
 TOPIC_RESCAN_MS = 1000
+
+# xiao_esp32_s3_smd_serial_bridge (MODE_CAN_HOST) は ros2can 自身のリポジトリの
+# firmware/ 以下に同梱されている。
+FIRMWARE_URL = "https://github.com/RRST-NHK-Project/ros2can/tree/main/firmware/xiao-esp32-s3_can2io"
 
 
 class MainWindow(QMainWindow):
@@ -36,7 +43,18 @@ class MainWindow(QMainWindow):
         self.panels: Dict[int, DevicePanel] = {}
         self._can_monitor_dialog: Optional[CanMonitorDialog] = None
 
+        # 過去分をまとめて遡って見るための詳細ログ(トグルで開くウィンドウ)。
+        # ダイアログを開く前の分も逃さないよう遅延生成せずここで作る。最新1件だけは
+        # 別途ステータスバー右側にも常時表示する(下の _build_toolbar / _on_log_message 参照)。
+        self.log_dialog = LogDialog(self)
+        self.backend.logMessage.connect(self.log_dialog.append_message)
+        self.backend.logMessage.connect(self._on_log_message)
+
         self.setWindowTitle(f"RRST ros2can GUI - v{package_version()}")
+
+        icon_pixmap = app_icon_pixmap()
+        if icon_pixmap is not None:
+            self.setWindowIcon(QIcon(icon_pixmap))
 
         # 前回終了時のウィンドウサイズ/位置を記憶し、毎回リサイズし直す手間を無くす。
         self._settings = QSettings("ros2can", "MainWindow")
@@ -62,7 +80,27 @@ class MainWindow(QMainWindow):
         self.device_list.itemClicked.connect(self._on_device_item_clicked)
         self.device_list.setContextMenuPolicy(Qt.CustomContextMenu)
         self.device_list.customContextMenuRequested.connect(self._on_device_list_context_menu)
-        splitter.addWidget(self.device_list)
+
+        # 検出されている間は不要なので、1台も検出されていない間だけ一覧の上に
+        # スキャン中インジケータを出す(_refresh_device_list で表示/非表示を切替)。
+        # 一覧側の枠線は外し、この行と一覧をまとめて1つの枠で囲むことで
+        # 派手な色の帯が一覧に貼り付いたようには見えないようにする。
+        self.device_list.setFrameShape(QListWidget.NoFrame)
+
+        self.device_list_scanning_label = SpinnerLabel("マイコンをスキャンしています…")
+        self.device_list_scanning_label.setAlignment(Qt.AlignCenter)
+        self.device_list_scanning_label.setStyleSheet(
+            "color: #888; font-size: 9pt; padding: 3px 0;")
+
+        device_list_container = QFrame()
+        device_list_container.setFrameShape(QFrame.StyledPanel)
+        device_list_container.setFrameShadow(QFrame.Sunken)
+        device_list_layout = QVBoxLayout(device_list_container)
+        device_list_layout.setContentsMargins(1, 1, 1, 1)
+        device_list_layout.setSpacing(0)
+        device_list_layout.addWidget(self.device_list_scanning_label)
+        device_list_layout.addWidget(self.device_list)
+        splitter.addWidget(device_list_container)
 
         self.stack = SizedStackedWidget()
         self.placeholder = QWidget()
@@ -70,23 +108,33 @@ class MainWindow(QMainWindow):
         placeholder_layout.addStretch(2)
 
         placeholder_text = QLabel(
-            "マイコン(CANホスト)が検出されていません。\n\n"
-            "・xiao_esp32_s3_smd_serial_bridge (MODE_CAN_HOST) または serial_bridge の\n"
-            "  ファームウェアを書き込んだマイコンをUSB接続してください。\n"
-            "  ros2can が自動検出します。\n"
-            "・別プロセスが既に握っているトピックに相乗りしたい場合は、\n"
-            "  上部の「デバイスを手動追加」を使用してください。\n"
-            "・実機なしで動作確認をしたい場合は、上部の「デバッグデバイスを追加」から\n"
-            "  仮想デバイスを追加してください(TXの値がそのままRXにループバックされます)。")
+            "マイコン(CANホスト)が検出されていません。<br><br>"
+            f"・<a href=\"{FIRMWARE_URL}\">xiao_esp32_s3_smd_serial_bridge</a> "
+            f"(MODE_CAN_HOST) または <a href=\"{SERIAL_BRIDGE_URL}\">serial_bridge</a> の<br>"
+            "&nbsp;&nbsp;ファームウェアを書き込んだマイコンをUSB接続してください。<br>"
+            "&nbsp;&nbsp;ros2can が自動検出します。<br>"
+            "・別プロセスが既に握っているトピックに相乗りしたい場合は、<br>"
+            "&nbsp;&nbsp;上部の「デバイスを手動追加」を使用してください。<br>"
+            "・実機なしで動作確認をしたい場合は、上部の「デバッグデバイスを追加」から<br>"
+            "&nbsp;&nbsp;仮想デバイスを追加してください(TXの値がそのままRXにループバックされます)。<br><br>"
+            "USB接続しているのに検出されない場合:<br>"
+            "・lsusb / dmesg で /dev/ttyUSB* や /dev/ttyACM* として認識されているか確認してください。<br>"
+            "・認識はされているのに反応がない場合、ユーザーが dialout グループに未所属で<br>"
+            "&nbsp;&nbsp;シリアルポートの権限が無い可能性があります。以下を実行し、<br>"
+            "&nbsp;&nbsp;一度ログアウト/ログイン(またはPC再起動)してください。<br>"
+            "&nbsp;&nbsp;<code>sudo usermod -aG dialout $USER</code>")
+        placeholder_text.setTextFormat(Qt.RichText)
+        placeholder_text.setOpenExternalLinks(True)
         placeholder_text.setAlignment(Qt.AlignCenter)
         placeholder_text.setStyleSheet("color: #888; font-size: 11pt;")
         placeholder_layout.addWidget(placeholder_text)
+
         placeholder_layout.addStretch(2)
 
-        pixmap = logo_pixmap()
-        if pixmap is not None:
+        placeholder_pixmap = sub_logo_pixmap()
+        if placeholder_pixmap is not None:
             placeholder_logo = QLabel()
-            placeholder_logo.setPixmap(pixmap.scaledToHeight(160, Qt.SmoothTransformation))
+            placeholder_logo.setPixmap(placeholder_pixmap.scaledToHeight(160, Qt.SmoothTransformation))
             placeholder_logo.setAlignment(Qt.AlignCenter)
             placeholder_layout.addWidget(placeholder_logo)
 
@@ -104,6 +152,15 @@ class MainWindow(QMainWindow):
         self.setCentralWidget(splitter)
 
         self.statusBar().showMessage("起動しました。トピックをスキャンしています…")
+
+        # デバイスカウンタ(左下、showMessage)と対になる、最新の通信ログ1件だけを
+        # 表示する右下の簡易インジケータ。過去分は log_dialog (ツールバーの
+        # 「通信ログ…」) から遡って見られる。
+        self.log_status_label = QLabel()
+        self.log_status_label.setStyleSheet("color: #888; font-size: 9pt; padding: 0 6px;")
+        self.statusBar().addPermanentWidget(self.log_status_label)
+        self.log_dialog.append_message("ros2can を起動しました")
+        self._on_log_message("ros2can を起動しました")
 
         self.backend.deviceListChanged.connect(self._refresh_device_list)
         self.backend.deviceListChanged.connect(self.encoder_panel.rebuild)
@@ -143,7 +200,7 @@ class MainWindow(QMainWindow):
         add_debug_action.triggered.connect(self._on_add_debug_device)
         toolbar.addAction(add_debug_action)
 
-        encoder_init_action = QAction("🧭 エンコーダ初期化…", self)
+        encoder_init_action = QAction("エンコーダ初期化…", self)
         encoder_init_action.setToolTip(
             "検出済み全デバイスの原点セット対象チャンネル(角度/位置/カウンタ系)を"
             "1画面にまとめて表示し、行/デバイス単位/全デバイス一括で原点セットできます。")
@@ -156,6 +213,15 @@ class MainWindow(QMainWindow):
             "直接閲覧します。serial_bridgeフレームは使わないため、ros2canのデバイス一覧には出ません。")
         can_monitor_action.triggered.connect(self._on_open_can_monitor)
         toolbar.addAction(can_monitor_action)
+
+        log_action = QAction("通信ログ…", self)
+        log_action.setToolTip(
+            "デバイスの接続/切断、チェックサム不一致などのフレーム異常、\n"
+            "デバイスの追加/削除、E-STOPをタイムスタンプ付きで記録した履歴を表示します。\n"
+            "新規ファームウェアの通信テスト時のデバッグにどうぞ。\n"
+            "最新1件はステータスバー右下にも常時表示されます。")
+        log_action.triggered.connect(self._on_open_log)
+        toolbar.addAction(log_action)
 
         settings_action = QAction("設定…", self)
         settings_action.setToolTip(
@@ -180,7 +246,14 @@ class MainWindow(QMainWindow):
         if pixmap is not None:
             logo_label = QLabel()
             logo_label.setPixmap(pixmap.scaledToHeight(44, Qt.SmoothTransformation))
+            logo_label.setStyleSheet("padding: 0 6px;")
             toolbar.addWidget(logo_label)
+
+        sub_pixmap = sub_logo_pixmap()
+        if sub_pixmap is not None:
+            sub_logo_label = QLabel()
+            sub_logo_label.setPixmap(sub_pixmap.scaledToHeight(36, Qt.SmoothTransformation))
+            toolbar.addWidget(sub_logo_label)
 
         version_label = QLabel(f"v{package_version()}")
         version_label.setStyleSheet("color: #888; font-size: 10pt; padding: 0 10px;")
@@ -239,6 +312,17 @@ class MainWindow(QMainWindow):
         self._can_monitor_dialog.raise_()
         self._can_monitor_dialog.activateWindow()
 
+    def _on_open_log(self) -> None:
+        """通信ログの履歴(接続/切断/フレーム異常/デバイス増減等)ウィンドウを開く(モードレス)。"""
+        self.log_dialog.show()
+        self.log_dialog.raise_()
+        self.log_dialog.activateWindow()
+
+    def _on_log_message(self, text: str) -> None:
+        """ステータスバー右下(デバイスカウンタの左下表示と対になる位置)に
+        最新の通信ログ1件だけを表示する。"""
+        self.log_status_label.setText(f"[{time.strftime('%H:%M:%S')}] {text}")
+
     def _on_open_settings(self) -> None:
         SettingsDialog(self.backend.hardware.config, self.backend.device_profile_map, self).exec_()
 
@@ -266,7 +350,9 @@ class MainWindow(QMainWindow):
         for device_id in existing_ids - listed_ids:
             item = QListWidgetItem()
             item.setData(Qt.UserRole, device_id)
+            item.setSizeHint(QSize(0, 46))
             self.device_list.addItem(item)
+            self.device_list.setItemWidget(item, DeviceListRow())
             panel = DevicePanel(self.backend, device_id)
             self.panels[device_id] = panel
             self.stack.addWidget(panel)
@@ -279,6 +365,8 @@ class MainWindow(QMainWindow):
         if self.device_list.currentItem() is None and self.device_list.count() > 0:
             self.device_list.setCurrentRow(0)
 
+        self.device_list_scanning_label.setVisible(self.device_list.count() == 0)
+
     def _remove_device_from_ui(self, device_id: int) -> None:
         panel = self.panels.pop(device_id, None)
         if panel is not None:
@@ -287,7 +375,10 @@ class MainWindow(QMainWindow):
         for i in range(self.device_list.count()):
             item = self.device_list.item(i)
             if item.data(Qt.UserRole) == device_id:
+                row = self.device_list.itemWidget(item)
                 self.device_list.takeItem(i)
+                if row is not None:
+                    row.deleteLater()
                 break
 
     def _update_list_labels(self) -> None:
@@ -297,7 +388,10 @@ class MainWindow(QMainWindow):
             ch = self.backend.devices.get(device_id)
             if ch is None:
                 continue
-            state = "🟢接続中" if ch.connected else "⚪未接続"
+            row = self.device_list.itemWidget(item)
+            if not isinstance(row, DeviceListRow):
+                continue
+            state = "接続中" if ch.connected else "未接続"
             direct = " [TX ON]" if ch.direct_tx else ""
             passthrough = "" if ch.topic_passthrough else " [PASS OFF]"
             if ch.mode == "hardware":
@@ -306,7 +400,8 @@ class MainWindow(QMainWindow):
                 mode_label = "🧪DEBUG(仮想)"
             else:
                 mode_label = "topic"
-            item.setText(f"ID {device_id}  {state}{direct}{passthrough}\n{mode_label}  {ch.profile_key}")
+            text = f"ID {device_id}  {state}{direct}{passthrough}\n{mode_label}  {ch.profile_key}"
+            row.set_state(ch.connected, text)
 
     def _on_selection_changed(self, current: Optional[QListWidgetItem], _previous) -> None:
         if current is None:

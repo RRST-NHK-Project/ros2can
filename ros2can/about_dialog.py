@@ -3,9 +3,9 @@
 from __future__ import annotations
 
 from PyQt5.QtCore import Qt
-from PyQt5.QtWidgets import QDialog, QVBoxLayout, QLabel, QDialogButtonBox
+from PyQt5.QtWidgets import QDialog, QVBoxLayout, QHBoxLayout, QLabel, QDialogButtonBox
 
-from .app_info import logo_pixmap, package_version, repo_url
+from .app_info import logo_pixmap, sub_logo_pixmap, package_version, repo_url
 
 SERIAL_BRIDGE_URL = "https://github.com/RRST-NHK-Project/serial_bridge"
 
@@ -17,12 +17,23 @@ class AboutDialog(QDialog):
 
         layout = QVBoxLayout(self)
 
+        logos_layout = QHBoxLayout()
+        logos_layout.addStretch(1)
+
         pixmap = logo_pixmap()
         if pixmap is not None:
             logo_label = QLabel()
             logo_label.setPixmap(pixmap.scaledToHeight(64, Qt.SmoothTransformation))
-            logo_label.setAlignment(Qt.AlignCenter)
-            layout.addWidget(logo_label)
+            logos_layout.addWidget(logo_label)
+
+        sub_pixmap = sub_logo_pixmap()
+        if sub_pixmap is not None:
+            sub_logo_label = QLabel()
+            sub_logo_label.setPixmap(sub_pixmap.scaledToHeight(64, Qt.SmoothTransformation))
+            logos_layout.addWidget(sub_logo_label)
+
+        logos_layout.addStretch(1)
+        layout.addLayout(logos_layout)
 
         version_label = QLabel(f"ros2can v{package_version()}")
         version_label.setAlignment(Qt.AlignCenter)

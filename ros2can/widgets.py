@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Optional
 
-from PyQt5.QtCore import Qt, QSize, pyqtSignal
+from PyQt5.QtCore import Qt, QSize, QTimer, pyqtSignal
 from PyQt5.QtWidgets import (
     QWidget, QLabel, QSlider, QDoubleSpinBox, QHBoxLayout,
     QPushButton, QComboBox, QTableWidget, QTableWidgetItem, QHeaderView,
@@ -15,6 +15,14 @@ from .device_profiles import (
     ChannelDef, DIGITAL_OUT, ENUM_OUT,
     DIGITAL_IN, ENUM_IN, SLOT_COUNT,
 )
+
+# serial_bridge (CUI版, graphical_ui.hpp の spinner_frame) と同じ点字ドットの
+# 回転スピナー。100ms/frameも合わせてあり、旧CUI版と同じ体感速度で回る。
+SPINNER_FRAMES = ("⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏")
+SPINNER_FRAME_MS = 100
+# graphical_ui.hpp の kFgAccent(256色 81番)/kFgBad(256色 203番)相当。
+SPINNER_ACCENT_COLOR = "#5fd7ff"
+SPINNER_BAD_COLOR = "#ff5f5f"
 
 
 class SizedTabWidget(QTabWidget):
@@ -71,18 +79,80 @@ class SizedStackedWidget(QStackedWidget):
 
 
 class LedIndicator(QLabel):
-    """ON/OFF を色付きの丸で表示する軽量インジケータ。"""
+    """接続状態インジケータ。serial_bridge(CUI版 graphical_ui.hpp)の
+    node_anim_icon() を踏襲し、接続中は回転する点字ドットのスピナー、
+    未接続時は静止した■を表示する。"""
 
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setFixedSize(18, 18)
+        self.setAlignment(Qt.AlignCenter)
+        self.setStyleSheet(f"font-size: 13pt; color: {SPINNER_BAD_COLOR};")
+        self._tick = 0
+        self._timer = QTimer(self)
+        self._timer.setInterval(SPINNER_FRAME_MS)
+        self._timer.timeout.connect(self._advance)
         self.set_state(False)
 
+    def _advance(self) -> None:
+        self._tick = (self._tick + 1) % len(SPINNER_FRAMES)
+        self.setText(SPINNER_FRAMES[self._tick])
+
     def set_state(self, on: bool) -> None:
-        color = "#2ecc71" if on else "#555555"
-        self.setStyleSheet(
-            f"background-color:{color}; border-radius:9px; border:1px solid #222;"
-        )
+        if on:
+            self.setStyleSheet(f"font-size: 13pt; color: {SPINNER_ACCENT_COLOR};")
+            self.setText(SPINNER_FRAMES[self._tick])
+            if not self._timer.isActive():
+                self._timer.start()
+        else:
+            self._timer.stop()
+            self.setStyleSheet(f"font-size: 13pt; color: {SPINNER_BAD_COLOR};")
+            self.setText("◼")
+
+
+class DeviceListRow(QWidget):
+    """デバイス一覧の1行。左に接続状態インジケータ(LedIndicator)、右に
+    ID/状態テキストを並べる。
+
+    プレーンテキストの QListWidgetItem ではスピナーを表示できない
+    (アイテムに直接ウィジェットを乗せられない) ため、setItemWidget で
+    差し込む専用ウィジェットとして用意する。
+    """
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        layout = QHBoxLayout(self)
+        layout.setContentsMargins(8, 4, 8, 4)
+        self.led = LedIndicator()
+        layout.addWidget(self.led)
+        self.text_label = QLabel()
+        layout.addWidget(self.text_label, 1)
+
+    def set_state(self, connected: bool, text: str) -> None:
+        self.led.set_state(connected)
+        self.text_label.setText(text)
+
+
+class SpinnerLabel(QLabel):
+    """serial_bridge(CUI版)と同じ点字ドットスピナーの先頭に任意の文言を
+    添えて表示するラベル。ロゴ画像自体は動かしたくないが、動作中である
+    ことは伝えたい箇所(プレースホルダー画面など)向け。"""
+
+    def __init__(self, message: str = "", parent=None):
+        super().__init__(parent)
+        self._message = message
+        self._tick = 0
+        self.setStyleSheet(f"color: {SPINNER_ACCENT_COLOR}; font-size: 11pt;")
+        self._timer = QTimer(self)
+        self._timer.setInterval(SPINNER_FRAME_MS)
+        self._timer.timeout.connect(self._advance)
+        self._timer.start()
+        self._advance()
+
+    def _advance(self) -> None:
+        self._tick = (self._tick + 1) % len(SPINNER_FRAMES)
+        frame = SPINNER_FRAMES[self._tick]
+        self.setText(f"{frame} {self._message}" if self._message else frame)
 
 
 class ChannelControlRow(QWidget):

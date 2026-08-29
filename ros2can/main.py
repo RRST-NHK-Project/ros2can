@@ -25,11 +25,13 @@ from typing import List, Optional
 import rclpy
 from rclpy.utilities import remove_ros_args
 from PyQt5.QtCore import QCoreApplication, QTimer
+from PyQt5.QtGui import QIcon
 from PyQt5.QtWidgets import QApplication
 
 from .ros_backend import RosBackend
 from .main_window import MainWindow
 from .console_ui import ConsoleUi
+from .app_info import app_icon_pixmap, ensure_desktop_entry_installed
 
 SPIN_INTERVAL_MS = 10
 PUBLISH_INTERVAL_MS = 50   # ダイレクト送信が有効なデバイスへの周期送信 (20Hz)
@@ -57,6 +59,18 @@ def main(argv: Optional[List[str]] = None) -> int:
 
     app = QCoreApplication(sys.argv) if args.nogui else QApplication(sys.argv)
     app.setApplicationName("ros2can")
+
+    if not args.nogui:
+        icon_pixmap = app_icon_pixmap()
+        if icon_pixmap is not None:
+            # Ubuntu の上部バー/ドック/Alt-Tab はウィンドウ単位ではなく
+            # アプリケーション単位のアイコンを見るため、ここでも設定する。
+            app.setWindowIcon(QIcon(icon_pixmap))
+        # Wayland ではウィンドウ自体はアイコンを持てず、コンポジタは
+        # ここで名乗る app_id と同名の .desktop の Icon= を見て表示アイコンを
+        # 決めるため、実ファイルを用意した上でその desktop file id を名乗る。
+        desktop_id = ensure_desktop_entry_installed()
+        app.setDesktopFileName(desktop_id)
 
     backend = RosBackend()
 
