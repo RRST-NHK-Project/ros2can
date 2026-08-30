@@ -31,7 +31,7 @@ from PyQt5.QtWidgets import QApplication
 from .ros_backend import RosBackend
 from .main_window import MainWindow
 from .console_ui import ConsoleUi
-from .app_info import app_icon_pixmap, ensure_desktop_entry_installed
+from .app_info import app_icon_pixmap, ensure_desktop_entry_installed, stylesheet_text
 
 SPIN_INTERVAL_MS = 10
 PUBLISH_INTERVAL_MS = 50   # ダイレクト送信が有効なデバイスへの周期送信 (20Hz)
@@ -61,6 +61,8 @@ def main(argv: Optional[List[str]] = None) -> int:
     app.setApplicationName("ros2can")
 
     if not args.nogui:
+        app.setStyle('Fusion')
+        app.setStyleSheet(stylesheet_text())
         icon_pixmap = app_icon_pixmap()
         if icon_pixmap is not None:
             # Ubuntu の上部バー/ドック/Alt-Tab はウィンドウ単位ではなく

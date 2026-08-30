@@ -20,9 +20,11 @@ from .device_profiles import (
 # 回転スピナー。100ms/frameも合わせてあり、旧CUI版と同じ体感速度で回る。
 SPINNER_FRAMES = ("⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏")
 SPINNER_FRAME_MS = 100
-# graphical_ui.hpp の kFgAccent(256色 81番)/kFgBad(256色 203番)相当。
-SPINNER_ACCENT_COLOR = "#5fd7ff"
-SPINNER_BAD_COLOR = "#ff5f5f"
+# graphical_ui.hpp の kFgAccent(256色 81番)/kFgBad(256色 203番)相当だが、
+# ライトテーマの明るい背景でも視認できるよう、そのままの明るい色味ではなく
+# 十分なコントラストが取れる濃色に落として使う。
+SPINNER_ACCENT_COLOR = "#0e7490"
+SPINNER_BAD_COLOR = "#d93025"
 
 
 class SizedTabWidget(QTabWidget):

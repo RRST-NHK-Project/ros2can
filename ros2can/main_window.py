@@ -14,15 +14,15 @@ from PyQt5.QtGui import QIcon
 from PyQt5.QtWidgets import (
     QMainWindow, QListWidget, QListWidgetItem,
     QToolBar, QAction, QLabel, QInputDialog,
-    QMessageBox, QSplitter, QMenu, QWidget, QSizePolicy,
-    QVBoxLayout, QFrame,
+    QMessageBox, QMenu, QWidget, QSizePolicy,
+    QVBoxLayout, QHBoxLayout, QFrame,
 )
 
 from .ros_backend import RosBackend
 from .device_panel import DevicePanel
 from .can_monitor import CanMonitorDialog
 from .log_dialog import LogDialog
-from .widgets import SizedStackedWidget, DeviceListRow, SpinnerLabel
+from .widgets import SizedStackedWidget, DeviceListRow, SpinnerLabel, SPINNER_ACCENT_COLOR
 from .app_info import logo_pixmap, sub_logo_pixmap, app_icon_pixmap, package_version
 from .settings_dialog import SettingsDialog
 from .about_dialog import AboutDialog, SERIAL_BRIDGE_URL
@@ -66,11 +66,9 @@ class MainWindow(QMainWindow):
 
         self._build_toolbar()
 
-        splitter = QSplitter(Qt.Horizontal)
-
         self.device_list = QListWidget()
-        self.device_list.setMinimumWidth(220)
-        self.device_list.setMaximumWidth(320)
+        self.device_list.setMinimumWidth(260)
+        self.device_list.setMaximumWidth(400)
         self.device_list.currentItemChanged.connect(self._on_selection_changed)
         # currentItemChanged は選択が実際に変わった時しか発火しないため、
         # 「エンコーダ初期化」ページ(device_listの選択とは独立にstackを切り替える)
@@ -81,31 +79,23 @@ class MainWindow(QMainWindow):
         self.device_list.setContextMenuPolicy(Qt.CustomContextMenu)
         self.device_list.customContextMenuRequested.connect(self._on_device_list_context_menu)
 
-        # 検出されている間は不要なので、1台も検出されていない間だけ一覧の上に
-        # スキャン中インジケータを出す(_refresh_device_list で表示/非表示を切替)。
-        # 一覧側の枠線は外し、この行と一覧をまとめて1つの枠で囲むことで
-        # 派手な色の帯が一覧に貼り付いたようには見えないようにする。
-        self.device_list.setFrameShape(QListWidget.NoFrame)
-
-        self.device_list_scanning_label = SpinnerLabel("マイコンをスキャンしています…")
-        self.device_list_scanning_label.setAlignment(Qt.AlignCenter)
-        self.device_list_scanning_label.setStyleSheet(
-            "color: #888; font-size: 9pt; padding: 3px 0;")
-
-        device_list_container = QFrame()
-        device_list_container.setFrameShape(QFrame.StyledPanel)
-        device_list_container.setFrameShadow(QFrame.Sunken)
-        device_list_layout = QVBoxLayout(device_list_container)
-        device_list_layout.setContentsMargins(1, 1, 1, 1)
-        device_list_layout.setSpacing(0)
-        device_list_layout.addWidget(self.device_list_scanning_label)
-        device_list_layout.addWidget(self.device_list)
-        splitter.addWidget(device_list_container)
+        self.device_list.setFrameShape(QListWidget.StyledPanel)
+        self.device_list.setFrameShadow(QFrame.Sunken)
 
         self.stack = SizedStackedWidget()
         self.placeholder = QWidget()
         placeholder_layout = QVBoxLayout(self.placeholder)
         placeholder_layout.addStretch(2)
+
+        # 1台も検出されていない間だけ表示するスキャン中インジケータ。
+        # 以前は左のマイコン一覧パネル(幅220〜320pxしかない)の上に置いていたが、
+        # 文言が見切れてしまっていたため、幅に余裕があるこちらのプレースホルダー
+        # 画面側に移した(表示/非表示の切替は変わらず _refresh_device_list で行う)。
+        self.device_list_scanning_label = SpinnerLabel("マイコンをスキャンしています…")
+        self.device_list_scanning_label.setAlignment(Qt.AlignCenter)
+        self.device_list_scanning_label.setStyleSheet(
+            f"color: {SPINNER_ACCENT_COLOR}; font-size: 13pt; padding: 6px 0;")
+        placeholder_layout.addWidget(self.device_list_scanning_label)
 
         placeholder_text = QLabel(
             "マイコン(CANホスト)が検出されていません。<br><br>"
@@ -126,7 +116,7 @@ class MainWindow(QMainWindow):
         placeholder_text.setTextFormat(Qt.RichText)
         placeholder_text.setOpenExternalLinks(True)
         placeholder_text.setAlignment(Qt.AlignCenter)
-        placeholder_text.setStyleSheet("color: #888; font-size: 11pt;")
+        placeholder_text.setStyleSheet("color: #5f6368; font-size: 11pt;")
         placeholder_layout.addWidget(placeholder_text)
 
         placeholder_layout.addStretch(2)
@@ -145,11 +135,14 @@ class MainWindow(QMainWindow):
         self.encoder_panel = EncoderInitPanel(self.backend)
         self.stack.addWidget(self.encoder_panel)
 
-        splitter.addWidget(self.stack)
-        splitter.setStretchFactor(0, 0)
-        splitter.setStretchFactor(1, 1)
+        central = QWidget()
+        central_layout = QHBoxLayout(central)
+        central_layout.setContentsMargins(0, 0, 0, 0)
+        central_layout.setSpacing(4)
+        central_layout.addWidget(self.device_list)
+        central_layout.addWidget(self.stack, 1)
 
-        self.setCentralWidget(splitter)
+        self.setCentralWidget(central)
 
         self.statusBar().showMessage("起動しました。トピックをスキャンしています…")
 
@@ -157,7 +150,7 @@ class MainWindow(QMainWindow):
         # 表示する右下の簡易インジケータ。過去分は log_dialog (ツールバーの
         # 「通信ログ…」) から遡って見られる。
         self.log_status_label = QLabel()
-        self.log_status_label.setStyleSheet("color: #888; font-size: 9pt; padding: 0 6px;")
+        self.log_status_label.setStyleSheet("color: #5f6368; font-size: 9pt; padding: 0 6px;")
         self.statusBar().addPermanentWidget(self.log_status_label)
         self.log_dialog.append_message("ros2can を起動しました")
         self._on_log_message("ros2can を起動しました")
@@ -256,7 +249,7 @@ class MainWindow(QMainWindow):
             toolbar.addWidget(sub_logo_label)
 
         version_label = QLabel(f"v{package_version()}")
-        version_label.setStyleSheet("color: #888; font-size: 10pt; padding: 0 10px;")
+        version_label.setStyleSheet("color: #5f6368; font-size: 10pt; padding: 0 10px;")
         toolbar.addWidget(version_label)
 
         about_action = QAction("Info…", self)
@@ -400,8 +393,14 @@ class MainWindow(QMainWindow):
                 mode_label = "🧪DEBUG(仮想)"
             else:
                 mode_label = "topic"
-            text = f"ID {device_id}  {state}{direct}{passthrough}\n{mode_label}  {ch.profile_key}"
+            # モード(HW:ポート名やDEBUG(仮想)等)とプロファイル名を同じ行に並べると
+            # 一覧パネルの幅(220〜320px)に収まりきらず見切れることがあるため、
+            # 行を分けて必ず両方とも見えるようにする。
+            text = f"ID {device_id}  {state}{direct}{passthrough}\n{mode_label}\n{ch.profile_key}"
             row.set_state(ch.connected, text)
+            # 固定高だとフォント/テーマ変更で2行テキストが見切れることがあるため、
+            # 実際のコンテンツに合わせた高さへ都度更新する。
+            item.setSizeHint(QSize(0, row.sizeHint().height() + 8))
 
     def _on_selection_changed(self, current: Optional[QListWidgetItem], _previous) -> None:
         if current is None:

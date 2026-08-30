@@ -43,7 +43,7 @@ class AboutDialog(QDialog):
             f'Powered By <a href="{SERIAL_BRIDGE_URL}">serial_bridge</a>')
         powered_by_label.setOpenExternalLinks(True)
         powered_by_label.setAlignment(Qt.AlignCenter)
-        powered_by_label.setStyleSheet("color: #888;")
+        powered_by_label.setStyleSheet("color: #5f6368;")
         powered_by_label.setToolTip("ros2can は serial_bridge をベースに開発しています。")
         layout.addWidget(powered_by_label)
 

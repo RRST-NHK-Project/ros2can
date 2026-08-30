@@ -37,7 +37,7 @@ class SettingsDialog(QDialog):
             f"{settings_store.user_settings_path()} にローカル保存されます\n"
             "(リポジトリ外のため Git の追跡対象にはなりません)。\n"
             "チーム共通の既定値を変えたい場合は config/ros2can.yaml を編集してください。")
-        note.setStyleSheet("color: #888;")
+        note.setStyleSheet("color: #5f6368;")
         layout.addWidget(note)
 
         form = QFormLayout()
@@ -85,7 +85,7 @@ class SettingsDialog(QDialog):
             "自動的に初期選択されます(GUIで手動選択したプロファイルはこの表を上書きしません)。\n"
             "チーム共通の既定値にしたい場合は、保存後に config/ros2can.yaml の\n"
             "device_profile_map へ転記してください。")
-        map_note.setStyleSheet("color: #888;")
+        map_note.setStyleSheet("color: #5f6368;")
         map_layout.addWidget(map_note)
 
         self.profile_map_table = QTableWidget(0, 2)

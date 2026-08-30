@@ -130,3 +130,15 @@ def _load_pixmap(filename: str) -> Optional[QPixmap]:
     except Exception:
         pass
     return None
+
+
+def stylesheet_text() -> str:
+    """resources/style.qss (モダンダークテーマ) を読み込む。読めない場合は
+    空文字を返す(Fusionスタイルのみで動作継続)。"""
+    try:
+        share_dir = get_package_share_directory(PACKAGE_NAME)
+        path = os.path.join(share_dir, 'resources', 'style.qss')
+        with open(path, 'r', encoding='utf-8') as f:
+            return f.read()
+    except Exception:
+        return ''

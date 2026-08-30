@@ -68,7 +68,7 @@ class EncoderInitPanel(QWidget):
             "ゼロ点に記録します。対象は各デバイスの現在のプロファイルで zeroable な"
             "角度/位置/カウンタ系チャンネルです。")
         info.setWordWrap(True)
-        info.setStyleSheet("color:#888;")
+        info.setStyleSheet("color:#5f6368;")
         outer.addWidget(info)
 
         trigger_box = QGroupBox("外部ノードのTriggerサービス呼び出し")
@@ -143,7 +143,7 @@ class EncoderInitPanel(QWidget):
             empty_label = QLabel(
                 "検出済みデバイスに、原点セット対象のチャンネル(角度/位置/カウンタ系)が"
                 "ありません。")
-            empty_label.setStyleSheet("color:#888;")
+            empty_label.setStyleSheet("color:#5f6368;")
             self.content_layout.addWidget(empty_label)
 
         self.content_layout.addStretch(1)
@@ -185,7 +185,7 @@ class EncoderInitPanel(QWidget):
             return
         self.trigger_call_btn.setEnabled(False)
         self.trigger_status_label.setText(f"{service_name}: 呼び出し中...")
-        self.trigger_status_label.setStyleSheet("color:#888;")
+        self.trigger_status_label.setStyleSheet("color:#5f6368;")
         future = client.call_async(Trigger.Request())
         future.add_done_callback(
             lambda fut, name=service_name: self._on_trigger_response(name, fut))
