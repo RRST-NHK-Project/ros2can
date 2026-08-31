@@ -15,8 +15,11 @@ from dataclasses import dataclass, field
 from typing import List, Tuple
 
 _SIMPLE_MACROS = ["DEVICE_ID", "CAN_ID", "MULTI1", "MULTI2", "MULTI3", "ENC1_MD", "ENC2_MD"]
-_CONFIG_HPP_REL_PATH = os.path.join("src", "config.hpp")
+CONFIG_HPP_REL_PATH = os.path.join("src", "config.hpp")
 _COPY_IGNORE = shutil.ignore_patterns(".pio", ".vscode", "__pycache__", "*.pyc")
+
+TEMPLATE_RELATIVE_DIR = os.path.join("firmware", "xiao-esp32-s3_can2io")
+OUTPUT_ROOT_DIRNAME = "generated_firmware"
 
 _INVALID_NAME_CHARS = re.compile(r'[\\/\0]')
 
@@ -143,6 +146,29 @@ def diff_lines(old: str, new: str) -> List[Tuple[int, str, str]]:
     return result
 
 
+def guess_template_dir() -> str:
+    """ros2canパッケージのソースツリーから実行している場合のベストエフォートな
+
+    初期パス探索(ros2can/ros2can/firmware_config.py から見て
+    ros2can/firmware/xiao-esp32-s3_can2io を探す)。見つからなくてもUI側で
+    手動選択できるため必須ではない。
+    """
+    here = os.path.dirname(os.path.abspath(__file__))
+    candidate = os.path.normpath(os.path.join(here, "..", TEMPLATE_RELATIVE_DIR))
+    if os.path.isfile(os.path.join(candidate, CONFIG_HPP_REL_PATH)):
+        return candidate
+    return ""
+
+
+def output_root_for(template_dir: str) -> str:
+    """テンプレートの親ディレクトリ(ros2canリポジトリ直下)に
+
+    generated_firmware/ を置く。
+    """
+    repo_root = os.path.dirname(os.path.dirname(os.path.abspath(template_dir)))
+    return os.path.join(repo_root, OUTPUT_ROOT_DIRNAME)
+
+
 def validate_output_name(name: str) -> str:
     """生成先フォルダ名として妥当か検証し、前後空白を除いた名前を返す。
 
@@ -169,10 +195,10 @@ def generate_project(template_dir: str, output_root: str, name: str, cfg: Firmwa
     """
     name = validate_output_name(name)
 
-    template_config_path = os.path.join(template_dir, _CONFIG_HPP_REL_PATH)
+    template_config_path = os.path.join(template_dir, CONFIG_HPP_REL_PATH)
     if not os.path.isfile(template_config_path):
         raise ValueError(
-            f"テンプレートに {_CONFIG_HPP_REL_PATH} が見つかりません: {template_dir}")
+            f"テンプレートに {CONFIG_HPP_REL_PATH} が見つかりません: {template_dir}")
 
     output_root_abs = os.path.abspath(output_root)
     output_dir = os.path.abspath(os.path.join(output_root_abs, name))
@@ -186,7 +212,7 @@ def generate_project(template_dir: str, output_root: str, name: str, cfg: Firmwa
     os.makedirs(output_root_abs, exist_ok=True)
     shutil.copytree(template_dir, output_dir, ignore=_COPY_IGNORE)
 
-    config_path = os.path.join(output_dir, _CONFIG_HPP_REL_PATH)
+    config_path = os.path.join(output_dir, CONFIG_HPP_REL_PATH)
     with open(config_path, "r", encoding="utf-8") as f:
         text = f.read()
     new_text = apply_config(text, cfg)

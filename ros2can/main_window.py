@@ -28,6 +28,7 @@ from .settings_dialog import SettingsDialog
 from .about_dialog import AboutDialog, SERIAL_BRIDGE_URL
 from .encoder_init_panel import EncoderInitPanel
 from .firmware_config_dialog import FirmwareConfigDialog
+from .firmware_flash_dialog import FlashDialog
 
 UI_REFRESH_MS = 200
 TOPIC_RESCAN_MS = 1000
@@ -234,6 +235,14 @@ class MainWindow(QMainWindow):
         firmware_config_action.triggered.connect(self._on_open_firmware_config)
         toolbar.addAction(firmware_config_action)
 
+        firmware_flash_action = QAction("ファームウェアを書き込む…", self)
+        firmware_flash_action.setToolTip(
+            "generated_firmware/内のプロジェクトを選択したポートへpio run -t uploadで"
+            "書き込みます。実機を書き換えます。書き込み中はそのポートの他の通信は"
+            "一時的に停止します。")
+        firmware_flash_action.triggered.connect(self._on_open_firmware_flash)
+        toolbar.addAction(firmware_flash_action)
+
         toolbar.addSeparator()
 
         estop_action = QAction("■ 全デバイス E-STOP (全ゼロ送信+TX無効化)", self)
@@ -331,6 +340,9 @@ class MainWindow(QMainWindow):
 
     def _on_open_firmware_config(self) -> None:
         FirmwareConfigDialog(self).exec_()
+
+    def _on_open_firmware_flash(self) -> None:
+        FlashDialog(self.backend.hardware, self).exec_()
 
     def _on_open_about(self) -> None:
         AboutDialog(self).exec_()

@@ -20,8 +20,8 @@ from PyQt5.QtWidgets import (
 
 from . import settings_store
 from .firmware_config import (
-    FirmwareConfig, apply_config, diff_lines, generate_project, parse_config,
-    validate_output_name,
+    CONFIG_HPP_REL_PATH, FirmwareConfig, apply_config, diff_lines, generate_project,
+    guess_template_dir, output_root_for, parse_config, validate_output_name,
 )
 
 _MODE_LABELS = {
@@ -33,29 +33,6 @@ _MODE_LABELS = {
     "ROBOMAS": "ロボマス(DJI RoboMaster)",
     "CUBEMARS": "CubeMars AK",
 }
-
-_TEMPLATE_RELATIVE_DIR = os.path.join("firmware", "xiao-esp32-s3_can2io")
-_CONFIG_HPP_REL_PATH = os.path.join("src", "config.hpp")
-_OUTPUT_ROOT_DIRNAME = "generated_firmware"
-
-
-def _guess_template_dir() -> str:
-    """ソースツリーから実行している場合のベストエフォートな初期パス探索。
-
-    見つからなくても「変更…」で必ず選べるため、これは単なるUXの補助。
-    """
-    here = os.path.dirname(os.path.abspath(__file__))
-    # ros2can/ros2can/firmware_config_dialog.py から見て ros2can/firmware/... を探す。
-    candidate = os.path.normpath(os.path.join(here, "..", _TEMPLATE_RELATIVE_DIR))
-    if os.path.isfile(os.path.join(candidate, _CONFIG_HPP_REL_PATH)):
-        return candidate
-    return ""
-
-
-def _output_root_for(template_dir: str) -> str:
-    """テンプレートの親ディレクトリ(ros2canリポジトリ直下)に generated_firmware/ を置く。"""
-    repo_root = os.path.dirname(os.path.dirname(os.path.abspath(template_dir)))
-    return os.path.join(repo_root, _OUTPUT_ROOT_DIRNAME)
 
 
 class FirmwareConfigDialog(QDialog):
@@ -138,7 +115,7 @@ class FirmwareConfigDialog(QDialog):
         layout.addWidget(self.buttons)
 
         initial_template = settings_store.load_settings().get("firmware_template_dir", "") \
-            or _guess_template_dir()
+            or guess_template_dir()
         if initial_template:
             self._load_template(initial_template)
 
@@ -151,7 +128,7 @@ class FirmwareConfigDialog(QDialog):
             self._load_template(path)
 
     def _load_template(self, template_dir: str) -> None:
-        config_path = os.path.join(template_dir, _CONFIG_HPP_REL_PATH)
+        config_path = os.path.join(template_dir, CONFIG_HPP_REL_PATH)
         try:
             with open(config_path, "r", encoding="utf-8") as f:
                 text = f.read()
@@ -164,7 +141,7 @@ class FirmwareConfigDialog(QDialog):
         self.template_edit.setText(template_dir)
         self._template_dir = template_dir
         self._template_text = text
-        self._output_root = _output_root_for(template_dir)
+        self._output_root = output_root_for(template_dir)
         self._cfg = cfg
 
         self.device_id_spin.setValue(cfg.device_id)

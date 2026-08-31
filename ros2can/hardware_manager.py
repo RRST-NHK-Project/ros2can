@@ -87,6 +87,9 @@ class HardwareManager(QObject):
         # カウントは0に戻るため、再接続時にリセットする。
         self._last_checksum_errors: Dict[int, int] = {}
         self._last_dropped_bytes: Dict[int, int] = {}
+        # firmware_flash_dialog.py がpio書き込み中に一時的にスキャン/再接続の対象から
+        # 外すポート。書き込み用サブプロセスとros2can自身のオープンが競合しないため。
+        self._flash_locked_ports: Set[str] = set()
 
         self._scanner = _ScannerThread(self.config)
         self._scanner.set_skip_ports_provider(self._owned_ports)
@@ -104,7 +107,8 @@ class HardwareManager(QObject):
             link.close()
 
     def _owned_ports(self) -> Set[str]:
-        return {link.port for link in self.links.values() if link.is_open}
+        return {link.port for link in self.links.values() if link.is_open} \
+            | self._flash_locked_ports
 
     # ---------------- detection ----------------
 
@@ -200,6 +204,8 @@ class HardwareManager(QObject):
         self.logMessage.emit(f"[HW] id={device_id} port={link.port} から切断されました")
 
     def _maybe_reconnect(self, device_id: int, link: SerialLink, now: float) -> None:
+        if link.port in self._flash_locked_ports:
+            return
         last_attempt = self._last_reconnect_attempt.get(device_id, 0.0)
         if now - last_attempt < self.config.reconnect_interval_sec:
             return
@@ -223,6 +229,27 @@ class HardwareManager(QObject):
         self._last_rx_time.pop(device_id, None)
         self._last_checksum_errors.pop(device_id, None)
         self._last_dropped_bytes.pop(device_id, None)
+
+    def lock_port_for_flash(self, port: str) -> None:
+        """firmware_flash_dialog.py がpio書き込みを始める前に呼ぶ。
+
+        既存の接続があれば閉じ、スキャナ(_owned_ports経由)・再接続ロジック
+        (_maybe_reconnect)の両方から一時的に除外する。
+        """
+        self._flash_locked_ports.add(port)
+        for device_id, link in list(self.links.items()):
+            if link.port == port and link.is_open:
+                link.close()
+                self.linkStateChanged.emit(device_id, False)
+                self.logMessage.emit(f"[HW] port={port} を書き込みのため一時的に解放しました")
+
+    def unlock_port_for_flash(self, port: str) -> None:
+        """書き込み完了(成功/失敗/中断いずれも)後に必ず呼ぶ。以後は通常通り
+
+        スキャン/再接続の対象に戻る。
+        """
+        self._flash_locked_ports.discard(port)
+        self.logMessage.emit(f"[HW] port={port} の書き込み用ロックを解除しました")
 
     def write(self, device_id: int, data: List[int]) -> None:
         link = self.links.get(device_id)

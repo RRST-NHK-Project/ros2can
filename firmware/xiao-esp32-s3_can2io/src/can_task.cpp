@@ -306,7 +306,7 @@ void canInit() {
     Serial.println("[CAN] TWAI started (1Mbit).");
 }
 
-#if defined(MODE_CAN_HOST)
+#if defined(MODE_CAN_HOST) && CAN_HOST_DIAG_ENABLE
 // STM32側の診断ログ(can_task.cpp canTaskPrintDiagnostics)と同じ周期で出し、
 // 突き合わせやすくする。ホスト自身が送信を始めた途端に壊れる問題の切り分け用。
 static void printHostCanDiagnostics() {
@@ -367,7 +367,7 @@ void canTask(void *) {
     static int16_t node_slot_buffer[Tx16NUM] = {0};
     static int16_t node_feedback_buffer[Tx16NUM] = {0};
     static int16_t host_tx_payload[Rx16NUM] = {0};
-#if defined(MODE_CAN_HOST)
+#if defined(MODE_CAN_HOST) && CAN_HOST_DIAG_ENABLE
     constexpr uint32_t CAN_HOST_DIAG_PERIOD_MS = 500; // STM32側の診断ログ周期と合わせる
     uint32_t last_host_diag_ms = millis();
 #endif
@@ -408,10 +408,12 @@ void canTask(void *) {
             last_tx = xTaskGetTickCount();
         }
 
+#if CAN_HOST_DIAG_ENABLE
         if (millis() - last_host_diag_ms >= CAN_HOST_DIAG_PERIOD_MS) {
             last_host_diag_ms = millis();
             printHostCanDiagnostics();
         }
+#endif  // CAN_HOST_DIAG_ENABLE
 #else
         canRecvNodeSlotBlock(node_slot_buffer, CAN_NODE_INDEX);
         applyNodeSlotBlockToLocalControl(node_slot_buffer, CAN_NODE_INDEX);

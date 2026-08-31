@@ -99,6 +99,14 @@ Copyright (c) 2025 RRST-NHK-Project. All rights reserved.
 // 例: CAN_ID=101 -> node 1, CAN_ID=102 -> node 2, CAN_ID=103 -> node 3, CAN_ID=104 -> node 4
 #define CAN_NODE_INDEX ((CAN_ID % 100U) - 1U)
 
+// ホスト自身のCAN状態(TxErrCnt/RxErrCnt/bus_error等)を500msごとにSerial.println
+// で出力する診断ログ(can_task.cpp printHostCanDiagnostics, MODE_CAN_HOSTのみ有効)。
+// このテキスト出力はros2canが読んでいるのと同じUSBシリアル(Serial)に直接書き込まれる
+// ため、有効にするとserial_bridgeバイナリフレームと混ざり、ros2can側で
+// 「不正な同期バイトを破棄」が継続的に発生する(実機で確認済み)。CAN bus_off等の
+// 切り分けで必要な時だけ1にし、普段(ros2can使用時)は0のままにすること。
+#define CAN_HOST_DIAG_ENABLE 0
+
 // ================= CANモニタ関連 (MODE_CAN_MONITORのみ有効) =================
 // バス上の任意のトラフィックを観測するための設定。ホスト用のCAN_NODE_COUNTとは
 // 独立しており、ここで設定した範囲外のノードから来たフレームも
