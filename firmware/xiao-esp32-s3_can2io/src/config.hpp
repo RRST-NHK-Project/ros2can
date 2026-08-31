@@ -11,7 +11,7 @@ Copyright (c) 2025 RRST-NHK-Project. All rights reserved.
 // ================= 基本設定 =================
 
 // IDの設定，シリアルフレームのDEVICE_IDとして使用します。
-#define DEVICE_ID 21
+#define DEVICE_ID 101
 
 // CAN_IDは3桁形式で指定します。
 // 1桁目はバス番号、末尾2桁はノード番号を表します。
@@ -20,11 +20,11 @@ Copyright (c) 2025 RRST-NHK-Project. All rights reserved.
 
 // モードの設定，どれか一つをコメントアウト解除すること
 // #define MODE_CAN
-// #define MODE_CAN_HOST
+#define MODE_CAN_HOST
 // #define MODE_IO
 // #define MODE_DEBUG
 // #define MODE_CAN_MONITOR
-#define MODE_ROBOMAS
+// #define MODE_ROBOMAS
 // #define MODE_CUBEMARS
 
 // ================= MD関連 =================

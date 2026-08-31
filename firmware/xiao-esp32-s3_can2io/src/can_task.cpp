@@ -205,7 +205,7 @@ static void canRecvNodeSlotBlock(int16_t *buffer, uint8_t node_index) {
             continue;
         }
 
-        statusLedPulse();
+        statusLedPulseCan();
 
         const uint8_t slot_offset = node_index * CAN_SLOTS_PER_NODE + chunk * CAN_VALUES_PER_FRAME;
         const uint8_t values_to_unpack = canChunkValueCount(chunk);
@@ -245,7 +245,7 @@ static void canRecvAllNodeSlotBlocks(int16_t *buffer) {
             continue;
         }
 
-        statusLedPulse();
+        statusLedPulseCan();
 
         const uint8_t slot_offset = frame_node * CAN_SLOTS_PER_NODE + chunk * CAN_VALUES_PER_FRAME;
         const uint8_t values_to_unpack = canChunkValueCount(chunk);
@@ -377,7 +377,7 @@ void canTask(void *) {
 #if defined(MODE_CAN_MONITOR)
         twai_message_t message{};
         if (twai_receive(&message, pdMS_TO_TICKS(5)) == ESP_OK) {
-            statusLedPulse();
+            statusLedPulseCan();
 #if CAN_MONITOR_RAW_ENABLE
             printCanRawFrame(message);
 #endif

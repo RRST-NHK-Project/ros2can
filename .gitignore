@@ -4,3 +4,7 @@ __pycache__/
 # setup.py がビルドの度に書き直すgit short hash (バージョン表示用)。
 # 内容が毎回変わるビルド生成物なので追跡対象にしない。
 /resources/git_version.txt
+
+# firmware_config_dialog.py が firmware/xiao-esp32-s3_can2io から生成する
+# 書き込み用ファームウェア一式(ユーザーがGUIで名前を付けて生成する成果物)。
+/generated_firmware/

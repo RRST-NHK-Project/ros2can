@@ -190,7 +190,11 @@ class SettingsDialog(QDialog):
         if device_profile_map is None:
             return
 
-        values = {
+        # 既存のユーザー上書き(このダイアログが知らないキーを含む)を土台にして
+        # 対象キーだけ更新する。新規dictを組んで全上書きすると、他のダイアログが
+        # 保存した未知のキー(firmware_config_path等)を消してしまうため。
+        values = dict(settings_store.load_user_overrides())
+        values.update({
             "excluded_ports": excluded,
             "rx_timeout_sec": self.rx_timeout_spin.value(),
             "reconnect_interval_sec": self.reconnect_spin.value(),
@@ -201,7 +205,7 @@ class SettingsDialog(QDialog):
                 f"{device_id}:{profile_key}"
                 for device_id, profile_key in sorted(device_profile_map.items())
             ],
-        }
+        })
 
         self._config.excluded_ports = set(excluded)
         self._config.rx_timeout_sec = values["rx_timeout_sec"]

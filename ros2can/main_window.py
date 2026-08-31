@@ -27,6 +27,7 @@ from .app_info import logo_pixmap, sub_logo_pixmap, app_icon_pixmap, package_ver
 from .settings_dialog import SettingsDialog
 from .about_dialog import AboutDialog, SERIAL_BRIDGE_URL
 from .encoder_init_panel import EncoderInitPanel
+from .firmware_config_dialog import FirmwareConfigDialog
 
 UI_REFRESH_MS = 200
 TOPIC_RESCAN_MS = 1000
@@ -224,6 +225,15 @@ class MainWindow(QMainWindow):
         settings_action.triggered.connect(self._on_open_settings)
         toolbar.addAction(settings_action)
 
+        firmware_config_action = QAction("ファームウェア設定を生成…", self)
+        firmware_config_action.setToolTip(
+            "xiao-esp32-s3_can2ioをテンプレートに、DEVICE_ID・CAN_ID・MODE・"
+            "MULTI1-3・ENC1_MD/ENC2_MDを反映したプロジェクト一式を"
+            "generated_firmware/<名前>/へ生成します(テンプレート自体は書き換えません)。"
+            "書き込み(pio upload)は対象外です。")
+        firmware_config_action.triggered.connect(self._on_open_firmware_config)
+        toolbar.addAction(firmware_config_action)
+
         toolbar.addSeparator()
 
         estop_action = QAction("■ 全デバイス E-STOP (全ゼロ送信+TX無効化)", self)
@@ -318,6 +328,9 @@ class MainWindow(QMainWindow):
 
     def _on_open_settings(self) -> None:
         SettingsDialog(self.backend.hardware.config, self.backend.device_profile_map, self).exec_()
+
+    def _on_open_firmware_config(self) -> None:
+        FirmwareConfigDialog(self).exec_()
 
     def _on_open_about(self) -> None:
         AboutDialog(self).exec_()

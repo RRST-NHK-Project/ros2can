@@ -217,7 +217,7 @@ void receive_frame() {
         case WAIT_CHECKSUM:
             if (rx_checksum == b && rx_id == DEVICE_ID) { // データが破損していないこと，IDが自機と一致することを確認
 
-                statusLedPulse(); // シリアル受信時にLEDをパルス点灯させる
+                statusLedPulseSerial(); // シリアル受信時にLEDをパルス点灯させる
 
                 // ===== 生フレームの保存（受信したデータをフレーム形式に復元） =====
                 Rx_raw_frame[0] = START_BYTE;

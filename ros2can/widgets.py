@@ -112,6 +112,27 @@ class LedIndicator(QLabel):
             self.setText("◼")
 
 
+class SwitchStateIndicator(QLabel):
+    """DIGITAL_IN(スイッチ)の状態表示。接続状態インジケータ(LedIndicator)の
+    点字ドットスピナーとは別物であることが分かるよう、アニメーションのない
+    ON/OFFのテキストラベルで表示する(「接続中」と紛らわしいという指摘を受け、
+    ドット自体をやめてこちらに差し替えた)。"""
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setAlignment(Qt.AlignCenter)
+        self.setFixedWidth(40)
+        self.set_state(False)
+
+    def set_state(self, on: bool) -> None:
+        if on:
+            self.setText("ON")
+            self.setStyleSheet("font-weight: bold; color: #2ecc71;")
+        else:
+            self.setText("OFF")
+            self.setStyleSheet("font-weight: bold; color: #9aa0a6;")
+
+
 class DeviceListRow(QWidget):
     """デバイス一覧の1行。左に接続状態インジケータ(LedIndicator)、右に
     ID/状態テキストを並べる。
@@ -382,7 +403,7 @@ class ChannelMonitorRow(QWidget):
 
         self.zeroed_label = None
         if chdef.kind == DIGITAL_IN:
-            self.led = LedIndicator()
+            self.led = SwitchStateIndicator()
             layout.addWidget(self.led)
             layout.addStretch(1)
             self.value_label = None

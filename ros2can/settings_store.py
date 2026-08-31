@@ -36,6 +36,9 @@ DEFAULT_SETTINGS: Dict[str, Any] = {
     # 新規デバイス検出時、ここに載っているdevice_idはそのプロファイルを初期選択する。
     # 例: ["101:cubemars_ak_driver", "102:robomas_driver"]
     "device_profile_map": [],
+    # firmware_config_dialog.py が最後に選択したテンプレートプロジェクトのパス
+    # (実行環境ごとに異なるため config/ros2can.yaml には持たせない)。
+    "firmware_template_dir": "",
 }
 
 
@@ -64,7 +67,13 @@ def bundled_defaults() -> Dict[str, Any]:
     return merged
 
 
-def _load_user_overrides() -> Dict[str, Any]:
+def load_user_overrides() -> Dict[str, Any]:
+    """~/.config/ros2can/settings.yaml の内容をそのまま返す(未知のキーも含む)。
+
+    save_user_settings() で一部のキーだけ更新して書き戻したい場合は、まずこれで
+    現在の内容を読み込んでから対象キーだけ差し替えること(そうしないと、この
+    呼び出し元が知らない他のキーを上書き時に消してしまう)。
+    """
     path = user_settings_path()
     if not os.path.exists(path):
         return {}
@@ -79,7 +88,7 @@ def _load_user_overrides() -> Dict[str, Any]:
 def load_settings() -> Dict[str, Any]:
     """bundled_defaults() にユーザーローカルの上書きを重ねた値。"""
     merged = bundled_defaults()
-    merged.update(_load_user_overrides())
+    merged.update(load_user_overrides())
     return merged
 
 
