@@ -76,6 +76,45 @@ float motor_output_current[NUM_MOTOR] = {0};
 
 unsigned long g_last_pid_time = 0;
 
+// CAN未接続/ESC無応答が続くとエラーカウンタが上限に達しBus-Offへ遷移するが、
+// TWAIドライバはBus-Offから自動復帰しない(twai_initiate_recovery()が必須、かつ
+// 復帰後もRUNNINGへは戻らずSTOPPEDで止まるため明示的にtwai_start()が要る)。
+// can_task.cppのcanRecoverBusIfNeeded()と同じ対策(詳細はそちらのコメント参照)。
+void recoverBusIfNeeded() {
+    constexpr uint32_t CAN_RECOVERY_CHECK_PERIOD_MS = 100;
+    static uint32_t last_check_ms = 0;
+    const uint32_t now_ms = millis();
+    if (now_ms - last_check_ms < CAN_RECOVERY_CHECK_PERIOD_MS) {
+        return;
+    }
+    last_check_ms = now_ms;
+
+    twai_status_info_t status{};
+    if (twai_get_status_info(&status) != ESP_OK) {
+        return;
+    }
+
+    if (status.state == TWAI_STATE_BUS_OFF) {
+        twai_initiate_recovery();
+    } else if (status.state == TWAI_STATE_STOPPED) {
+        twai_start();
+    }
+}
+
+// twai_transmit失敗ログはserialTaskのバイナリフレームと同じUARTに出るため、
+// 失敗し続ける間(200Hzループ)毎回出すとテキストが混入してホスト側のフレーム
+// 同期が壊れる。間隔を絞って出す。
+void logTransmitFailure(const char *message) {
+    constexpr uint32_t LOG_THROTTLE_MS = 500;
+    static uint32_t last_log_ms = 0;
+    const uint32_t now_ms = millis();
+    if (now_ms - last_log_ms < LOG_THROTTLE_MS) {
+        return;
+    }
+    last_log_ms = now_ms;
+    Serial.println(message);
+}
+
 PIDController vel_pid[NUM_MOTOR] = {
     PIDController(ROBOMAS_KP_VEL, ROBOMAS_KI_VEL, ROBOMAS_KD_VEL, ROBOMAS_MAX_CURRENT_A / ROBOMAS_OUTPUT_GAIN),
     PIDController(ROBOMAS_KP_VEL, ROBOMAS_KI_VEL, ROBOMAS_KD_VEL, ROBOMAS_MAX_CURRENT_A / ROBOMAS_OUTPUT_GAIN),
@@ -117,7 +156,7 @@ void sendCurC620(const float cur_array[NUM_MOTOR]) {
     }
 
     if (twai_transmit(&tx, pdMS_TO_TICKS(20)) != ESP_OK) {
-        Serial.println("[ERR] robomas: twai_transmit(0x200) failed");
+        logTransmitFailure("[ERR] robomas: twai_transmit(0x200) failed");
     }
 }
 
@@ -140,7 +179,7 @@ void sendCurGm6020(const float cur_array[NUM_MOTOR]) {
     }
 
     if (twai_transmit(&tx, pdMS_TO_TICKS(20)) != ESP_OK) {
-        Serial.println("[ERR] robomas: twai_transmit(0x1FE) failed");
+        logTransmitFailure("[ERR] robomas: twai_transmit(0x1FE) failed");
     }
 }
 
@@ -232,6 +271,8 @@ void robomasInit() {
 
 void robomasTask(void *pvParameters) {
     while (1) {
+        recoverBusIfNeeded();
+
         // ループ周期は約5ms(200Hz、CubeMars/センサノードと1Mbpsバスを共有するため
         // 指令送信頻度を落としてある)。millis()では量子化誤差がdtに対して無視でき
         // ない比率になるため、引き続きmicros()で測る。

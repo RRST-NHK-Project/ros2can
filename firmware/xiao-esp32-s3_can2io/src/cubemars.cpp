@@ -103,6 +103,45 @@ const uint8_t kMotorCanId[CUBEMARS_MOTOR_COUNT] = {
 #endif
 };
 
+// CAN未接続/ESC無応答が続くとエラーカウンタが上限に達しBus-Offへ遷移するが、
+// TWAIドライバはBus-Offから自動復帰しない(twai_initiate_recovery()が必須、かつ
+// 復帰後もRUNNINGへは戻らずSTOPPEDで止まるため明示的にtwai_start()が要る)。
+// can_task.cppのcanRecoverBusIfNeeded()と同じ対策(詳細はそちらのコメント参照)。
+void recoverBusIfNeeded() {
+    constexpr uint32_t CAN_RECOVERY_CHECK_PERIOD_MS = 100;
+    static uint32_t last_check_ms = 0;
+    const uint32_t now_ms = millis();
+    if (now_ms - last_check_ms < CAN_RECOVERY_CHECK_PERIOD_MS) {
+        return;
+    }
+    last_check_ms = now_ms;
+
+    twai_status_info_t status{};
+    if (twai_get_status_info(&status) != ESP_OK) {
+        return;
+    }
+
+    if (status.state == TWAI_STATE_BUS_OFF) {
+        twai_initiate_recovery();
+    } else if (status.state == TWAI_STATE_STOPPED) {
+        twai_start();
+    }
+}
+
+// twai_transmit失敗ログはserialTaskのバイナリフレームと同じUARTに出るため、
+// 失敗し続ける間(200Hzループ)毎回出すとテキストが混入してホスト側のフレーム
+// 同期が壊れる。間隔を絞って出す。
+void logTransmitFailure(const char *message) {
+    constexpr uint32_t LOG_THROTTLE_MS = 500;
+    static uint32_t last_log_ms = 0;
+    const uint32_t now_ms = millis();
+    if (now_ms - last_log_ms < LOG_THROTTLE_MS) {
+        return;
+    }
+    last_log_ms = now_ms;
+    Serial.println(message);
+}
+
 void sendExtended(uint32_t cmd_id, uint8_t motor_can_id, const uint8_t *data, uint8_t len) {
     twai_message_t tx{};
     tx.identifier = (cmd_id << 8) | motor_can_id;
@@ -113,7 +152,7 @@ void sendExtended(uint32_t cmd_id, uint8_t motor_can_id, const uint8_t *data, ui
         tx.data[i] = data[i];
     }
     if (twai_transmit(&tx, pdMS_TO_TICKS(20)) != ESP_OK) {
-        Serial.println("[ERR] cubemars: twai_transmit failed");
+        logTransmitFailure("[ERR] cubemars: twai_transmit failed");
     }
 }
 
@@ -270,6 +309,7 @@ void cubemarsInit() {
 
 void cubemarsTask(void *pvParameters) {
     while (1) {
+        recoverBusIfNeeded();
         receiveFeedback();
         sendCommands();
         // 200Hz。ロボマス/センサノードと1Mbpsバスを共有する構成での帯域見積りは
