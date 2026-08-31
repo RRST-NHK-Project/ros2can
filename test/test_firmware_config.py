@@ -3,8 +3,8 @@ import os
 import pytest
 
 from ros2can.firmware_config import (
-    FirmwareConfig, apply_config, diff_lines, generate_project, parse_config,
-    validate_output_name,
+    FirmwareConfig, apply_config, delete_project, diff_lines, generate_project,
+    parse_config, validate_output_name,
 )
 
 SAMPLE = """\
@@ -193,3 +193,34 @@ def test_generate_project_rejects_missing_config_hpp(tmp_path):
     cfg = parse_config(SAMPLE)
     with pytest.raises(ValueError):
         generate_project(template_dir, output_root, "my_node", cfg)
+
+
+# ---------------- delete_project ----------------
+
+def test_delete_project_removes_generated_directory(tmp_path):
+    template_dir = _make_template_project(tmp_path)
+    output_root = os.path.join(str(tmp_path), "generated_firmware")
+    cfg = parse_config(SAMPLE)
+    output_dir = generate_project(template_dir, output_root, "my_node", cfg)
+    assert os.path.isdir(output_dir)
+
+    delete_project(output_root, "my_node")
+
+    assert not os.path.exists(output_dir)
+    # 他は無事(output_root自体やテンプレートを巻き込まない)
+    assert os.path.isdir(output_root)
+    assert os.path.isdir(template_dir)
+
+
+def test_delete_project_rejects_path_escaping_name(tmp_path):
+    output_root = os.path.join(str(tmp_path), "generated_firmware")
+    os.makedirs(output_root)
+    with pytest.raises(ValueError):
+        delete_project(output_root, "../escape")
+
+
+def test_delete_project_rejects_missing_project(tmp_path):
+    output_root = os.path.join(str(tmp_path), "generated_firmware")
+    os.makedirs(output_root)
+    with pytest.raises(ValueError):
+        delete_project(output_root, "does_not_exist")

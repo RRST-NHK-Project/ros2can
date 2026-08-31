@@ -87,7 +87,7 @@ class HardwareManager(QObject):
         # カウントは0に戻るため、再接続時にリセットする。
         self._last_checksum_errors: Dict[int, int] = {}
         self._last_dropped_bytes: Dict[int, int] = {}
-        # firmware_flash_dialog.py がpio書き込み中に一時的にスキャン/再接続の対象から
+        # firmware_dialog.py がpio書き込み中に一時的にスキャン/再接続の対象から
         # 外すポート。書き込み用サブプロセスとros2can自身のオープンが競合しないため。
         self._flash_locked_ports: Set[str] = set()
 
@@ -231,7 +231,7 @@ class HardwareManager(QObject):
         self._last_dropped_bytes.pop(device_id, None)
 
     def lock_port_for_flash(self, port: str) -> None:
-        """firmware_flash_dialog.py がpio書き込みを始める前に呼ぶ。
+        """firmware_dialog.py がpio書き込みを始める前に呼ぶ。
 
         既存の接続があれば閉じ、スキャナ(_owned_ports経由)・再接続ロジック
         (_maybe_reconnect)の両方から一時的に除外する。

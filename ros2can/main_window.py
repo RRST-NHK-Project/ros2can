@@ -27,8 +27,7 @@ from .app_info import logo_pixmap, sub_logo_pixmap, app_icon_pixmap, package_ver
 from .settings_dialog import SettingsDialog
 from .about_dialog import AboutDialog, SERIAL_BRIDGE_URL
 from .encoder_init_panel import EncoderInitPanel
-from .firmware_config_dialog import FirmwareConfigDialog
-from .firmware_flash_dialog import FlashDialog
+from .firmware_dialog import FirmwareDialog
 
 UI_REFRESH_MS = 200
 TOPIC_RESCAN_MS = 1000
@@ -226,22 +225,15 @@ class MainWindow(QMainWindow):
         settings_action.triggered.connect(self._on_open_settings)
         toolbar.addAction(settings_action)
 
-        firmware_config_action = QAction("ファームウェア設定を生成…", self)
-        firmware_config_action.setToolTip(
+        firmware_action = QAction("ファームウェア生成・書き込み…", self)
+        firmware_action.setToolTip(
             "xiao-esp32-s3_can2ioをテンプレートに、DEVICE_ID・CAN_ID・MODE・"
             "MULTI1-3・ENC1_MD/ENC2_MDを反映したプロジェクト一式を"
-            "generated_firmware/<名前>/へ生成します(テンプレート自体は書き換えません)。"
-            "書き込み(pio upload)は対象外です。")
-        firmware_config_action.triggered.connect(self._on_open_firmware_config)
-        toolbar.addAction(firmware_config_action)
-
-        firmware_flash_action = QAction("ファームウェアを書き込む…", self)
-        firmware_flash_action.setToolTip(
-            "generated_firmware/内のプロジェクトを選択したポートへpio run -t uploadで"
-            "書き込みます。実機を書き換えます。書き込み中はそのポートの他の通信は"
-            "一時的に停止します。")
-        firmware_flash_action.triggered.connect(self._on_open_firmware_flash)
-        toolbar.addAction(firmware_flash_action)
+            "generated_firmware/<名前>/へ生成し、同じ画面から選択したポートへ"
+            "pio run -t uploadで書き込めます。実機を書き換えます。書き込み中は"
+            "そのポートの他の通信は一時的に停止します。")
+        firmware_action.triggered.connect(self._on_open_firmware)
+        toolbar.addAction(firmware_action)
 
         toolbar.addSeparator()
 
@@ -338,11 +330,8 @@ class MainWindow(QMainWindow):
     def _on_open_settings(self) -> None:
         SettingsDialog(self.backend.hardware.config, self.backend.device_profile_map, self).exec_()
 
-    def _on_open_firmware_config(self) -> None:
-        FirmwareConfigDialog(self).exec_()
-
-    def _on_open_firmware_flash(self) -> None:
-        FlashDialog(self.backend.hardware, self).exec_()
+    def _on_open_firmware(self) -> None:
+        FirmwareDialog(self.backend.hardware, self).exec_()
 
     def _on_open_about(self) -> None:
         AboutDialog(self).exec_()

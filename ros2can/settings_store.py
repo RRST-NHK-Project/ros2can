@@ -36,7 +36,7 @@ DEFAULT_SETTINGS: Dict[str, Any] = {
     # 新規デバイス検出時、ここに載っているdevice_idはそのプロファイルを初期選択する。
     # 例: ["101:cubemars_ak_driver", "102:robomas_driver"]
     "device_profile_map": [],
-    # firmware_config_dialog.py が最後に選択したテンプレートプロジェクトのパス
+    # firmware_dialog.py が最後に選択したテンプレートプロジェクトのパス
     # (実行環境ごとに異なるため config/ros2can.yaml には持たせない)。
     "firmware_template_dir": "",
 }

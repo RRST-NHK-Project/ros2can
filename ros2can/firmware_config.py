@@ -185,6 +185,19 @@ def validate_output_name(name: str) -> str:
     return name
 
 
+def _resolve_project_dir(output_root: str, name: str) -> str:
+    """output_root/<name>を解決し、output_rootの外を指していないか検証する。
+
+    パストラバーサル対策。generate_project/delete_projectの両方から使う。
+    """
+    name = validate_output_name(name)
+    output_root_abs = os.path.abspath(output_root)
+    project_dir = os.path.abspath(os.path.join(output_root_abs, name))
+    if os.path.commonpath([output_root_abs, project_dir]) != output_root_abs:
+        raise ValueError("生成先の解決に失敗しました(output_rootの外を指しています)。")
+    return project_dir
+
+
 def generate_project(template_dir: str, output_root: str, name: str, cfg: FirmwareConfig) -> str:
     """template_dir配下のPlatformIOプロジェクト一式を output_root/<name>/ へコピーし、
     その中の src/config.hpp だけへ cfg を適用する。生成先パスを返す。
@@ -193,23 +206,18 @@ def generate_project(template_dir: str, output_root: str, name: str, cfg: Firmwa
     (.pioビルドキャッシュ等)を残さないため)。output_root の外(テンプレート自身を
     含む)を書き換えないよう、解決後のパスが output_root 配下にあることを検証する。
     """
-    name = validate_output_name(name)
-
     template_config_path = os.path.join(template_dir, CONFIG_HPP_REL_PATH)
     if not os.path.isfile(template_config_path):
         raise ValueError(
             f"テンプレートに {CONFIG_HPP_REL_PATH} が見つかりません: {template_dir}")
 
-    output_root_abs = os.path.abspath(output_root)
-    output_dir = os.path.abspath(os.path.join(output_root_abs, name))
-    if os.path.commonpath([output_root_abs, output_dir]) != output_root_abs:
-        raise ValueError("生成先の解決に失敗しました(output_rootの外を指しています)。")
+    output_dir = _resolve_project_dir(output_root, name)
     if os.path.abspath(template_dir) == output_dir:
         raise ValueError("生成先がテンプレート自身と同じです。")
 
     if os.path.exists(output_dir):
         shutil.rmtree(output_dir)
-    os.makedirs(output_root_abs, exist_ok=True)
+    os.makedirs(os.path.abspath(output_root), exist_ok=True)
     shutil.copytree(template_dir, output_dir, ignore=_COPY_IGNORE)
 
     config_path = os.path.join(output_dir, CONFIG_HPP_REL_PATH)
@@ -220,3 +228,15 @@ def generate_project(template_dir: str, output_root: str, name: str, cfg: Firmwa
         f.write(new_text)
 
     return output_dir
+
+
+def delete_project(output_root: str, name: str) -> None:
+    """generate_project()で生成した output_root/<name>/ を削除する。
+
+    generate_projectと同じパストラバーサル検証を行う。存在しない場合や
+    output_rootの外を指す場合はValueError。
+    """
+    project_dir = _resolve_project_dir(output_root, name)
+    if not os.path.isdir(project_dir):
+        raise ValueError(f"生成物が見つかりません: {project_dir}")
+    shutil.rmtree(project_dir)

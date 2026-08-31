@@ -1,6 +1,6 @@
 """generated_firmware/ 配下のPlatformIOプロジェクトを実機へ書き込むためのロジック層。
 
-サブプロセス起動そのもの(実行・出力ストリーミング)は firmware_flash_dialog.py の
+サブプロセス起動そのもの(実行・出力ストリーミング)は firmware_dialog.py の
 QThreadワーカーで行う。ここには Qt非依存で単体テスト可能な部分だけを置く。
 """
 
