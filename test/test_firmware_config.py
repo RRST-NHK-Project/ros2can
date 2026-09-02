@@ -33,6 +33,41 @@ SAMPLE = """\
 #define ENC1_MD 1
 #define ENC2_MD 0
 
+#define SERVO_PWM_FREQ 50
+#define SERVO_PWM_RESOLUTION 14
+
+#define SERVO1_MIN_US 500
+#define SERVO1_MAX_US 2500
+#define SERVO1_MIN_DEG 0
+#define SERVO1_MAX_DEG 270
+#define SERVO1_INIT_DEG 0
+
+#define SERVO2_MIN_US 500
+#define SERVO2_MAX_US 2500
+#define SERVO2_MIN_DEG 0
+#define SERVO2_MAX_DEG 270
+#define SERVO2_INIT_DEG 0
+
+#define SERVO3_MIN_US 500
+#define SERVO3_MAX_US 2500
+#define SERVO3_MIN_DEG 0
+#define SERVO3_MAX_DEG 270
+#define SERVO3_INIT_DEG 0
+
+#define SERVO4_MIN_US 500
+#define SERVO4_MAX_US 2500
+#define SERVO4_MIN_DEG 0
+#define SERVO4_MAX_DEG 270
+#define SERVO4_INIT_DEG 0
+
+#define ENABLE_LED 1
+
+#define MD_PWM_FREQ 20000
+#define MD_PWM_RESOLUTION 8
+
+#define CAN_NODE_COUNT 4
+#define CAN_HOST_DIAG_ENABLE 0
+
 #define ROBOMAS_KP_VEL 0.8f
 """
 
@@ -49,6 +84,18 @@ def test_parse_config_reads_expected_values():
     assert cfg.enc_md == [1, 0]
     assert cfg.available_modes == [
         "CAN", "CAN_HOST", "IO", "DEBUG", "CAN_MONITOR", "ROBOMAS", "CUBEMARS"]
+    assert cfg.servo_min_us == [500, 500, 500, 500]
+    assert cfg.servo_max_us == [2500, 2500, 2500, 2500]
+    assert cfg.servo_min_deg == [0, 0, 0, 0]
+    assert cfg.servo_max_deg == [270, 270, 270, 270]
+    assert cfg.servo_init_deg == [0, 0, 0, 0]
+    assert cfg.servo_pwm_freq == 50
+    assert cfg.servo_pwm_resolution == 14
+    assert cfg.md_pwm_freq == 20000
+    assert cfg.md_pwm_resolution == 8
+    assert cfg.enable_led == 1
+    assert cfg.can_node_count == 4
+    assert cfg.can_host_diag_enable == 0
 
 
 def test_apply_config_changes_only_targeted_lines():
@@ -78,6 +125,30 @@ def test_apply_config_changes_only_targeted_lines():
     for i, (o, n) in enumerate(zip(old_lines, new_lines)):
         if i not in changed_indices:
             assert o == n
+
+
+def test_apply_config_changes_servo_and_advanced_macros():
+    cfg = parse_config(SAMPLE)
+    cfg.servo_min_deg = [10, 0, 0, 0]
+    cfg.servo_max_deg = [170, 270, 270, 270]
+    cfg.servo_init_deg = [90, 0, 0, 0]
+    cfg.can_node_count = 2
+
+    new_text = apply_config(SAMPLE, cfg)
+    changes = diff_lines(SAMPLE, new_text)
+    changed_line_contents = {new for _, _old, new in changes}
+
+    assert "#define SERVO1_MIN_DEG 10" in changed_line_contents
+    assert "#define SERVO1_MAX_DEG 170" in changed_line_contents
+    assert "#define SERVO1_INIT_DEG 90" in changed_line_contents
+    assert "#define CAN_NODE_COUNT 2" in changed_line_contents
+    # SERVO2-4は変更していないので変化なし
+    assert "#define SERVO2_MIN_DEG 0" in new_text
+    assert "#define SERVO2_MAX_DEG 270" in new_text
+
+    reparsed = parse_config(new_text)
+    assert reparsed.servo_min_deg == [10, 0, 0, 0]
+    assert reparsed.can_node_count == 2
 
 
 def test_apply_config_reparses_back_to_same_values():

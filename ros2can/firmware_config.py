@@ -1,9 +1,17 @@
 """firmware/xiao-esp32-s3_can2io/src/config.hpp の一部マクロを安全に読み書きする。
 
 config.hpp にはROBOMASのPIDゲインやCubeMarsのMITレンジ等、実測でチューニングされた
-値も同居しているため、ファイル全体をテンプレートから再生成するのではなく、
-DEVICE_ID/CAN_ID/MODE_*/MULTIn/ENCn_MD の対象行だけを正規表現で置換し、それ以外の
-行(コメント・チューニング値)には一切触れない方式にする。
+値も同居しているため、ファイル全体をテンプレートから再生成するのではなく、対象の
+マクロ行だけを正規表現で置換し、それ以外の行(コメント・チューニング値)には一切
+触れない方式にする。対象は以下の3グループ:
+
+- _SIMPLE_MACROS: DEVICE_ID/CAN_ID/MODE_*/MULTIn/ENCn_MD (基本設定)
+- SERVO_MACROS:   SERVOn_MIN_US/MAX_US/MIN_DEG/MAX_DEG/INIT_DEG (サーボ設定)
+- ADVANCED_MACROS: SERVO/MD PWM周波数・分解能、ENABLE_LED、CAN_NODE_COUNT等 (高度な設定)
+
+ROBOMASのPIDゲイン等、#if分岐(モータ機種選択)内に同名マクロが複数回登場する定数は、
+この「マクロ名で1行置換」方式では全分岐が同じ値に書き換わってしまい安全に扱えないため
+対象外とし、テンプレートの値のまま変更しない。
 """
 
 from __future__ import annotations
@@ -15,6 +23,23 @@ from dataclasses import dataclass, field
 from typing import List, Tuple
 
 _SIMPLE_MACROS = ["DEVICE_ID", "CAN_ID", "MULTI1", "MULTI2", "MULTI3", "ENC1_MD", "ENC2_MD"]
+
+_SERVO_FIELDS = ["MIN_US", "MAX_US", "MIN_DEG", "MAX_DEG", "INIT_DEG"]
+SERVO_MACROS = [f"SERVO{i}_{field}" for i in range(1, 5) for field in _SERVO_FIELDS]
+
+# 「高度な設定」としてGUIに分離するマクロ。通常は変更不要だが、PWM周波数や
+# CAN_NODE_COUNT等、機種・実接続構成によっては変更が必要になるもの。
+# ROBOMASのPIDゲイン等(#if ROBOMAS_MOTOR_TYPE == ... で分岐しており、同名マクロが
+# ファイル内に複数回登場する)は、この単純な「マクロ名で1行置換」方式では正しく
+# 扱えない(全分岐が同じ値に書き換わってしまう)ため、意図的にここへは含めない。
+ADVANCED_MACROS = [
+    "SERVO_PWM_FREQ", "SERVO_PWM_RESOLUTION",
+    "MD_PWM_FREQ", "MD_PWM_RESOLUTION",
+    "ENABLE_LED", "CAN_NODE_COUNT", "CAN_HOST_DIAG_ENABLE",
+]
+
+_ALL_MACROS = _SIMPLE_MACROS + SERVO_MACROS + ADVANCED_MACROS
+
 CONFIG_HPP_REL_PATH = os.path.join("src", "config.hpp")
 _COPY_IGNORE = shutil.ignore_patterns(".pio", ".vscode", "__pycache__", "*.pyc")
 
@@ -39,12 +64,28 @@ class FirmwareConfig:
     enc_md: List[int] = field(default_factory=lambda: [0, 0])
     available_modes: List[str] = field(default_factory=list)
 
+    # ---- サーボ設定 (SERVO1-4) ----
+    servo_min_us: List[int] = field(default_factory=lambda: [500, 500, 500, 500])
+    servo_max_us: List[int] = field(default_factory=lambda: [2500, 2500, 2500, 2500])
+    servo_min_deg: List[int] = field(default_factory=lambda: [0, 0, 0, 0])
+    servo_max_deg: List[int] = field(default_factory=lambda: [270, 270, 270, 270])
+    servo_init_deg: List[int] = field(default_factory=lambda: [0, 0, 0, 0])
+
+    # ---- 高度な設定 (ADVANCED_MACROS) ----
+    servo_pwm_freq: int = 50
+    servo_pwm_resolution: int = 14
+    md_pwm_freq: int = 20000
+    md_pwm_resolution: int = 8
+    enable_led: int = 1
+    can_node_count: int = 4
+    can_host_diag_enable: int = 0
+
 
 def parse_config(text: str) -> FirmwareConfig:
     lines = text.splitlines()
 
     values = {}
-    for name in _SIMPLE_MACROS:
+    for name in _ALL_MACROS:
         pattern = _simple_macro_re(name)
         for line in lines:
             m = pattern.match(line)
@@ -78,6 +119,18 @@ def parse_config(text: str) -> FirmwareConfig:
         multi=[values["MULTI1"], values["MULTI2"], values["MULTI3"]],
         enc_md=[values["ENC1_MD"], values["ENC2_MD"]],
         available_modes=available_modes,
+        servo_min_us=[values[f"SERVO{i}_MIN_US"] for i in range(1, 5)],
+        servo_max_us=[values[f"SERVO{i}_MAX_US"] for i in range(1, 5)],
+        servo_min_deg=[values[f"SERVO{i}_MIN_DEG"] for i in range(1, 5)],
+        servo_max_deg=[values[f"SERVO{i}_MAX_DEG"] for i in range(1, 5)],
+        servo_init_deg=[values[f"SERVO{i}_INIT_DEG"] for i in range(1, 5)],
+        servo_pwm_freq=values["SERVO_PWM_FREQ"],
+        servo_pwm_resolution=values["SERVO_PWM_RESOLUTION"],
+        md_pwm_freq=values["MD_PWM_FREQ"],
+        md_pwm_resolution=values["MD_PWM_RESOLUTION"],
+        enable_led=values["ENABLE_LED"],
+        can_node_count=values["CAN_NODE_COUNT"],
+        can_host_diag_enable=values["CAN_HOST_DIAG_ENABLE"],
     )
 
 
@@ -95,10 +148,23 @@ def apply_config(text: str, cfg: FirmwareConfig) -> str:
         "MULTI3": cfg.multi[2],
         "ENC1_MD": cfg.enc_md[0],
         "ENC2_MD": cfg.enc_md[1],
+        "SERVO_PWM_FREQ": cfg.servo_pwm_freq,
+        "SERVO_PWM_RESOLUTION": cfg.servo_pwm_resolution,
+        "MD_PWM_FREQ": cfg.md_pwm_freq,
+        "MD_PWM_RESOLUTION": cfg.md_pwm_resolution,
+        "ENABLE_LED": cfg.enable_led,
+        "CAN_NODE_COUNT": cfg.can_node_count,
+        "CAN_HOST_DIAG_ENABLE": cfg.can_host_diag_enable,
     }
+    for i in range(1, 5):
+        replacements[f"SERVO{i}_MIN_US"] = cfg.servo_min_us[i - 1]
+        replacements[f"SERVO{i}_MAX_US"] = cfg.servo_max_us[i - 1]
+        replacements[f"SERVO{i}_MIN_DEG"] = cfg.servo_min_deg[i - 1]
+        replacements[f"SERVO{i}_MAX_DEG"] = cfg.servo_max_deg[i - 1]
+        replacements[f"SERVO{i}_INIT_DEG"] = cfg.servo_init_deg[i - 1]
 
     lines = text.splitlines(keepends=True)
-    macro_patterns = {name: _simple_macro_re(name) for name in _SIMPLE_MACROS}
+    macro_patterns = {name: _simple_macro_re(name) for name in _ALL_MACROS}
 
     new_lines = []
     for line in lines:

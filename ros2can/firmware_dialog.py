@@ -2,7 +2,8 @@
 generated_firmware/<名前>/ へ生成し、そのまま同じ画面から実機へ書き込む(pio run -t
 upload)ダイアログ。
 
-生成: DEVICE_ID・CAN_ID・MODE_*・MULTI1-3・ENC1_MD/ENC2_MDだけをGUIで編集し、それ以外
+生成: DEVICE_ID・CAN_ID・MODE_*・MULTI1-3・ENC1_MD/ENC2_MD・サーボ設定(SERVOn_*)・
+高度な設定(ADVANCED_MACROS、既定では折りたたみ)だけをGUIで編集し、それ以外
 (ROBOMASのPIDゲイン等、実測でチューニングされた値を含む)には一切触れない。テンプレート
 自体は書き換えず、常にプロジェクト一式を generated_firmware/ 配下の名前付きフォルダへ
 コピーしてから、そのコピー内の config.hpp だけを書き換える。generated_firmware/ は
@@ -23,11 +24,12 @@ import os
 import subprocess
 from typing import List, Optional
 
-from PyQt5.QtCore import QThread, pyqtSignal
+from PyQt5.QtCore import Qt, QThread, pyqtSignal
 from PyQt5.QtWidgets import (
-    QDialog, QVBoxLayout, QHBoxLayout, QFormLayout, QLineEdit, QSpinBox,
-    QComboBox, QLabel, QPushButton, QFrame, QPlainTextEdit, QDialogButtonBox,
-    QMessageBox, QFileDialog,
+    QDialog, QVBoxLayout, QHBoxLayout, QFormLayout, QGridLayout, QLineEdit,
+    QSpinBox, QComboBox, QLabel, QPushButton, QToolButton, QGroupBox, QWidget,
+    QScrollArea, QFrame, QPlainTextEdit, QDialogButtonBox, QMessageBox,
+    QFileDialog,
 )
 
 from . import settings_store
@@ -99,6 +101,36 @@ def _section_label(text: str) -> QLabel:
     return label
 
 
+class _CollapsibleBox(QWidget):
+    """既定で折りたたまれた見出し付きコンテナ。
+
+    通常は変更不要な「高度な設定」を、基本設定と分離して隠しておくために使う
+    (押すと展開/折りたたみするだけの単純なトグル)。
+    """
+
+    def __init__(self, title: str, parent=None):
+        super().__init__(parent)
+        outer = QVBoxLayout(self)
+        outer.setContentsMargins(0, 0, 0, 0)
+
+        self._toggle_btn = QToolButton()
+        self._toggle_btn.setText(title)
+        self._toggle_btn.setCheckable(True)
+        self._toggle_btn.setChecked(False)
+        self._toggle_btn.setToolButtonStyle(Qt.ToolButtonTextBesideIcon)
+        self._toggle_btn.setArrowType(Qt.RightArrow)
+        self._toggle_btn.toggled.connect(self._on_toggled)
+        outer.addWidget(self._toggle_btn)
+
+        self.content_area = QWidget()
+        self.content_area.setVisible(False)
+        outer.addWidget(self.content_area)
+
+    def _on_toggled(self, checked: bool) -> None:
+        self._toggle_btn.setArrowType(Qt.DownArrow if checked else Qt.RightArrow)
+        self.content_area.setVisible(checked)
+
+
 class FirmwareDialog(QDialog):
     def __init__(self, hardware_manager: HardwareManager, parent=None):
         super().__init__(parent)
@@ -119,12 +151,22 @@ class FirmwareDialog(QDialog):
 
         gen_note = QLabel(
             "xiao-esp32-s3_can2io をテンプレートに、DEVICE_ID・CAN_ID・モード・"
-            "MULTI1-3・ENC1_MD/ENC2_MD を反映したプロジェクト一式を"
-            "generated_firmware/<名前>/ へ生成します(テンプレート自体は書き換えません)。"
-            "ROBOMASのPIDゲイン等、その他の設定(チューニング値)には一切触れません。")
+            "MULTI1-3・ENC1_MD/ENC2_MD・サーボ設定・高度な設定を反映したプロジェクト"
+            "一式を generated_firmware/<名前>/ へ生成します(テンプレート自体は"
+            "書き換えません)。ROBOMASのPIDゲイン等、その他の設定(チューニング値)には"
+            "一切触れません。")
         gen_note.setWordWrap(True)
         gen_note.setStyleSheet("color: #5f6368;")
         layout.addWidget(gen_note)
+
+        gen_scroll = QScrollArea()
+        gen_scroll.setWidgetResizable(True)
+        gen_scroll.setFrameShape(QFrame.NoFrame)
+        gen_container = QWidget()
+        gen_layout = QVBoxLayout(gen_container)
+        gen_layout.setContentsMargins(0, 0, 0, 0)
+        gen_scroll.setWidget(gen_container)
+        layout.addWidget(gen_scroll, 1)
 
         template_row = QHBoxLayout()
         self.template_edit = QLineEdit()
@@ -134,7 +176,7 @@ class FirmwareDialog(QDialog):
         change_template_btn = QPushButton("変更…")
         change_template_btn.clicked.connect(self._on_change_template)
         template_row.addWidget(change_template_btn)
-        layout.addLayout(template_row)
+        gen_layout.addLayout(template_row)
 
         form = QFormLayout()
 
@@ -174,7 +216,103 @@ class FirmwareDialog(QDialog):
             self.enc_md_combos.append(combo)
             form.addRow(f"ENC{i + 1}_MD:", combo)
 
-        layout.addLayout(form)
+        gen_layout.addLayout(form)
+
+        # ---- サーボ設定 (SERVO1-4) ----
+        gen_layout.addWidget(_section_label("サーボ設定"))
+        servo_note = QLabel(
+            "SERVOn_MIN_US/MAX_US(パルス幅) と MIN_DEG/MAX_DEG/INIT_DEG(角度) を"
+            "サーボごとに設定します。MULTIn=1(サーボ出力)のチャンネルのみ有効です。")
+        servo_note.setWordWrap(True)
+        servo_note.setStyleSheet("color: #5f6368;")
+        gen_layout.addWidget(servo_note)
+
+        self.servo_min_us_spins: List[QSpinBox] = []
+        self.servo_max_us_spins: List[QSpinBox] = []
+        self.servo_min_deg_spins: List[QSpinBox] = []
+        self.servo_max_deg_spins: List[QSpinBox] = []
+        self.servo_init_deg_spins: List[QSpinBox] = []
+        for i in range(4):
+            box = QGroupBox(f"SERVO{i + 1}")
+            servo_form = QFormLayout(box)
+
+            min_us = QSpinBox()
+            min_us.setRange(0, 5000)
+            min_us.setSuffix(" us")
+            servo_form.addRow("MIN_US:", min_us)
+            self.servo_min_us_spins.append(min_us)
+
+            max_us = QSpinBox()
+            max_us.setRange(0, 5000)
+            max_us.setSuffix(" us")
+            servo_form.addRow("MAX_US:", max_us)
+            self.servo_max_us_spins.append(max_us)
+
+            min_deg = QSpinBox()
+            min_deg.setRange(0, 360)
+            min_deg.setSuffix(" deg")
+            servo_form.addRow("MIN_DEG:", min_deg)
+            self.servo_min_deg_spins.append(min_deg)
+
+            max_deg = QSpinBox()
+            max_deg.setRange(0, 360)
+            max_deg.setSuffix(" deg")
+            servo_form.addRow("MAX_DEG:", max_deg)
+            self.servo_max_deg_spins.append(max_deg)
+
+            init_deg = QSpinBox()
+            init_deg.setRange(0, 360)
+            init_deg.setSuffix(" deg")
+            servo_form.addRow("INIT_DEG:", init_deg)
+            self.servo_init_deg_spins.append(init_deg)
+
+            gen_layout.addWidget(box)
+
+        # ---- 高度な設定 (通常は変更不要) ----
+        advanced_box = _CollapsibleBox("高度な設定 (通常は変更不要)")
+        advanced_form = QFormLayout(advanced_box.content_area)
+
+        self.servo_pwm_freq_spin = QSpinBox()
+        self.servo_pwm_freq_spin.setRange(1, 500)
+        self.servo_pwm_freq_spin.setSuffix(" Hz")
+        advanced_form.addRow("SERVO_PWM_FREQ:", self.servo_pwm_freq_spin)
+
+        self.servo_pwm_resolution_spin = QSpinBox()
+        self.servo_pwm_resolution_spin.setRange(1, 16)
+        self.servo_pwm_resolution_spin.setSuffix(" bit")
+        advanced_form.addRow("SERVO_PWM_RESOLUTION:", self.servo_pwm_resolution_spin)
+
+        self.md_pwm_freq_spin = QSpinBox()
+        self.md_pwm_freq_spin.setRange(1, 100000)
+        self.md_pwm_freq_spin.setSuffix(" Hz")
+        advanced_form.addRow("MD_PWM_FREQ:", self.md_pwm_freq_spin)
+
+        self.md_pwm_resolution_spin = QSpinBox()
+        self.md_pwm_resolution_spin.setRange(1, 16)
+        self.md_pwm_resolution_spin.setSuffix(" bit")
+        advanced_form.addRow("MD_PWM_RESOLUTION:", self.md_pwm_resolution_spin)
+
+        self.enable_led_combo = QComboBox()
+        self.enable_led_combo.addItem("無効 (0)", 0)
+        self.enable_led_combo.addItem("有効 (1)", 1)
+        advanced_form.addRow("ENABLE_LED:", self.enable_led_combo)
+
+        self.can_node_count_spin = QSpinBox()
+        self.can_node_count_spin.setRange(1, 4)
+        self.can_node_count_spin.setToolTip(
+            "実際にCANバスへ接続されているノード数(ホスト自身を含む)に必ず合わせる"
+            "こと。多すぎると存在しないノード宛のACKエラーでBus-Offに陥る。")
+        advanced_form.addRow("CAN_NODE_COUNT:", self.can_node_count_spin)
+
+        self.can_host_diag_enable_combo = QComboBox()
+        self.can_host_diag_enable_combo.addItem("無効 (0)", 0)
+        self.can_host_diag_enable_combo.addItem("有効 (1)", 1)
+        self.can_host_diag_enable_combo.setToolTip(
+            "有効にするとCAN診断ログがros2can用USBシリアルに直接出力され、"
+            "serial_bridgeフレームと混ざる(切り分け用途以外は無効のままにすること)。")
+        advanced_form.addRow("CAN_HOST_DIAG_ENABLE:", self.can_host_diag_enable_combo)
+
+        gen_layout.addWidget(advanced_box)
 
         gen_button_row = QHBoxLayout()
         gen_button_row.addStretch(1)
@@ -182,7 +320,7 @@ class FirmwareDialog(QDialog):
         self.generate_btn.clicked.connect(self._on_generate)
         self.generate_btn.setEnabled(False)
         gen_button_row.addWidget(self.generate_btn)
-        layout.addLayout(gen_button_row)
+        gen_layout.addLayout(gen_button_row)
 
         divider = QFrame()
         divider.setFrameShape(QFrame.HLine)
@@ -289,6 +427,26 @@ class FirmwareDialog(QDialog):
         for combo, value in zip(self.enc_md_combos, cfg.enc_md):
             combo.setCurrentIndex(combo.findData(value))
 
+        for spin, value in zip(self.servo_min_us_spins, cfg.servo_min_us):
+            spin.setValue(value)
+        for spin, value in zip(self.servo_max_us_spins, cfg.servo_max_us):
+            spin.setValue(value)
+        for spin, value in zip(self.servo_min_deg_spins, cfg.servo_min_deg):
+            spin.setValue(value)
+        for spin, value in zip(self.servo_max_deg_spins, cfg.servo_max_deg):
+            spin.setValue(value)
+        for spin, value in zip(self.servo_init_deg_spins, cfg.servo_init_deg):
+            spin.setValue(value)
+
+        self.servo_pwm_freq_spin.setValue(cfg.servo_pwm_freq)
+        self.servo_pwm_resolution_spin.setValue(cfg.servo_pwm_resolution)
+        self.md_pwm_freq_spin.setValue(cfg.md_pwm_freq)
+        self.md_pwm_resolution_spin.setValue(cfg.md_pwm_resolution)
+        self.enable_led_combo.setCurrentIndex(self.enable_led_combo.findData(cfg.enable_led))
+        self.can_node_count_spin.setValue(cfg.can_node_count)
+        self.can_host_diag_enable_combo.setCurrentIndex(
+            self.can_host_diag_enable_combo.findData(cfg.can_host_diag_enable))
+
         self._update_output_preview()
         self.generate_btn.setEnabled(True)
 
@@ -320,6 +478,18 @@ class FirmwareDialog(QDialog):
             multi=[combo.currentData() for combo in self.multi_combos],
             enc_md=[combo.currentData() for combo in self.enc_md_combos],
             available_modes=self._cfg.available_modes,
+            servo_min_us=[spin.value() for spin in self.servo_min_us_spins],
+            servo_max_us=[spin.value() for spin in self.servo_max_us_spins],
+            servo_min_deg=[spin.value() for spin in self.servo_min_deg_spins],
+            servo_max_deg=[spin.value() for spin in self.servo_max_deg_spins],
+            servo_init_deg=[spin.value() for spin in self.servo_init_deg_spins],
+            servo_pwm_freq=self.servo_pwm_freq_spin.value(),
+            servo_pwm_resolution=self.servo_pwm_resolution_spin.value(),
+            md_pwm_freq=self.md_pwm_freq_spin.value(),
+            md_pwm_resolution=self.md_pwm_resolution_spin.value(),
+            enable_led=self.enable_led_combo.currentData(),
+            can_node_count=self.can_node_count_spin.value(),
+            can_host_diag_enable=self.can_host_diag_enable_combo.currentData(),
         )
 
         try:
