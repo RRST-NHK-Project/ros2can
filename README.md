@@ -4,19 +4,10 @@
 > （初めての方は [クイックスタート](https://rrst-nhk-project.github.io/ros2can/quickstart) がおすすめです）
 
 > 本パッケージは [serial_bridge](https://github.com/RRST-NHK-Project/serial_bridge) の後継です。
-> `xiao_esp32_s3_smd_serial_bridge`（MODE_CAN_HOST）専用の**スタンドアローン**GUIとして、
-> シリアルポートのスキャン・専有・serial_bridge 互換フレームの送受信を自前で行います。
-> 外部の `serial_bridge` ノードは不要です。
 
 ## 1. 概要
 
-`ros2can` は、CANバス経由で複数マイコンをホストする `xiao_esp32_s3_smd_serial_bridge`
-（MODE_CAN_HOST）専用の ROS 2 GUI パッケージです。
-
-この基板は USB シリアルでつながる「CANホスト」で、自身の配下に CAN バス経由で
-最大4台の子マイコン（ノード）をデイジーチェーン接続可能です。`ros2can` はホストのシリアルポートを
-直接掴み、バス上の各ノードへアクチュエータ指令を直接送信したり、センサ値を
-リアルタイムに表示することができます。また、`serial_bridge`と同様にトピックを用いた外部ノードとの接続も可能です。
+`ros2can`は`serial_bridge`をベースに開発した後継パッケージです。CANバスに対応しマイコンをデイジーチェーン接続することにより配線を簡素化することができます。ロボマスやCubemars AKシリーズにも対応しています。GUIを搭載しており、直感的な操作が可能になっています。これまで煩雑だったマイコンのプログラムについてもGUI上で生成、書き込みが行えるようになっています。外部ノードとの接続は`serial_bridge`を継承しているため移行も簡単です。
 
 ---
 
