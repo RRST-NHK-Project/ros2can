@@ -270,167 +270,77 @@ Publish/Subscribeするだけの「トピッククライアント」として先
 > 本リポジトリにはまだ実装がありません。[10.1節](#101-指令チャンネルcontrol-タブ)の
 > スロット表に従って、生配列を直接操作してください。
 
-### 7.4 サンプルノード1: CubeMars位置制御（cr26_soki より）
+### 7.4 サンプルパッケージ `ros2can_example`（C++、ビルド・実行可能）
 
-`cr26_soki` パッケージの `ros2can_practice.cpp` は、PS4コントローラの入力で
-CubeMars（MODE_CUBEMARS、ノード0番=CAN_ID 101）をMIT(Force Control)モードで
-位置制御する実例です。外部ノードの基本形として、以下の骨格に注目してください。
+`rrst-ros2-ws` ワークスペース直下に、外部ノードの最小構成を2つ収録した
+`ros2can_example` パッケージがあります（`common`・`rclcpp`・`std_msgs` に
+依存する `ament_cmake` パッケージ）。
+
+> **配置場所についての注意**: `ros2can` リポジトリ自体はリポジトリ直下に
+> `package.xml` を置く単一パッケージ構成のため、その配下に別パッケージを
+> 置いてもcolconのデフォルト探索では見つかりません（既存パッケージの境界より
+> 下は再帰探索されない仕様）。そのため `ros2can_example` は `ros2can`
+> リポジトリの外、`rrst-ros2-ws` ワークスペース直下（`common`/`cr26_soki` と
+> 同じ階層）に置かれています。素の `colcon build` でそのまま検出・ビルド
+> されます。
+
+| ノード | ソース | 内容 |
+|:---|:---|:---|
+| `servo_sweep_example` | [`ros2can_example/src/servo_sweep_example.cpp`](https://github.com/RRST-NHK-Project/rrst-ros2-ws/blob/develop/ros2can_example/src/servo_sweep_example.cpp) | 既定プロファイル (`xiao_smd_can_host`) 向け。ノード1(CAN_ID=101)のSERVO1を正弦波で往復させ、SW1/ENC1の帰還をログ出力する |
+| `cubemars_position_example` | [`ros2can_example/src/cubemars_position_example.cpp`](https://github.com/RRST-NHK-Project/rrst-ros2-ws/blob/develop/ros2can_example/src/cubemars_position_example.cpp) | `cubemars_ak_driver` (MODE_CUBEMARS) 向け。モータ1(CAN_ID=101)を `setPosition()` で0〜90degの間で往復させ、位置・速度・電流・温度・エラーの帰還をログ出力する |
+
+どちらもジョイスティック等の外部入力を必要とせず、実行するとその場で
+動き出す自己完結型のサンプルです。骨格は共通で、`Ros2Can(Cubemars)PacketController`
+を使って以下の3点だけを実装しています。
 
 ```cpp
-class Ros2CanCubemarsControl : public rclcpp::Node {
-public:
-    Ros2CanCubemarsControl(uint8_t tx_device_id, uint8_t rx_device_id)
-        : Node("ros2can_cubemars_" + std::to_string(tx_device_id)),
-          tx_device_id_(tx_device_id), rx_device_id_(rx_device_id) {
+// 1) ros2canへの指令をpublish
+publisher_ = create_publisher<std_msgs::msg::Int16MultiArray>(
+    "serial_tx_" + std::to_string(tx_device_id_), 10);
 
-        // ros2canへの指令をpublish
-        publisher_ = create_publisher<std_msgs::msg::Int16MultiArray>(
-            "serial_tx_" + std::to_string(tx_device_id_), 10);
+// 2) 一定周期でtx_をそのまま送り続ける
+timer_ = create_wall_timer(std::chrono::milliseconds(PUBLISH_RATE_MS),
+    std::bind(&MyNode::timer_callback, this));
 
-        // 一定周期でtx_をそのまま送り続ける(20ms = 50Hz)
-        timer_ = create_wall_timer(std::chrono::milliseconds(PUBLISH_RATE_MS),
-            std::bind(&Ros2CanCubemarsControl::publisher_timer_callback, this));
+// 3) ros2canからのセンサ値をsubscribeし、rx_を更新する
+sensor_sub_ = create_subscription<std_msgs::msg::Int16MultiArray>(
+    "serial_rx_" + std::to_string(rx_device_id_), 10,
+    std::bind(&MyNode::sensor_callback, this, std::placeholders::_1));
 
-        // ros2canからのセンサ値をsubscribe
-        sensor_sub_ = create_subscription<std_msgs::msg::Int16MultiArray>(
-            "serial_rx_" + std::to_string(rx_device_id_), 10,
-            std::bind(&Ros2CanCubemarsControl::sensor_callback, this, std::placeholders::_1));
-
-        // firmwareにフェイルセーフは無いため、ノード終了時に全モータへゼロ指令を送る
-        rclcpp::on_shutdown([this]() { send_zero_and_stop(); });
-    }
-
-private:
-    void publisher_timer_callback() {
-        std_msgs::msg::Int16MultiArray msg;
-        msg.data = ctrlPkt_.toVector();
-        publisher_->publish(msg);
-    }
-
-    void sensor_callback(const std_msgs::msg::Int16MultiArray::SharedPtr msg) {
-        ctrlPkt_.updateRx(msg->data);
-        // ctrlPkt_.getPosition(TARGET_MOTOR) 等で帰還値を取得できる
-    }
-
-    void send_zero_and_stop() {
-        ctrlPkt_.stopAll();
-        publisher_timer_callback();
-    }
-
-    rclcpp::Publisher<std_msgs::msg::Int16MultiArray>::SharedPtr publisher_;
-    rclcpp::Subscription<std_msgs::msg::Int16MultiArray>::SharedPtr sensor_sub_;
-    rclcpp::TimerBase::SharedPtr timer_;
-    Ros2CanCubemarsPacketController ctrlPkt_;
-};
+// firmwareにCAN/シリアル途絶時のフェイルセーフは無く、最後に受信した指令を
+// 保持し続ける。ノード終了時にゼロ指令を送るのはノード側の責務。
+rclcpp::on_shutdown([this]() { send_zero_and_stop(); });
 ```
 
-ボタン入力に応じて `ctrlPkt_.setMit(TARGET_MOTOR, target_angle_deg_, 0.0, MIT_KP, MIT_KD, 0.0)`
-を呼ぶと、次のタイマー周期でその指令がそのまま送信されます（`tx_` は最後に
-設定した値を保持し続けるため、値を変更したときだけ呼べば十分です）。ノード
-終了時（Ctrl+C等）には `rclcpp::on_shutdown` に登録した `send_zero_and_stop()`
-が呼ばれ、全モータへゼロ速度指令を送ってその場停止させます。ファームウェア側に
-CAN/シリアル途絶時のフェイルセーフは無く、最後に受信した指令を保持し続ける
-仕様のため、この後始末はノード側の責務になります。
-
-完全なソース（PS4ジョイスティックでの角度指令、エラーログ出力等を含む）は
-[`cr26_soki/src/ros2can_practice.cpp`](https://github.com/RRST-NHK-Project/rrst-ros2-ws/blob/develop/cr26_soki/src/ros2can_practice.cpp)
+`cubemars_position_example` では `ctrlPkt_.setPosition(TARGET_MOTOR, target_deg)`
+を毎周期呼ぶだけで、アクチュエータ内蔵のクローズドループが追従します。より
+複雑な操作例（PS4ジョイスティックでのMIT(Force Control)モード制御、ボタンの
+立ち上がりエッジ検出等）は、`cr26_soki` パッケージの
+[`ros2can_practice.cpp`](https://github.com/RRST-NHK-Project/rrst-ros2-ws/blob/develop/cr26_soki/src/ros2can_practice.cpp)
 を参照してください。
 
-### 7.5 サンプルノード2: 既定プロファイル（SERVO/SW/ENC）の最小例
+新しいノードを追加する場合は `ros2can_example/CMakeLists.txt` に
+`add_executable`/`ament_target_dependencies`/`install(TARGETS ...)` を
+1行ずつ追記すれば、この最小骨格をベースにそのまま増やせます。
 
-専用コントローラがある場合と同じ骨格を、既定プロファイル (`xiao_smd_can_host`)
-向けにも適用できます。ここではノード1 (CAN_ID=101) のSERVO1を正弦波で往復させ、
-SW1/ENC1の帰還をログ出力する最小例を示します。
+#### ビルドと実行
 
-```cpp
-/*
-ros2can (MODE_CAN_HOST, 既定プロファイル xiao_smd_can_host) ノードの
-ホスト側最小サンプル。ノード1(CAN_ID=101)のSERVO1を周期的に往復させ、
-SW1とENC1の帰還をログ出力する。Ros2CanPacketControllerでスロット割当を
-意識せずに送受信配列へアクセスする。
-*/
+```bash
+cd ~/ros2_ws
+colcon build --packages-select ros2can_example
+source install/setup.bash
 
-#include <chrono>
-#include <cmath>
-#include "rclcpp/rclcpp.hpp"
-#include <std_msgs/msg/int16_multi_array.hpp>
-#include "common/Ros2CanPacketController.hpp"
-
-#define TX_DEVICE_ID 1
-#define RX_DEVICE_ID 1
-#define PUBLISH_RATE_MS 50
-#define TARGET_NODE 0  // ノード1 (CAN_ID=101)、0-origin
-
-class Ros2CanServoSweepExample : public rclcpp::Node {
-public:
-    Ros2CanServoSweepExample(uint8_t tx_device_id, uint8_t rx_device_id)
-        : Node("ros2can_servo_sweep_example"),
-          tx_device_id_(tx_device_id), rx_device_id_(rx_device_id) {
-
-        publisher_ = create_publisher<std_msgs::msg::Int16MultiArray>(
-            "serial_tx_" + std::to_string(tx_device_id_), 10);
-
-        sensor_sub_ = create_subscription<std_msgs::msg::Int16MultiArray>(
-            "serial_rx_" + std::to_string(rx_device_id_), 10,
-            std::bind(&Ros2CanServoSweepExample::sensor_callback, this, std::placeholders::_1));
-
-        timer_ = create_wall_timer(std::chrono::milliseconds(PUBLISH_RATE_MS),
-            std::bind(&Ros2CanServoSweepExample::timer_callback, this));
-
-        start_time_ = now();
-
-        // firmwareにフェイルセーフは無いため、ノード終了時にSERVOを0degへ戻す
-        rclcpp::on_shutdown([this]() { send_zero_and_stop(); });
-    }
-
-private:
-    void timer_callback() {
-        double t = (now() - start_time_).seconds();
-        int deg = 135 + static_cast<int>(135.0 * std::sin(t));  // 0~270degで往復
-        ctrlPkt_.setServo(TARGET_NODE, /*servo_no=*/1, deg);
-
-        std_msgs::msg::Int16MultiArray msg;
-        msg.data = ctrlPkt_.toVector();
-        publisher_->publish(msg);
-    }
-
-    void sensor_callback(const std_msgs::msg::Int16MultiArray::SharedPtr msg) {
-        ctrlPkt_.updateRx(msg->data);
-        bool sw1 = ctrlPkt_.getSW(TARGET_NODE, 1);
-        int16_t enc1 = ctrlPkt_.getEnc(TARGET_NODE, 1);
-        RCLCPP_INFO_THROTTLE(get_logger(), *get_clock(), 500,
-            "SW1=%s ENC1=%d", sw1 ? "ON" : "OFF", enc1);
-    }
-
-    void send_zero_and_stop() {
-        ctrlPkt_.setServo(TARGET_NODE, 1, 0);
-        std_msgs::msg::Int16MultiArray msg;
-        msg.data = ctrlPkt_.toVector();
-        publisher_->publish(msg);
-    }
-
-    uint8_t tx_device_id_, rx_device_id_;
-    rclcpp::Publisher<std_msgs::msg::Int16MultiArray>::SharedPtr publisher_;
-    rclcpp::Subscription<std_msgs::msg::Int16MultiArray>::SharedPtr sensor_sub_;
-    rclcpp::TimerBase::SharedPtr timer_;
-    rclcpp::Time start_time_;
-    Ros2CanPacketController ctrlPkt_;
-};
-
-int main(int argc, char *argv[]) {
-    rclcpp::init(argc, argv);
-    auto node = std::make_shared<Ros2CanServoSweepExample>(TX_DEVICE_ID, RX_DEVICE_ID);
-    rclcpp::spin(node);
-    rclcpp::shutdown();
-    return 0;
-}
+ros2 run ros2can_example servo_sweep_example
+# または
+ros2 run ros2can_example cubemars_position_example
 ```
 
-`package.xml`/`CMakeLists.txt` の依存関係やビルド設定は `cr26_soki` パッケージの
-ものを参考にしてください（`rclcpp`、`std_msgs`、`common` パッケージへの依存と
-インクルードパスが必要です）。
+対象デバイスは各ソース先頭の `TX_DEVICE_ID`/`RX_DEVICE_ID`/`TARGET_NODE`
+(または `TARGET_MOTOR`) マクロで指定しています。実際のDEVICE_ID・ノード番号に
+合わせて書き換えてから再ビルドしてください。動作確認には、実機の代わりに
+[5. デバッグモード](#5-デバッグモード実機不要でのui確認) の仮想デバイスも使えます。
 
-### 7.6 コマンドラインからの簡易テスト
+### 7.5 コマンドラインからの簡易テスト
 
 ノードを書く前に、まずはCLIで疎通確認するのが手早い方法です。
 
@@ -727,7 +637,7 @@ PlatformIO CLI（`pio` コマンド）が必要です。見つからない場合
   ダイレクト送信を無効化します。緊急時はこれを押してください。
 - 外部ノードから接続する場合、ファームウェア側にCAN/シリアル途絶時の
   フェイルセーフは無く、最後に受信した指令を保持し続けます。ノード終了時に
-  ゼロ指令を送る後始末は各ノードの責務です（[7.4節](#74-サンプルノード1-cubemars位置制御cr26_sokiより)
+  ゼロ指令を送る後始末は各ノードの責務です（[7.4節](#74-サンプルパッケージ-ros2can_examplec-ビルド実行可能)
   の `send_zero_and_stop()` を参照）。
 
 ## 15. About
