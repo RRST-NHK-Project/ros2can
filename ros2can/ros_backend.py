@@ -38,8 +38,6 @@ from std_msgs.msg import Int16MultiArray, Int32MultiArray
 
 from PyQt5.QtCore import QObject, pyqtSignal
 
-from ros2can_interfaces.srv import ZeroChannel
-
 from .counter_unwrapper import CounterUnwrapper
 from .device_profiles import DEFAULT_PROFILE_KEY, SLOT_COUNT
 from .hardware_manager import HardwareConfig, HardwareManager
@@ -147,7 +145,7 @@ class RosBackend(QObject):
         self.hardware.linkStateChanged.connect(self._on_hardware_link_state)
         self.hardware.logMessage.connect(self.logMessage)
 
-        self._create_zero_channel_service()
+        self._create_zero_channel_subscription()
 
     def _load_device_profile_map_from_params(self) -> Dict[int, str]:
         """device_id とプロファイルキーの対応表 (settings_store.py の
@@ -452,8 +450,8 @@ class RosBackend(QObject):
     # CubeMars内蔵エンコーダの生値をリセットするコマンドは実装していない)ため、
     # ros2can側がソフトウェアオフセットを持ち、「現在値 - オフセット」を
     # serial_rx_[ID]_zeroed (Int32MultiArray, 24スロット) として別配信する方式にした。
-    # GUI(Monitorタブの「原点セット」ボタン)、ROS 2サービス(zero_channel、外部
-    # ノードから利用可)のどちらからも同じ zero_channel()/zero_all_channels() を呼ぶ。
+    # GUI(Monitorタブの「原点セット」ボタン)、ROS 2トピック(zero_channel_request、
+    # 外部ノードから利用可)のどちらからも同じ zero_channel()/zero_all_channels() を呼ぶ。
     #
     # MODE_HARDWARE/MODE_SIMULATORはPCNTラップアラウンドを解決した rx_unwrapped
     # を基準にする(多回転する関節でズレなく原点セットできる)。MODE_TOPIC_CLIENTは
@@ -490,24 +488,37 @@ class RosBackend(QObject):
             return None
         return self._current_value_for_zero(ch, index) - ch.zero_offset[index]
 
-    def _create_zero_channel_service(self) -> None:
-        self.node.create_service(ZeroChannel, "zero_channel", self._on_zero_channel_request)
+    def _create_zero_channel_subscription(self) -> None:
+        """外部ノードからの原点セット要求を受け付ける。
 
-    def _on_zero_channel_request(self, request, response):
-        device_id = request.device_id
-        index = request.channel_index
+        カスタムサービス型(旧 ros2can_interfaces/srv/ZeroChannel)は rosidl 生成が
+        必要で ament_python である ros2can 単体では定義できず、外部リポジトリへの
+        依存を必須にしてしまっていた。std_msgs のみで表現できるトピック方式に
+        置き換えることで、ros2can 単体で clone・ビルドできるようにしている。
+        戻り値(成功可否)は同期的には返らないため、結果は通信ログ(logMessage、
+        ツールバーの「通信ログ…」)で確認する。
+        """
+        self.node.create_subscription(
+            Int32MultiArray, "zero_channel_request", self._on_zero_channel_request, 10)
+
+    def _on_zero_channel_request(self, msg: Int32MultiArray) -> None:
+        """data = [device_id, channel_index] (channel_index<0 で全チャンネル一括)。"""
+        if len(msg.data) < 2:
+            self.logMessage.emit(
+                f"[ZERO] zero_channel_request の要素数が不正です(2個必要): {list(msg.data)}")
+            return
+        device_id, index = int(msg.data[0]), int(msg.data[1])
         if index < 0:
             ok = self.zero_all_channels(device_id)
             target = "全チャンネル"
         else:
             ok = self.zero_channel(device_id, index)
             target = f"チャンネル{index}"
-        response.success = ok
-        response.message = (
+        message = (
             f"device_id={device_id} の{target}を原点セットしました" if ok
             else f"device_id={device_id} が見つからないか、channel_indexが不正です"
         )
-        return response
+        self.logMessage.emit(f"[ZERO] {message}")
 
     # ---------------- device management: common ----------------
 

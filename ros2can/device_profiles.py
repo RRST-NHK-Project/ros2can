@@ -70,7 +70,7 @@ class ChannelDef:
     decimals: int = 0
     options: Optional[List[Tuple[int, str]]] = None
     note: str = ""
-    # 「原点セット」ボタン(GUI)/zero_channelサービスの対象にするか。
+    # 「原点セット」ボタン(GUI)/zero_channel_requestトピックの対象にするか。
     # 角度・位置・カウンタ等、蓄積されて機構上の原点とズレうる値にのみTrueにする。
     # 同じREADOUT種別でも速度/電流/温度等の瞬時値には付けない(原点という概念が無い)。
     zeroable: bool = False
