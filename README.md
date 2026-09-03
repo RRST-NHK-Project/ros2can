@@ -1,5 +1,7 @@
 # **ros2can**
 
+> 📖 マニュアル(GitHub Pages): https://rrst-nhk-project.github.io/ros2can/
+
 > 本パッケージは [serial_bridge](https://github.com/RRST-NHK-Project/serial_bridge) の後継です。
 > `xiao_esp32_s3_smd_serial_bridge`（MODE_CAN_HOST）専用の**スタンドアローン**GUIとして、
 > シリアルポートのスキャン・専有・serial_bridge 互換フレームの送受信を自前で行います。
