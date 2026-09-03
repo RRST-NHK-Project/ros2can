@@ -5,6 +5,8 @@ title: ros2can マニュアル
 > `ros2can` のマニュアルです。`xiao_esp32_s3_smd_serial_bridge`（MODE_CAN_HOST）
 > 専用のスタンドアローンGUIで、シリアルポートのスキャン・専有・serial_bridge
 > 互換フレームの送受信を自前で行います。
+>
+> **初めての方は [クイックスタート](quickstart.md) から読むのがおすすめです。**
 
 ## 目次
 
