@@ -11,8 +11,10 @@ title: ros2can マニュアル
 ## 目次
 
 - [1. 概要](#1-概要)
+  - [1.1 serial_bridgeとの比較](#11-serial_bridgeとの比較)
 - [2. システム要件](#2-システム要件)
 - [3. インストールと起動](#3-インストールと起動)
+  - [3.1 serial_bridge との併用について](#31-serial_bridge-との併用について)
 - [4. 起動直後の画面](#4-起動直後の画面)
 - [5. デバッグモード（実機不要でのUI確認）](#5-デバッグモード実機不要でのui確認)
 - [6. 画面構成](#6-画面構成)
@@ -57,6 +59,13 @@ title: ros2can マニュアル
                                   └─ ノード4 (CAN_ID=104)
 ```
 
+![CANホスト＋ノードのデイジーチェーン接続イメージ](images/diagram_daisychain.svg)
+
+上図はUSB接続からCANバスの物理的なつながり方（デイジーチェーン、バス両端の終端抵抗）
+までを示したイメージです。ホスト自身も「ノード0」として自分のI/Oを直接処理する点に
+注意してください。各ノードの SERVO/SW、ENC/MD が具体的にどう配線されるかは
+[8. プロファイル](#8-プロファイル) の対応スロットマッピング図を参照してください。
+
 ホストのUSBシリアル側は常に `serial_bridge` 互換の24 x int16スロット
 （TX: ROS→ホスト、RX: ホスト→ROS）を1フレームとしてやり取りします。この24スロットを
 CANバス上の各ノードへどう割り当てるかを決めるのが後述の「[8. プロファイル](#8-プロファイル)」です。
@@ -78,6 +87,31 @@ CANバスに直接ぶら下がる独立デバイスとしていくつかのモ�
 それ自体が独立したCANデバイスとして動作します（ホストを介さずCANバスへ
 直接接続）。ros2can上ではそれぞれ専用のプロファイルを選ぶことで、通常の
 CANホスト機と同じ画面（Control/Monitor/Raw/Info）から操作できます。
+
+### 1.1 serial_bridgeとの比較
+
+`ros2can` は `serial_bridge` の後継として、CANバス化による配線の簡素化と、
+GUIによる操作性の向上を主な目的に開発されました。
+
+![serial_bridgeとros2canの比較](images/diagram_comparison.svg)
+
+- **配線**: `serial_bridge` はマイコン1台につきUSBケーブル1本をPCへ個別接続する
+  星型配線のため、台数が増えるほど配線本数・USBポート数が増えます。`ros2can` は
+  PCとの接続をCANホスト1台分（USB1本）に集約し、残りはCANバスでの数珠つなぎ
+  （デイジーチェーン）で済むため、台数が増えてもPC側の配線は増えません。
+- **GUI**: `serial_bridge` はログ出力（テキスト/グラフィカル/サイレント）のみで、
+  指令送信やパラメータ確認はコマンドラインや別ツールが必要です。`ros2can` は
+  PyQt5 GUIを標準搭載し、Control/Monitor/Raw/Infoの各タブから直感的に操作できます。
+- **実機不要の動作確認**: `ros2can` の仮想デバイス機能（[5. デバッグモード](#5-デバッグモード実機不要でのui確認)）
+  により、実機が無くてもUIやトピック連携をその場で確認できます。
+- **専用アクチュエータ対応**: CubeMars AKシリーズ・DJIロボマス用の専用ドライバ
+  （MITモード等）を内蔵しており、`serial_bridge` の汎用モータ/サーボ/TR出力より
+  高度な制御にそのまま対応します。
+- **安全機能**: ダイレクト送信の既定OFFや全デバイスE-STOPなど、誤操作を防ぐ仕組みが
+  GUI側に組み込まれています。
+- **移行のしやすさ**: `serial_tx_[ID]`/`serial_rx_[ID]` のトピック形式は
+  `serial_bridge` と同一のため、既存ノードをそのまま流用しつつ段階的に移行・併用
+  できます（併用時の設定は [3.1 serial_bridgeとの併用について](#31-serial_bridge-との併用について) 参照）。
 
 ## 2. システム要件
 
@@ -112,6 +146,20 @@ ros2 launch ros2can ros2can.launch.py
 起動すると `ros2can` 自身がバックグラウンドスレッドで `/dev/ttyUSB*` /
 `/dev/ttyACM*` を定期的にスキャンし、CANホストを検出すると自動的に
 シリアルポートを専有してデバイス一覧に表示します。
+
+### 3.1 serial_bridge との併用について
+
+同一マシンで `serial_bridge` を併用することも可能です（移行期間中、他のマイコンは
+serial_bridge、CANホストは ros2can、といった構成）。`ros2can` はポートを開いた直後に
+`ioctl(fd, TIOCEXCL)` を発行してポートを排他専有するため、**ros2can が先にポートを
+掴んでいれば** serial_bridge 側の `open()` が失敗して静かにリトライされるだけで済み、
+フレームの競合は起きません。ただし逆方向（serial_bridge が先にポートを掴んだ場合）は
+serial_bridge 側にも同様の排他制御が無いと完全には防げません。既知の対策:
+
+- `config/ros2can.yaml` の `excluded_ports` に serial_bridge 管理下のポートを
+  列挙し、ros2can 側のスキャン対象から外す。
+- 同様に `serial_bridge.yaml` の `excluded_ports` に ros2can 管理下のポートを
+  列挙する。
 
 ## 4. 起動直後の画面
 
@@ -231,11 +279,11 @@ CAN分配を介さず、生の24 x int16スロットを直接編集/確認でき
 | `serial_rx_[DEVICE_ID]_unwrapped` | `std_msgs/msg/Int32MultiArray` | エンコーダのオーバーフローを展開した積算値（実機接続時/デバッグデバイスのみ） |
 | `serial_rx_[DEVICE_ID]_zeroed` | `std_msgs/msg/Int32MultiArray` | 上記から「原点セット」時点のオフセットを差し引いた相対値（同上） |
 
-**サービス**
+**Subscribe トピック（原点セット要求、ROS → CANホスト）**
 
-| サービス | 型 | 説明 |
+| トピック | 型 | 説明 |
 |:---|:---|:---|
-| `zero_channel` | `ros2can_interfaces/srv/ZeroChannel` | 指定デバイス・チャンネルの現在値を原点（0）としてソフトウェアオフセットを設定する。`channel_index=-1` で全24チャンネル一括原点セット |
+| `zero_channel_request` | `std_msgs/msg/Int32MultiArray` | `data: [device_id, channel_index]` を送ると、指定デバイス・チャンネルの現在値を原点（0）としてソフトウェアオフセットを設定する。`channel_index<0` で全24チャンネル一括原点セット。成否は通信ログ（ツールバーの「通信ログ…」）に記録される（同期応答は無い） |
 
 `serial_tx_[ID]`/`serial_rx_[ID]` は `serial_bridge` と同一の型・命名規則のため、
 既存の `serial_bridge` 向けノードをほぼそのまま流用できます。
@@ -354,9 +402,9 @@ ros2 topic echo /serial_rx_1
 ros2 topic pub --once /serial_tx_1 std_msgs/msg/Int16MultiArray \
   "{data: [90,0,0,0,0, 0,0,0,0,0, 0,0,0,0,0, 0,0,0,0,0, 0,0,0,0]}"
 
-# デバイス1の全チャンネルを一括で原点セットする
-ros2 service call /zero_channel ros2can_interfaces/srv/ZeroChannel \
-  "{device_id: 1, channel_index: -1}"
+# デバイス1の全チャンネルを一括で原点セットする(channel_index<0で全チャンネル)
+ros2 topic pub --once /zero_channel_request std_msgs/msg/Int32MultiArray \
+  "{data: [1, -1]}"
 ```
 
 `ros2 topic pub` は既定で周期送信になるため、1回だけ送りたい場合は
@@ -402,6 +450,13 @@ SERVOn と SWn はピン共有 (ファームウェア config.hpp の MULTIn で�
 ノードの CAN_ID は 101,102,103,104 (下2桁 = ノード番号)
 ```
 
+![ノードごとのセンサ／アクチュエータ接続イメージ（ピン共有）](images/diagram_node_io.svg)
+
+上図のように、1つの物理ピンをスイッチ入力/サーボ出力、あるいはエンコーダ入力/
+モータ出力のどちらとして使うかは firmware の `config.hpp`（`MULTIn`/`ENCn_MD`）で
+コンパイル時に固定します。実配線とこの設定が一致していないと、意図した
+センサ/アクチュエータが正しく動作しません。
+
 ## 9. CubeMars AKシリーズ（MODE_CUBEMARS）
 
 `cubemars_ak_driver` プロファイルは、CubeMars AKシリーズ（AK40-10等）の
@@ -411,6 +466,12 @@ SERVOn と SWn はピン共有 (ファームウェア config.hpp の MULTIn で�
 （実機のR-Link設定と必ず一致させてください）。ノード分配を行わないため、スロット
 0番起点でモータ1〜4の指令・帰還がそのまま並びます（`firmware/xiao-esp32-s3_can2io/src/cubemars.cpp`
 のスロット割当と一致させること）。
+
+![CubeMars/ロボマス: 独立CANバスへのデイジーチェーン接続イメージ](images/diagram_standalone_bus.svg)
+
+上図の通り、この基板はCANホストのノードとしてではなく、専用CANバス上に
+アクチュエータを最大4台まで直接ぶら下げる独立デバイスとして動作します
+（CAN_IDの体系もCANホスト/ノードとは別系統です）。
 
 アクチュエータ自身が速度・位置のクローズドループを内蔵しているため、
 ロボマス(GM6020)と異なりホスト側でのPID制御は行いません。3つの制御モードの
@@ -553,6 +614,8 @@ ros2canやこのファームウェアの設定ではなく、**AKシリーズ共
 モータ機種はファームウェア側 `config.hpp` の `ROBOMAS_MOTOR_TYPE` でコンパイル時に
 固定し、1バスには単一機種のみ最大4台接続できます
 （スロット割当は `firmware/xiao-esp32-s3_can2io/src/robomas.cpp` を参照）。
+接続イメージはCubeMars（[9. CubeMars AKシリーズ](#9-cubemars-akシリーズmode_cubemars)の図）と同様に、
+専用CANバス上へ独立デバイスとして最大4台を直接ぶら下げる構成です。
 
 ![ロボマス Controlタブ: M1をMIT(位置PD)モードに設定した状態](images/12_robomas_control.png)
 

@@ -1,0 +1,71 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1000 360" font-family="'Hiragino Sans','Noto Sans JP',sans-serif">
+  <rect x="0" y="0" width="1000" height="360" fill="#ffffff"/>
+
+  <text x="500" y="24" text-anchor="middle" font-size="15" font-weight="bold" fill="#2c3e50">MODE_CUBEMARS / MODE_ROBOMAS: 独立デバイスとして専用CANバスに最大4台を直接接続</text>
+  <text x="500" y="42" text-anchor="middle" font-size="11" fill="#7f8c8d">（CANホストのノード分配は使わず、この基板だけで専用バス上のアクチュエータを直接駆動する）</text>
+
+  <!-- PC -->
+  <rect x="15" y="130" width="90" height="70" rx="8" fill="#eef2ff" stroke="#34495e" stroke-width="2"/>
+  <text x="60" y="170" text-anchor="middle" font-size="15" fill="#2c3e50">PC</text>
+
+  <line x1="105" y1="165" x2="180" y2="165" stroke="#34495e" stroke-width="2.5"/>
+  <text x="142" y="150" text-anchor="middle" font-size="11" fill="#34495e">USB</text>
+  <text x="142" y="162" text-anchor="middle" font-size="11" fill="#34495e">115200bps</text>
+
+  <!-- board -->
+  <rect x="180" y="100" width="170" height="140" rx="8" fill="#eef7f0" stroke="#1f7a4d" stroke-width="2.5"/>
+  <text x="265" y="122" text-anchor="middle" font-size="13" font-weight="bold" fill="#1f4d33">xiao-esp32-s3_can2io</text>
+  <text x="265" y="140" text-anchor="middle" font-size="11" fill="#1f4d33">MODE_CUBEMARS</text>
+  <text x="265" y="156" text-anchor="middle" font-size="11" fill="#1f4d33">または MODE_ROBOMAS</text>
+  <text x="265" y="176" text-anchor="middle" font-size="10.5" fill="#1f4d33">独立デバイス（own DEVICE_ID）</text>
+  <text x="265" y="192" text-anchor="middle" font-size="10.5" fill="#1f4d33">専用CANバス 1Mbps 固定</text>
+  <text x="265" y="210" text-anchor="middle" font-size="10" fill="#5a6b63">ノード/スロット分配は使わない</text>
+
+  <!-- actuator boxes -->
+  <g id="actuators">
+    <rect x="400" y="100" width="140" height="140" rx="8" fill="#fff2e6" stroke="#c9660d" stroke-width="2"/>
+    <text x="470" y="124" text-anchor="middle" font-size="12.5" font-weight="bold" fill="#7a3c05">アクチュエータ1</text>
+    <text x="470" y="145" text-anchor="middle" font-size="10" fill="#7a3c05">CubeMars: AK40-10等</text>
+    <text x="470" y="158" text-anchor="middle" font-size="10" fill="#7a3c05">RoboMaster: M3508/</text>
+    <text x="470" y="170" text-anchor="middle" font-size="10" fill="#7a3c05">M2006/GM6020</text>
+    <text x="470" y="192" text-anchor="middle" font-size="10" fill="#a23b1e">CubeMars ID=101</text>
+    <text x="470" y="205" text-anchor="middle" font-size="10" fill="#a23b1e">RoboMaster: DJI固定ID</text>
+
+    <rect x="580" y="100" width="140" height="140" rx="8" fill="#fff2e6" stroke="#c9660d" stroke-width="2"/>
+    <text x="650" y="124" text-anchor="middle" font-size="12.5" font-weight="bold" fill="#7a3c05">アクチュエータ2</text>
+    <text x="650" y="145" text-anchor="middle" font-size="10" fill="#7a3c05">CubeMars: AK40-10等</text>
+    <text x="650" y="158" text-anchor="middle" font-size="10" fill="#7a3c05">RoboMaster: M3508/</text>
+    <text x="650" y="170" text-anchor="middle" font-size="10" fill="#7a3c05">M2006/GM6020</text>
+    <text x="650" y="192" text-anchor="middle" font-size="10" fill="#a23b1e">CubeMars ID=102</text>
+    <text x="650" y="205" text-anchor="middle" font-size="10" fill="#a23b1e">RoboMaster: DJI固定ID</text>
+
+    <rect x="760" y="100" width="140" height="140" rx="8" fill="#fff2e6" stroke="#c9660d" stroke-width="2"/>
+    <text x="830" y="124" text-anchor="middle" font-size="12.5" font-weight="bold" fill="#7a3c05">アクチュエータ3・4</text>
+    <text x="830" y="145" text-anchor="middle" font-size="10" fill="#7a3c05">同様に最大4台まで</text>
+    <text x="830" y="158" text-anchor="middle" font-size="10" fill="#7a3c05">デイジーチェーン接続</text>
+    <text x="830" y="192" text-anchor="middle" font-size="10" fill="#a23b1e">CubeMars ID=103,104</text>
+    <text x="830" y="205" text-anchor="middle" font-size="10" fill="#a23b1e">RoboMaster: DJI固定ID</text>
+  </g>
+
+  <!-- CAN bus line -->
+  <line x1="265" y1="280" x2="830" y2="280" stroke="#d35400" stroke-width="4"/>
+  <text x="547" y="270" text-anchor="middle" font-size="11" fill="#d35400">専用CANバス 1Mbps（CAN_H/CAN_L、デイジーチェーン）</text>
+
+  <line x1="265" y1="240" x2="265" y2="280" stroke="#888" stroke-width="2"/>
+  <circle cx="265" cy="280" r="4" fill="#d35400"/>
+  <line x1="470" y1="240" x2="470" y2="280" stroke="#888" stroke-width="2"/>
+  <circle cx="470" cy="280" r="4" fill="#d35400"/>
+  <line x1="650" y1="240" x2="650" y2="280" stroke="#888" stroke-width="2"/>
+  <circle cx="650" cy="280" r="4" fill="#d35400"/>
+  <line x1="830" y1="240" x2="830" y2="280" stroke="#888" stroke-width="2"/>
+  <circle cx="830" cy="280" r="4" fill="#d35400"/>
+
+  <g stroke="#c0392b" stroke-width="2" fill="none">
+    <polyline points="265,300 259,308 271,314 259,320 271,326 265,332"/>
+    <polyline points="830,300 824,308 836,314 824,320 836,326 830,332"/>
+  </g>
+  <text x="279" y="322" font-size="10" fill="#c0392b">終端抵抗</text>
+  <text x="791" y="322" text-anchor="end" font-size="10" fill="#c0392b">終端抵抗</text>
+
+  <text x="500" y="352" text-anchor="middle" font-size="10" fill="#7f8c8d">CAN IDはCubeMars(config.hppのCUBEMARS_MOTOR_ID_n)またはDJI側の固定IDで、host/nodeのCAN_ID体系とは別系統</text>
+</svg>

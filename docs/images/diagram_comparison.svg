@@ -1,0 +1,141 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1100 720" font-family="'Hiragino Sans','Noto Sans JP',sans-serif">
+  <rect x="0" y="0" width="1100" height="720" fill="#ffffff"/>
+
+  <text x="550" y="24" text-anchor="middle" font-size="16" font-weight="bold" fill="#2c3e50">serial_bridge と ros2can の比較</text>
+
+  <!-- panel titles -->
+  <text x="280" y="52" text-anchor="middle" font-size="12.5" fill="#555">従来: serial_bridge（マイコンごとに個別USB接続、星型配線）</text>
+  <text x="855" y="52" text-anchor="middle" font-size="12.5" fill="#555">ros2can（CANデイジーチェーンで配線を集約）</text>
+
+  <!-- ================= LEFT: serial_bridge topology ================= -->
+  <rect x="40" y="110" width="80" height="50" rx="8" fill="#f4f4f4" stroke="#7f8c8d" stroke-width="2"/>
+  <text x="80" y="140" text-anchor="middle" font-size="13" fill="#333">PC</text>
+
+  <!-- 4 MCU boxes, each with its own line back to PC (star) -->
+  <rect x="260" y="45" width="150" height="40" rx="6" fill="#f4f4f4" stroke="#7f8c8d" stroke-width="2"/>
+  <text x="335" y="69" text-anchor="middle" font-size="11" fill="#333">マイコン(ID=6) モータ/サーボ</text>
+  <line x1="120" y1="135" x2="260" y2="65" stroke="#7f8c8d" stroke-width="1.8"/>
+
+  <rect x="260" y="100" width="150" height="40" rx="6" fill="#f4f4f4" stroke="#7f8c8d" stroke-width="2"/>
+  <text x="335" y="124" text-anchor="middle" font-size="11" fill="#333">マイコン(ID=7) エンコーダ/SW</text>
+  <line x1="120" y1="135" x2="260" y2="120" stroke="#7f8c8d" stroke-width="1.8"/>
+
+  <rect x="260" y="155" width="150" height="40" rx="6" fill="#f4f4f4" stroke="#7f8c8d" stroke-width="2"/>
+  <text x="335" y="179" text-anchor="middle" font-size="11" fill="#333">マイコン(ID=8) ...</text>
+  <line x1="120" y1="135" x2="260" y2="175" stroke="#7f8c8d" stroke-width="1.8"/>
+
+  <rect x="260" y="210" width="150" height="40" rx="6" fill="#f4f4f4" stroke="#7f8c8d" stroke-width="2"/>
+  <text x="335" y="234" text-anchor="middle" font-size="11" fill="#333">マイコン(ID=N) ...</text>
+  <line x1="120" y1="135" x2="260" y2="230" stroke="#7f8c8d" stroke-width="1.8"/>
+
+  <text x="240" y="280" text-anchor="middle" font-size="11" fill="#c0392b">配線: マイコン台数分のUSBケーブルを</text>
+  <text x="240" y="296" text-anchor="middle" font-size="11" fill="#c0392b">PCへ個別接続（台数が増えるほど本数が増える）</text>
+
+  <!-- ================= RIGHT: ros2can topology ================= -->
+  <rect x="580" y="130" width="80" height="50" rx="8" fill="#eef2ff" stroke="#34495e" stroke-width="2"/>
+  <text x="620" y="160" text-anchor="middle" font-size="13" fill="#2c3e50">PC</text>
+
+  <line x1="660" y1="155" x2="700" y2="155" stroke="#34495e" stroke-width="2.2"/>
+  <text x="680" y="145" text-anchor="middle" font-size="10" fill="#34495e">USB×1</text>
+
+  <rect x="700" y="115" width="110" height="90" rx="8" fill="#eef7f0" stroke="#1f7a4d" stroke-width="2.2"/>
+  <text x="755" y="145" text-anchor="middle" font-size="11.5" font-weight="bold" fill="#1f4d33">CANホスト</text>
+  <text x="755" y="160" text-anchor="middle" font-size="10" fill="#1f4d33">（ノード0）</text>
+  <text x="755" y="176" text-anchor="middle" font-size="9.5" fill="#5a6b63">自身のI/Oも処理</text>
+
+  <rect x="850" y="115" width="90" height="90" rx="6" fill="#f5f2ff" stroke="#5b3fa0" stroke-width="2"/>
+  <text x="895" y="150" text-anchor="middle" font-size="11" fill="#3a276b">ノード1</text>
+  <text x="895" y="166" text-anchor="middle" font-size="9.5" fill="#3a276b">CAN_ID=102</text>
+
+  <rect x="960" y="115" width="90" height="90" rx="6" fill="#f5f2ff" stroke="#5b3fa0" stroke-width="2"/>
+  <text x="1005" y="150" text-anchor="middle" font-size="11" fill="#3a276b">ノード2</text>
+  <text x="1005" y="166" text-anchor="middle" font-size="9.5" fill="#3a276b">CAN_ID=103</text>
+
+  <text x="1050" y="150" text-anchor="middle" font-size="10" fill="#3a276b">…</text>
+  <text x="1050" y="166" text-anchor="middle" font-size="9">(最大4台)</text>
+
+  <!-- CAN bus line connecting host + nodes (daisy chain) -->
+  <line x1="755" y1="240" x2="1005" y2="240" stroke="#d35400" stroke-width="4"/>
+  <line x1="755" y1="205" x2="755" y2="240" stroke="#888" stroke-width="2"/>
+  <circle cx="755" cy="240" r="4" fill="#d35400"/>
+  <line x1="895" y1="205" x2="895" y2="240" stroke="#888" stroke-width="2"/>
+  <circle cx="895" cy="240" r="4" fill="#d35400"/>
+  <line x1="1005" y1="205" x2="1005" y2="240" stroke="#888" stroke-width="2"/>
+  <circle cx="1005" cy="240" r="4" fill="#d35400"/>
+  <text x="880" y="256" text-anchor="middle" font-size="10" fill="#d35400">CANバス（数珠つなぎ、2本の信号線を渡すだけ）</text>
+
+  <text x="880" y="280" text-anchor="middle" font-size="11" fill="#1f7a4d">配線: USB×1本 ＋ CANデイジーチェーン</text>
+  <text x="880" y="296" text-anchor="middle" font-size="11" fill="#1f7a4d">（台数が増えてもPCへの配線は増えない）</text>
+
+  <!-- ================= comparison table ================= -->
+  <line x1="40" y1="330" x2="1060" y2="330" stroke="#ccc" stroke-width="1"/>
+
+  <!-- header -->
+  <rect x="40" y="345" width="260" height="38" fill="#f0f0f0" stroke="#ccc"/>
+  <rect x="300" y="345" width="380" height="38" fill="#f4f4f4" stroke="#ccc"/>
+  <rect x="680" y="345" width="380" height="38" fill="#eef7f0" stroke="#ccc"/>
+  <text x="170" y="369" text-anchor="middle" font-size="12" font-weight="bold" fill="#333">比較項目</text>
+  <text x="490" y="369" text-anchor="middle" font-size="12" font-weight="bold" fill="#555">serial_bridge</text>
+  <text x="870" y="369" text-anchor="middle" font-size="12" font-weight="bold" fill="#1f4d33">ros2can</text>
+
+  <!-- row template values: label / sb text / r2c text, alternating bg -->
+  <!-- row 1 -->
+  <rect x="40" y="383" width="260" height="42" fill="#ffffff" stroke="#e0e0e0"/>
+  <rect x="300" y="383" width="380" height="42" fill="#ffffff" stroke="#e0e0e0"/>
+  <rect x="680" y="383" width="380" height="42" fill="#ffffff" stroke="#e0e0e0"/>
+  <text x="52" y="409" font-size="11.5" fill="#333">配線</text>
+  <text x="312" y="409" font-size="11" fill="#666">− マイコン台数分のUSBケーブル(星型)</text>
+  <text x="692" y="409" font-size="11" fill="#1f7a4d">○ USB1本＋CANデイジーチェーン(最大4台)</text>
+
+  <!-- row 2 -->
+  <rect x="40" y="425" width="260" height="42" fill="#fafafa" stroke="#e0e0e0"/>
+  <rect x="300" y="425" width="380" height="42" fill="#fafafa" stroke="#e0e0e0"/>
+  <rect x="680" y="425" width="380" height="42" fill="#fafafa" stroke="#e0e0e0"/>
+  <text x="52" y="451" font-size="11.5" fill="#333">GUI</text>
+  <text x="312" y="451" font-size="11" fill="#666">− 無し（テキスト/グラフィカルログのみ）</text>
+  <text x="692" y="451" font-size="11" fill="#1f7a4d">○ PyQt5 GUI標準搭載（Control/Monitor/Raw/Info）</text>
+
+  <!-- row 3 -->
+  <rect x="40" y="467" width="260" height="42" fill="#ffffff" stroke="#e0e0e0"/>
+  <rect x="300" y="467" width="380" height="42" fill="#ffffff" stroke="#e0e0e0"/>
+  <rect x="680" y="467" width="380" height="42" fill="#ffffff" stroke="#e0e0e0"/>
+  <text x="52" y="493" font-size="11.5" fill="#333">実機無しでの動作確認</text>
+  <text x="312" y="493" font-size="11" fill="#666">− 非対応</text>
+  <text x="692" y="493" font-size="11" fill="#1f7a4d">○ 仮想デバイス機能で対応</text>
+
+  <!-- row 4 -->
+  <rect x="40" y="509" width="260" height="42" fill="#fafafa" stroke="#e0e0e0"/>
+  <rect x="300" y="509" width="380" height="42" fill="#fafafa" stroke="#e0e0e0"/>
+  <rect x="680" y="509" width="380" height="42" fill="#fafafa" stroke="#e0e0e0"/>
+  <text x="52" y="535" font-size="11.5" fill="#333">専用アクチュエータ対応</text>
+  <text x="312" y="535" font-size="11" fill="#666">− 非対応（汎用モータ/サーボ/TRのみ）</text>
+  <text x="692" y="535" font-size="11" fill="#1f7a4d">○ CubeMars AK・DJIロボマス専用ドライバ内蔵</text>
+
+  <!-- row 5 -->
+  <rect x="40" y="551" width="260" height="42" fill="#ffffff" stroke="#e0e0e0"/>
+  <rect x="300" y="551" width="380" height="42" fill="#ffffff" stroke="#e0e0e0"/>
+  <rect x="680" y="551" width="380" height="42" fill="#ffffff" stroke="#e0e0e0"/>
+  <text x="52" y="577" font-size="11.5" fill="#333">安全機能</text>
+  <text x="312" y="577" font-size="11" fill="#666">− 無し（受信した指令を即時反映）</text>
+  <text x="692" y="577" font-size="11" fill="#1f7a4d">○ ダイレクト送信ON/OFF・全デバイスE-STOP</text>
+
+  <!-- row 6 -->
+  <rect x="40" y="593" width="260" height="42" fill="#fafafa" stroke="#e0e0e0"/>
+  <rect x="300" y="593" width="380" height="42" fill="#fafafa" stroke="#e0e0e0"/>
+  <rect x="680" y="593" width="380" height="42" fill="#fafafa" stroke="#e0e0e0"/>
+  <text x="52" y="619" font-size="11.5" fill="#333">ファームウェア書き込み</text>
+  <text x="312" y="619" font-size="11" fill="#666">− 手動（PlatformIO CLI）</text>
+  <text x="692" y="619" font-size="11" fill="#1f7a4d">○ GUIから設定を生成して書き込み</text>
+
+  <!-- row 7 -->
+  <rect x="40" y="635" width="260" height="42" fill="#ffffff" stroke="#e0e0e0"/>
+  <rect x="300" y="635" width="380" height="42" fill="#ffffff" stroke="#e0e0e0"/>
+  <rect x="680" y="635" width="380" height="42" fill="#ffffff" stroke="#e0e0e0"/>
+  <text x="52" y="661" font-size="11.5" fill="#333">既存トピックとの互換性</text>
+  <text x="312" y="661" font-size="11" fill="#1f7a4d">○ serial_tx/rx_[ID]（基準側）</text>
+  <text x="692" y="661" font-size="11" fill="#1f7a4d">○ 同一形式のため移行・併用が容易</text>
+
+  <rect x="40" y="345" width="1020" height="332" fill="none" stroke="#ccc" stroke-width="1"/>
+
+  <text x="550" y="705" text-anchor="middle" font-size="10" fill="#7f8c8d">ros2canは serial_bridge のトピック互換を保っているため、既存ノードを流用しつつ段階的に移行できます</text>
+</svg>

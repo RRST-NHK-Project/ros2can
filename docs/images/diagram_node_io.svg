@@ -1,0 +1,87 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 780 800" font-family="'Hiragino Sans','Noto Sans JP',sans-serif">
+  <rect x="0" y="0" width="780" height="800" fill="#ffffff"/>
+
+  <text x="390" y="26" text-anchor="middle" font-size="15" font-weight="bold" fill="#2c3e50">1ノードあたりのセンサ／アクチュエータ接続（ピン共有、BOARD_SOKI）</text>
+
+  <!-- node box -->
+  <rect x="30" y="110" width="200" height="620" rx="8" fill="#f5f2ff" stroke="#5b3fa0" stroke-width="2.5"/>
+  <text x="130" y="140" text-anchor="middle" font-size="13" font-weight="bold" fill="#3a276b">CANノード</text>
+  <text x="130" y="158" text-anchor="middle" font-size="10.5" fill="#3a276b">xiao-esp32-s3_can2io</text>
+  <text x="130" y="174" text-anchor="middle" font-size="10.5" fill="#3a276b">BOARD_SOKI / MODE_CAN</text>
+  <text x="130" y="196" text-anchor="middle" font-size="11" font-weight="bold" fill="#a23b1e">CAN_ID = 10n</text>
+
+  <!-- port groups -->
+  <!-- helper values: py for MULTI1,2,3 / ENC1,2 = 170,300,430,560,690 -->
+
+  <!-- MULTI1 -->
+  <line x1="230" y1="170" x2="350" y2="170" stroke="#555" stroke-width="2"/>
+  <text x="235" y="160" font-size="11" fill="#333">MULTI1</text>
+  <circle cx="350" cy="170" r="4" fill="#555"/>
+  <line x1="350" y1="145" x2="350" y2="195" stroke="#555" stroke-width="2"/>
+  <line x1="350" y1="145" x2="420" y2="145" stroke="#555" stroke-width="2"/>
+  <line x1="350" y1="195" x2="420" y2="195" stroke="#555" stroke-width="2"/>
+  <rect x="420" y="120" width="280" height="50" rx="6" fill="#eaf3ff" stroke="#2b6cb0" stroke-width="2"/>
+  <text x="440" y="141" font-size="12.5" fill="#1a3f66">SW1　スイッチ入力</text>
+  <text x="440" y="158" font-size="10.5" fill="#1a3f66">(MULTI1 = 0)　センサ帰還</text>
+  <rect x="420" y="195" width="280" height="50" rx="6" fill="#fff2e6" stroke="#c9660d" stroke-width="2"/>
+  <text x="440" y="216" font-size="12.5" fill="#7a3c05">SERVO1　サーボ出力</text>
+  <text x="440" y="233" font-size="10.5" fill="#7a3c05">(MULTI1 = 1)　指令送信</text>
+
+  <!-- MULTI2 -->
+  <line x1="230" y1="300" x2="350" y2="300" stroke="#555" stroke-width="2"/>
+  <text x="235" y="290" font-size="11" fill="#333">MULTI2</text>
+  <circle cx="350" cy="300" r="4" fill="#555"/>
+  <line x1="350" y1="275" x2="350" y2="325" stroke="#555" stroke-width="2"/>
+  <line x1="350" y1="275" x2="420" y2="275" stroke="#555" stroke-width="2"/>
+  <line x1="350" y1="325" x2="420" y2="325" stroke="#555" stroke-width="2"/>
+  <rect x="420" y="250" width="280" height="50" rx="6" fill="#eaf3ff" stroke="#2b6cb0" stroke-width="2"/>
+  <text x="440" y="271" font-size="12.5" fill="#1a3f66">SW2　スイッチ入力</text>
+  <text x="440" y="288" font-size="10.5" fill="#1a3f66">(MULTI2 = 0)　センサ帰還</text>
+  <rect x="420" y="325" width="280" height="50" rx="6" fill="#fff2e6" stroke="#c9660d" stroke-width="2"/>
+  <text x="440" y="346" font-size="12.5" fill="#7a3c05">SERVO2　サーボ出力</text>
+  <text x="440" y="363" font-size="10.5" fill="#7a3c05">(MULTI2 = 1)　指令送信</text>
+
+  <!-- MULTI3 -->
+  <line x1="230" y1="430" x2="350" y2="430" stroke="#555" stroke-width="2"/>
+  <text x="235" y="420" font-size="11" fill="#333">MULTI3</text>
+  <circle cx="350" cy="430" r="4" fill="#555"/>
+  <line x1="350" y1="405" x2="350" y2="455" stroke="#555" stroke-width="2"/>
+  <line x1="350" y1="405" x2="420" y2="405" stroke="#555" stroke-width="2"/>
+  <line x1="350" y1="455" x2="420" y2="455" stroke="#555" stroke-width="2"/>
+  <rect x="420" y="380" width="280" height="50" rx="6" fill="#eaf3ff" stroke="#2b6cb0" stroke-width="2"/>
+  <text x="440" y="401" font-size="12.5" fill="#1a3f66">SW3　スイッチ入力</text>
+  <text x="440" y="418" font-size="10.5" fill="#1a3f66">(MULTI3 = 0)　センサ帰還</text>
+  <rect x="420" y="455" width="280" height="50" rx="6" fill="#fff2e6" stroke="#c9660d" stroke-width="2"/>
+  <text x="440" y="476" font-size="12.5" fill="#7a3c05">SERVO3　サーボ出力</text>
+  <text x="440" y="493" font-size="10.5" fill="#7a3c05">(MULTI3 = 1)　指令送信</text>
+
+  <!-- ENC1 -->
+  <line x1="230" y1="560" x2="350" y2="560" stroke="#555" stroke-width="2"/>
+  <text x="235" y="550" font-size="11" fill="#333">ENC1</text>
+  <circle cx="350" cy="560" r="4" fill="#555"/>
+  <line x1="350" y1="535" x2="350" y2="585" stroke="#555" stroke-width="2"/>
+  <line x1="350" y1="535" x2="420" y2="535" stroke="#555" stroke-width="2"/>
+  <line x1="350" y1="585" x2="420" y2="585" stroke="#555" stroke-width="2"/>
+  <rect x="420" y="510" width="280" height="50" rx="6" fill="#eaf3ff" stroke="#2b6cb0" stroke-width="2"/>
+  <text x="440" y="531" font-size="12.5" fill="#1a3f66">ENC1　エンコーダ入力</text>
+  <text x="440" y="548" font-size="10.5" fill="#1a3f66">(ENC1_MD = 0)　センサ帰還</text>
+  <rect x="420" y="585" width="280" height="50" rx="6" fill="#fff2e6" stroke="#c9660d" stroke-width="2"/>
+  <text x="440" y="606" font-size="12.5" fill="#7a3c05">MD1　モータ出力(PWM+DIR)</text>
+  <text x="440" y="623" font-size="10.5" fill="#7a3c05">(ENC1_MD = 1)　指令送信・帰還無し</text>
+
+  <!-- ENC2 -->
+  <line x1="230" y1="690" x2="350" y2="690" stroke="#555" stroke-width="2"/>
+  <text x="235" y="680" font-size="11" fill="#333">ENC2</text>
+  <circle cx="350" cy="690" r="4" fill="#555"/>
+  <line x1="350" y1="665" x2="350" y2="715" stroke="#555" stroke-width="2"/>
+  <line x1="350" y1="665" x2="420" y2="665" stroke="#555" stroke-width="2"/>
+  <line x1="350" y1="715" x2="420" y2="715" stroke="#555" stroke-width="2"/>
+  <rect x="420" y="640" width="280" height="50" rx="6" fill="#eaf3ff" stroke="#2b6cb0" stroke-width="2"/>
+  <text x="440" y="661" font-size="12.5" fill="#1a3f66">ENC2　エンコーダ入力</text>
+  <text x="440" y="678" font-size="10.5" fill="#1a3f66">(ENC2_MD = 0)　センサ帰還</text>
+  <rect x="420" y="715" width="280" height="50" rx="6" fill="#fff2e6" stroke="#c9660d" stroke-width="2"/>
+  <text x="440" y="736" font-size="12.5" fill="#7a3c05">MD2　モータ出力(PWM+DIR)</text>
+  <text x="440" y="753" font-size="10.5" fill="#7a3c05">(ENC2_MD = 1)　指令送信・帰還無し</text>
+
+  <text x="390" y="785" text-anchor="middle" font-size="10.5" fill="#7f8c8d">1つの物理ピンをどちらで使うかは firmware の config.hpp（MULTIn / ENCn_MD）でコンパイル時に固定します</text>
+</svg>

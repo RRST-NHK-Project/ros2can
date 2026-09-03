@@ -1,0 +1,80 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1000 340" font-family="'Hiragino Sans','Noto Sans JP',sans-serif">
+  <rect x="0" y="0" width="1000" height="340" fill="#ffffff"/>
+
+  <!-- title -->
+  <text x="500" y="26" text-anchor="middle" font-size="16" font-weight="bold" fill="#2c3e50">CANホスト＋ノードのデイジーチェーン接続（既定プロファイル、4ノード構成）</text>
+
+  <!-- PC -->
+  <rect x="15" y="120" width="90" height="70" rx="8" fill="#eef2ff" stroke="#34495e" stroke-width="2"/>
+  <text x="60" y="160" text-anchor="middle" font-size="15" fill="#2c3e50">PC</text>
+
+  <!-- USB line -->
+  <line x1="105" y1="155" x2="180" y2="155" stroke="#34495e" stroke-width="2.5"/>
+  <text x="142" y="140" text-anchor="middle" font-size="11" fill="#34495e">USB</text>
+  <text x="142" y="152" text-anchor="middle" font-size="11" fill="#34495e">115200bps</text>
+
+  <!-- Host box -->
+  <rect x="180" y="90" width="170" height="140" rx="8" fill="#eef7f0" stroke="#1f7a4d" stroke-width="2.5"/>
+  <text x="265" y="112" text-anchor="middle" font-size="13" font-weight="bold" fill="#1f4d33">CANホスト</text>
+  <text x="265" y="130" text-anchor="middle" font-size="10.5" fill="#1f4d33">xiao_esp32_s3_smd_</text>
+  <text x="265" y="143" text-anchor="middle" font-size="10.5" fill="#1f4d33">serial_bridge</text>
+  <text x="265" y="156" text-anchor="middle" font-size="10.5" fill="#1f4d33">MODE_CAN_HOST</text>
+  <text x="265" y="173" text-anchor="middle" font-size="11" font-weight="bold" fill="#a23b1e">CAN_ID=101（ノード0）</text>
+  <text x="265" y="192" text-anchor="middle" font-size="10" fill="#1f4d33">SERVO1-3 / SW1-3</text>
+  <text x="265" y="204" text-anchor="middle" font-size="10" fill="#1f4d33">ENC1-2（自身の分も直接処理）</text>
+  <text x="265" y="219" text-anchor="middle" font-size="9.5" fill="#5a6b63">※ホストもノード0として動作</text>
+
+  <!-- Node boxes -->
+  <g id="nodes">
+    <!-- Node1 -->
+    <rect x="400" y="90" width="150" height="140" rx="8" fill="#f5f2ff" stroke="#5b3fa0" stroke-width="2"/>
+    <text x="475" y="115" text-anchor="middle" font-size="13" font-weight="bold" fill="#3a276b">ノード1</text>
+    <text x="475" y="133" text-anchor="middle" font-size="10.5" fill="#3a276b">xiao-esp32-s3_can2io</text>
+    <text x="475" y="146" text-anchor="middle" font-size="10.5" fill="#3a276b">MODE_CAN</text>
+    <text x="475" y="163" text-anchor="middle" font-size="11" font-weight="bold" fill="#a23b1e">CAN_ID=102</text>
+    <text x="475" y="182" text-anchor="middle" font-size="10" fill="#3a276b">SERVO1-3 / SW1-3</text>
+    <text x="475" y="196" text-anchor="middle" font-size="10" fill="#3a276b">ENC1-2（またはMD1-2）</text>
+
+    <!-- Node2 -->
+    <rect x="580" y="90" width="150" height="140" rx="8" fill="#f5f2ff" stroke="#5b3fa0" stroke-width="2"/>
+    <text x="655" y="115" text-anchor="middle" font-size="13" font-weight="bold" fill="#3a276b">ノード2</text>
+    <text x="655" y="133" text-anchor="middle" font-size="10.5" fill="#3a276b">xiao-esp32-s3_can2io</text>
+    <text x="655" y="146" text-anchor="middle" font-size="10.5" fill="#3a276b">MODE_CAN</text>
+    <text x="655" y="163" text-anchor="middle" font-size="11" font-weight="bold" fill="#a23b1e">CAN_ID=103</text>
+    <text x="655" y="182" text-anchor="middle" font-size="10" fill="#3a276b">SERVO1-3 / SW1-3</text>
+    <text x="655" y="196" text-anchor="middle" font-size="10" fill="#3a276b">ENC1-2（またはMD1-2）</text>
+
+    <!-- Node3 -->
+    <rect x="760" y="90" width="150" height="140" rx="8" fill="#f5f2ff" stroke="#5b3fa0" stroke-width="2"/>
+    <text x="835" y="115" text-anchor="middle" font-size="13" font-weight="bold" fill="#3a276b">ノード3</text>
+    <text x="835" y="133" text-anchor="middle" font-size="10.5" fill="#3a276b">xiao-esp32-s3_can2io</text>
+    <text x="835" y="146" text-anchor="middle" font-size="10.5" fill="#3a276b">MODE_CAN</text>
+    <text x="835" y="163" text-anchor="middle" font-size="11" font-weight="bold" fill="#a23b1e">CAN_ID=104</text>
+    <text x="835" y="182" text-anchor="middle" font-size="10" fill="#3a276b">SERVO1-3 / SW1-3</text>
+    <text x="835" y="196" text-anchor="middle" font-size="10" fill="#3a276b">ENC1-2（またはMD1-2）</text>
+  </g>
+
+  <!-- CAN bus line -->
+  <line x1="265" y1="280" x2="835" y2="280" stroke="#d35400" stroke-width="4"/>
+  <text x="550" y="270" text-anchor="middle" font-size="11" fill="#d35400">CANバス（CAN_H/CAN_L のペア線、1本の線に全ノードがぶら下がる＝デイジーチェーン）</text>
+
+  <!-- taps -->
+  <line x1="265" y1="230" x2="265" y2="280" stroke="#888" stroke-width="2"/>
+  <circle cx="265" cy="280" r="4" fill="#d35400"/>
+  <line x1="475" y1="230" x2="475" y2="280" stroke="#888" stroke-width="2"/>
+  <circle cx="475" cy="280" r="4" fill="#d35400"/>
+  <line x1="655" y1="230" x2="655" y2="280" stroke="#888" stroke-width="2"/>
+  <circle cx="655" cy="280" r="4" fill="#d35400"/>
+  <line x1="835" y1="230" x2="835" y2="280" stroke="#888" stroke-width="2"/>
+  <circle cx="835" cy="280" r="4" fill="#d35400"/>
+
+  <!-- termination resistors at both bus ends -->
+  <g stroke="#c0392b" stroke-width="2" fill="none">
+    <polyline points="265,300 259,308 271,314 259,320 271,326 265,332"/>
+    <polyline points="835,300 829,308 841,314 829,320 841,326 835,332"/>
+  </g>
+  <text x="265" y="322" text-anchor="start" dx="14" font-size="10" fill="#c0392b">終端抵抗 120Ω</text>
+  <text x="835" y="322" text-anchor="end" dx="-14" font-size="10" fill="#c0392b">終端抵抗 120Ω</text>
+
+  <text x="500" y="330" text-anchor="middle" font-size="10" fill="#7f8c8d">バス両端の機器で終端抵抗を有効化し、中間のノードでは無効にする</text>
+</svg>
