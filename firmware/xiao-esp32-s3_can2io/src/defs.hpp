@@ -23,6 +23,9 @@ Copyright (c) 2025 RRST-NHK-Project. All rights reserved.
 #define HALF_PPR (PPR / 2)
 
 // ピンの定義 //
+// 基板(BOARD_VARIANT、config.hpp)ごとに配置が異なる。
+#if BOARD_VARIANT == BOARD_SOKI
+
 // 状態表示LED
 #define LED 21
 
@@ -51,6 +54,58 @@ Copyright (c) 2025 RRST-NHK-Project. All rights reserved.
 // CAN (MCP2561 + TWAI)
 #define CAN_RX 2
 #define CAN_TX 1
+
+#elif BOARD_VARIANT == BOARD_MES
+
+// 状態表示LED
+#define LED 21
+
+// エンコーダ
+#define ENC1_A 5
+#define ENC1_B 6
+#define ENC2_A 7 // SW2のピンと共有
+#define ENC2_B 8 // SW3のピンと共有
+
+// MD (SOKI基板と異なりENCとピンを共有しない、常時専用ピン)
+#define MD1P 1
+#define MD1D 3
+#define MD2P 2
+#define MD2D 4
+
+// スイッチ (ENC2とピン共有。config.hppのENC2_SWで切替)
+#define SW1 9
+#define SW2 7 // ENC2_Aのピンと共有
+#define SW3 8 // ENC2_Bのピンと共有
+
+// CAN (MCP2561 + TWAI)
+#define CAN_RX 44
+#define CAN_TX 43
+
+#elif BOARD_VARIANT == BOARD_SS
+
+// 状態表示LED
+#define LED 21
+
+// サーボ (5ch、常時サーボ出力。MULTIによる切替なし)
+#define SERVO1 1
+#define SERVO2 2
+#define SERVO3 3
+#define SERVO4 4
+#define SERVO5 5
+
+// ソレノイドバルブ (デジタルON/OFF、0以外でON。pin_ctrl_task.cppのIO_TR_Output参照)
+#define TR1 6
+#define TR2 7
+#define TR3 8
+#define TR4 9
+
+// CAN (MCP2561 + TWAI)
+#define CAN_RX 44
+#define CAN_TX 43
+
+#else
+#error "BOARD_VARIANT: unknown board"
+#endif
 
 // MD用
 #define MD_PWM_MAX ((1 << MD_PWM_RESOLUTION) - 1)

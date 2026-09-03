@@ -266,33 +266,28 @@ static void canRecvAllNodeSlotBlocks(int16_t *buffer) {
 static void applyNodeSlotBlockToLocalControl(const int16_t *slot_buffer, uint8_t node_index) {
     // 受信したノードデータをローカル制御用配列へ反映する
     // slot_indexはslot_buffer（全ノード分, CAN_NODE_COUNT*CAN_SLOTS_PER_NODE要素）内の絶対位置なので、
-    // 書き込み先のCanIoRxData（5要素）ではなく全体サイズと比較すること
+    // 書き込み先のCanIoRxData（CAN_IO_SLOT_COUNT要素、基板ごとに異なる）ではなく全体サイズと比較すること
     const uint8_t slot_offset = node_index * CAN_SLOTS_PER_NODE;
     constexpr uint8_t kSlotBufferSize = CAN_NODE_COUNT * CAN_SLOTS_PER_NODE;
 
-    for (uint8_t i = 0; i < 4; i++) {
+    for (uint8_t i = 0; i < CAN_IO_SLOT_COUNT; i++) {
         const uint8_t slot_index = slot_offset + i;
         if (slot_index < kSlotBufferSize) {
             CanIoRxData[i] = slot_buffer[slot_index];
         }
     }
-
-    if (slot_offset + 4 < kSlotBufferSize) {
-        CanIoRxData[4] = slot_buffer[slot_offset + 4];
-    }
 }
 
 static void buildNodeSlotBlockFromLocalFeedback(int16_t *slot_buffer, uint8_t node_index) {
     // ローカルのフィードバック情報をCAN送信用バッファへ組み立てる
-    // 5スロットの順序は SW1, SW2, SW3, ENC1, ENC2 とする
+    // スロット順序・意味は基板(BOARD_VARIANT)ごとに異なる。frame_data.hppのCanIoTxData
+    // コメント参照。
     const uint8_t slot_offset = node_index * CAN_SLOTS_PER_NODE;
 
-    if (slot_offset + 4 < Tx16NUM) {
-        slot_buffer[slot_offset + 0] = CanIoTxData[0];
-        slot_buffer[slot_offset + 1] = CanIoTxData[1];
-        slot_buffer[slot_offset + 2] = CanIoTxData[2];
-        slot_buffer[slot_offset + 3] = CanIoTxData[3];
-        slot_buffer[slot_offset + 4] = CanIoTxData[4];
+    for (uint8_t i = 0; i < CAN_IO_SLOT_COUNT; i++) {
+        if (slot_offset + i < Tx16NUM) {
+            slot_buffer[slot_offset + i] = CanIoTxData[i];
+        }
     }
 }
 

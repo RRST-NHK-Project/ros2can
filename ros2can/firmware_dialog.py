@@ -2,9 +2,11 @@
 generated_firmware/<名前>/ へ生成し、そのまま同じ画面から実機へ書き込む(pio run -t
 upload)ダイアログ。
 
-生成: DEVICE_ID・CAN_ID・MODE_*・MULTI1-3・ENC1_MD/ENC2_MD・サーボ設定(SERVOn_*)・
-高度な設定(ADVANCED_MACROS、既定では折りたたみ)だけをGUIで編集し、それ以外
-(ROBOMASのPIDゲイン等、実測でチューニングされた値を含む)には一切触れない。テンプレート
+生成: DEVICE_ID・CAN_ID・MODE_*・BOARD_VARIANT・MULTI1-3・ENC1_MD/ENC2_MD・ENC2_SW・
+サーボ設定(SERVOn_*、n=1-5)・高度な設定(ADVANCED_MACROS、既定では折りたたみ)だけを
+GUIで編集し、それ以外(ROBOMASのPIDゲイン等、実測でチューニングされた値を含む。
+BOARD_VARIANTごとに#if分岐するCAN_NODE_COUNT/CAN_SLOTS_PER_NODEも同じ理由で対象外)
+には一切触れない。テンプレート
 自体は書き換えず、常にプロジェクト一式を generated_firmware/ 配下の名前付きフォルダへ
 コピーしてから、そのコピー内の config.hpp だけを書き換える。generated_firmware/ は
 Git管理下(生成物として履歴に残す)。不要になった生成物はこのダイアログの「削除」から
@@ -52,6 +54,12 @@ _MODE_LABELS = {
     "CAN_MONITOR": "CANモニター",
     "ROBOMAS": "ロボマス(DJI RoboMaster)",
     "CUBEMARS": "CubeMars AK",
+}
+
+_BOARD_LABELS = {
+    "BOARD_SOKI": "SOKI (soki本体基板、既存のピン配置)",
+    "BOARD_MES": "MES (ENC1/ENC2/MD1/MD2 + SW1)",
+    "BOARD_SS": "SS (SERVO1-5 + TR1-4 ソレノイドバルブ)",
 }
 
 
@@ -135,7 +143,7 @@ class FirmwareDialog(QDialog):
     def __init__(self, hardware_manager: HardwareManager, parent=None):
         super().__init__(parent)
         self.setWindowTitle("ファームウェア生成・書き込み")
-        self.resize(700, 820)
+        self.resize(1300, 820)
         self._hardware_manager = hardware_manager
         self._cfg: Optional[FirmwareConfig] = None
         self._template_text: str = ""
@@ -146,27 +154,31 @@ class FirmwareDialog(QDialog):
 
         layout = QVBoxLayout(self)
 
-        # ==================== 生成 ====================
-        layout.addWidget(_section_label("生成"))
+        panels_row = QHBoxLayout()
+
+        # ==================== 生成 (左) ====================
+        gen_panel = QVBoxLayout()
+        gen_panel.addWidget(_section_label("生成"))
 
         gen_note = QLabel(
-            "xiao-esp32-s3_can2io をテンプレートに、DEVICE_ID・CAN_ID・モード・"
-            "MULTI1-3・ENC1_MD/ENC2_MD・サーボ設定・高度な設定を反映したプロジェクト"
-            "一式を generated_firmware/<名前>/ へ生成します(テンプレート自体は"
-            "書き換えません)。ROBOMASのPIDゲイン等、その他の設定(チューニング値)には"
-            "一切触れません。")
+            "xiao-esp32-s3_can2io をテンプレートに、DEVICE_ID・CAN_ID・モード・基板"
+            "(BOARD_VARIANT)・MULTI1-3・ENC1_MD/ENC2_MD/ENC2_SW・サーボ設定・高度な設定を"
+            "反映したプロジェクト一式を generated_firmware/<名前>/ へ生成します"
+            "(テンプレート自体は書き換えません)。ROBOMASのPIDゲイン等、その他の設定"
+            "(チューニング値)には一切触れません。")
         gen_note.setWordWrap(True)
         gen_note.setStyleSheet("color: #5f6368;")
-        layout.addWidget(gen_note)
+        gen_panel.addWidget(gen_note)
 
         gen_scroll = QScrollArea()
         gen_scroll.setWidgetResizable(True)
         gen_scroll.setFrameShape(QFrame.NoFrame)
+        gen_scroll.setMinimumWidth(420)
         gen_container = QWidget()
         gen_layout = QVBoxLayout(gen_container)
         gen_layout.setContentsMargins(0, 0, 0, 0)
         gen_scroll.setWidget(gen_container)
-        layout.addWidget(gen_scroll, 1)
+        gen_panel.addWidget(gen_scroll, 1)
 
         template_row = QHBoxLayout()
         self.template_edit = QLineEdit()
@@ -200,6 +212,12 @@ class FirmwareDialog(QDialog):
         self.mode_combo = QComboBox()
         form.addRow("MODE:", self.mode_combo)
 
+        self.board_combo = QComboBox()
+        self.board_combo.setToolTip(
+            "書き込み先の物理基板を選択してください。ピン配置(defs.hpp)と入出力"
+            "ロジックが基板ごとに切り替わります(BOARD_MES/BOARD_SSはMODE_IO非対応)。")
+        form.addRow("BOARD_VARIANT:", self.board_combo)
+
         self.multi_combos = []
         for i in range(3):
             combo = QComboBox()
@@ -216,13 +234,23 @@ class FirmwareDialog(QDialog):
             self.enc_md_combos.append(combo)
             form.addRow(f"ENC{i + 1}_MD:", combo)
 
+        self.enc2_sw_combo = QComboBox()
+        self.enc2_sw_combo.addItem("ENC2 (エンコーダ) (0)", 0)
+        self.enc2_sw_combo.addItem("SW2/SW3 (スイッチ) (1)", 1)
+        self.enc2_sw_combo.setToolTip(
+            "BOARD_MES専用。ENC2とSW2/SW3はピン共有のため、どちらで使うかを選択します。"
+            "他のBOARD_VARIANTでは無視されます。")
+        form.addRow("ENC2_SW (BOARD_MES専用):", self.enc2_sw_combo)
+
         gen_layout.addLayout(form)
 
-        # ---- サーボ設定 (SERVO1-4) ----
+        # ---- サーボ設定 (SERVO1-5) ----
         gen_layout.addWidget(_section_label("サーボ設定"))
         servo_note = QLabel(
             "SERVOn_MIN_US/MAX_US(パルス幅) と MIN_DEG/MAX_DEG/INIT_DEG(角度) を"
-            "サーボごとに設定します。MULTIn=1(サーボ出力)のチャンネルのみ有効です。")
+            "サーボごとに設定します。BOARD_SOKIではMULTIn=1(サーボ出力)のチャンネルの"
+            "みSERVO1-3が有効、BOARD_SSではSERVO1-5が常時有効です(SERVO4/5は"
+            "BOARD_SOKI/BOARD_MESでは未配線・未使用)。")
         servo_note.setWordWrap(True)
         servo_note.setStyleSheet("color: #5f6368;")
         gen_layout.addWidget(servo_note)
@@ -232,7 +260,7 @@ class FirmwareDialog(QDialog):
         self.servo_min_deg_spins: List[QSpinBox] = []
         self.servo_max_deg_spins: List[QSpinBox] = []
         self.servo_init_deg_spins: List[QSpinBox] = []
-        for i in range(4):
+        for i in range(5):
             box = QGroupBox(f"SERVO{i + 1}")
             servo_form = QFormLayout(box)
 
@@ -297,12 +325,14 @@ class FirmwareDialog(QDialog):
         self.enable_led_combo.addItem("有効 (1)", 1)
         advanced_form.addRow("ENABLE_LED:", self.enable_led_combo)
 
-        self.can_node_count_spin = QSpinBox()
-        self.can_node_count_spin.setRange(1, 4)
-        self.can_node_count_spin.setToolTip(
-            "実際にCANバスへ接続されているノード数(ホスト自身を含む)に必ず合わせる"
-            "こと。多すぎると存在しないノード宛のACKエラーでBus-Offに陥る。")
-        advanced_form.addRow("CAN_NODE_COUNT:", self.can_node_count_spin)
+        can_node_count_note = QLabel(
+            "CAN_NODE_COUNT / CAN_SLOTS_PER_NODE はBOARD_VARIANTごとにconfig.hpp内で"
+            "#if分岐しているため、このGUIからは編集できません(BOARD_SOKI/BOARD_MES: "
+            "4ノード×5スロット、BOARD_SS: 2ノード×9スロット)。実際の接続台数に合わせて"
+            "変更したい場合は生成後のプロジェクトのsrc/config.hppを直接編集してください。")
+        can_node_count_note.setWordWrap(True)
+        can_node_count_note.setStyleSheet("color: #5f6368;")
+        advanced_form.addRow("CAN_NODE_COUNT:", can_node_count_note)
 
         self.can_host_diag_enable_combo = QComboBox()
         self.can_host_diag_enable_combo.addItem("無効 (0)", 0)
@@ -322,20 +352,23 @@ class FirmwareDialog(QDialog):
         gen_button_row.addWidget(self.generate_btn)
         gen_layout.addLayout(gen_button_row)
 
-        divider = QFrame()
-        divider.setFrameShape(QFrame.HLine)
-        divider.setFrameShadow(QFrame.Sunken)
-        layout.addWidget(divider)
+        panels_row.addLayout(gen_panel, 3)
 
-        # ==================== 書き込み ====================
-        layout.addWidget(_section_label("書き込み"))
+        vdivider = QFrame()
+        vdivider.setFrameShape(QFrame.VLine)
+        vdivider.setFrameShadow(QFrame.Sunken)
+        panels_row.addWidget(vdivider)
+
+        # ==================== 書き込み (右) ====================
+        flash_panel = QVBoxLayout()
+        flash_panel.addWidget(_section_label("書き込み"))
 
         flash_note = QLabel(
             "生成済みのプロジェクトを、選択したポートへ pio run -t upload で書き込みます。"
             "書き込み中は対象ポートの他の通信は一時的に停止します。")
         flash_note.setWordWrap(True)
         flash_note.setStyleSheet("color: #5f6368;")
-        layout.addWidget(flash_note)
+        flash_panel.addWidget(flash_note)
 
         project_row = QHBoxLayout()
         project_row.addWidget(QLabel("プロジェクト:"))
@@ -348,7 +381,7 @@ class FirmwareDialog(QDialog):
         self.delete_project_btn.setToolTip("選択中の生成物(generated_firmware/<名前>/)を削除します。")
         self.delete_project_btn.clicked.connect(self._on_delete_project)
         project_row.addWidget(self.delete_project_btn)
-        layout.addLayout(project_row)
+        flash_panel.addLayout(project_row)
 
         port_row = QHBoxLayout()
         port_row.addWidget(QLabel("ポート:"))
@@ -357,13 +390,13 @@ class FirmwareDialog(QDialog):
         refresh_ports_btn = QPushButton("再スキャン")
         refresh_ports_btn.clicked.connect(self._refresh_ports)
         port_row.addWidget(refresh_ports_btn)
-        layout.addLayout(port_row)
+        flash_panel.addLayout(port_row)
 
         self.log_view = QPlainTextEdit()
         self.log_view.setReadOnly(True)
         self.log_view.setStyleSheet("font-family: monospace; font-size: 9pt;")
         self.log_view.setMaximumBlockCount(MAX_LOG_LINES)
-        layout.addWidget(self.log_view, 1)
+        flash_panel.addWidget(self.log_view, 1)
 
         button_row = QHBoxLayout()
         self.write_btn = QPushButton("書き込み")
@@ -377,7 +410,10 @@ class FirmwareDialog(QDialog):
         self.close_btn = QPushButton("閉じる")
         self.close_btn.clicked.connect(self.accept)
         button_row.addWidget(self.close_btn)
-        layout.addLayout(button_row)
+        flash_panel.addLayout(button_row)
+
+        panels_row.addLayout(flash_panel, 2)
+        layout.addLayout(panels_row, 1)
 
         initial_template = settings_store.load_settings().get("firmware_template_dir", "") \
             or guess_template_dir()
@@ -422,10 +458,18 @@ class FirmwareDialog(QDialog):
         if idx >= 0:
             self.mode_combo.setCurrentIndex(idx)
 
+        self.board_combo.clear()
+        for name in cfg.available_boards:
+            self.board_combo.addItem(_BOARD_LABELS.get(name, name), name)
+        idx = self.board_combo.findData(cfg.board_variant)
+        if idx >= 0:
+            self.board_combo.setCurrentIndex(idx)
+
         for combo, value in zip(self.multi_combos, cfg.multi):
             combo.setCurrentIndex(combo.findData(value))
         for combo, value in zip(self.enc_md_combos, cfg.enc_md):
             combo.setCurrentIndex(combo.findData(value))
+        self.enc2_sw_combo.setCurrentIndex(self.enc2_sw_combo.findData(cfg.enc2_sw))
 
         for spin, value in zip(self.servo_min_us_spins, cfg.servo_min_us):
             spin.setValue(value)
@@ -443,7 +487,6 @@ class FirmwareDialog(QDialog):
         self.md_pwm_freq_spin.setValue(cfg.md_pwm_freq)
         self.md_pwm_resolution_spin.setValue(cfg.md_pwm_resolution)
         self.enable_led_combo.setCurrentIndex(self.enable_led_combo.findData(cfg.enable_led))
-        self.can_node_count_spin.setValue(cfg.can_node_count)
         self.can_host_diag_enable_combo.setCurrentIndex(
             self.can_host_diag_enable_combo.findData(cfg.can_host_diag_enable))
 
@@ -475,8 +518,11 @@ class FirmwareDialog(QDialog):
             device_id=self.device_id_spin.value(),
             can_id=self.can_id_spin.value(),
             mode=self.mode_combo.currentData(),
+            board_variant=self.board_combo.currentData(),
+            available_boards=self._cfg.available_boards,
             multi=[combo.currentData() for combo in self.multi_combos],
             enc_md=[combo.currentData() for combo in self.enc_md_combos],
+            enc2_sw=self.enc2_sw_combo.currentData(),
             available_modes=self._cfg.available_modes,
             servo_min_us=[spin.value() for spin in self.servo_min_us_spins],
             servo_max_us=[spin.value() for spin in self.servo_max_us_spins],
@@ -488,7 +534,6 @@ class FirmwareDialog(QDialog):
             md_pwm_freq=self.md_pwm_freq_spin.value(),
             md_pwm_resolution=self.md_pwm_resolution_spin.value(),
             enable_led=self.enable_led_combo.currentData(),
-            can_node_count=self.can_node_count_spin.value(),
             can_host_diag_enable=self.can_host_diag_enable_combo.currentData(),
         )
 
@@ -543,7 +588,10 @@ class FirmwareDialog(QDialog):
             try:
                 with open(config_path, "r", encoding="utf-8") as f:
                     cfg = parse_config(f.read())
-                label = f"{name}  (DEVICE_ID={cfg.device_id}, CAN_ID={cfg.can_id}, {cfg.mode})"
+                label = (
+                    f"{name}  (DEVICE_ID={cfg.device_id}, CAN_ID={cfg.can_id}, "
+                    f"{cfg.mode}, {cfg.board_variant})"
+                )
             except (OSError, ValueError):
                 pass
             self.project_combo.addItem(label, name)

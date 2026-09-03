@@ -27,6 +27,19 @@ Copyright (c) 2025 RRST-NHK-Project. All rights reserved.
 // #define MODE_ROBOMAS
 // #define MODE_CUBEMARS
 
+// ================= 基板バリアントの設定 =================
+// このマイコン(XIAO ESP32-S3)を搭載する基板ごとにピン配置が異なるため、
+// defs.hppの「ピンの定義」で参照する基板を1つ選択すること。
+#define BOARD_SOKI 1 // soki本体基板(root_theta/tip_theta用CubeMars、z/r用ロボマス。既存のピン配置)
+#define BOARD_MES 2  // 新規基板(2026-09-03追加、ENC1/ENC2/MD1/MD2 + SW1、CAN=D6/D7)
+#define BOARD_SS 3   // 新規基板(2026-09-03追加、SERVO1-5 + TR1-4(ソレノイドバルブ)、CAN=D6/D7)
+
+// MES/SSはMODE_CAN/MODE_CAN_HOST(ノード/スロット方式のIO)専用に入出力ロジックを
+// 実装済み(pin_ctrl_init.cpp/pin_ctrl_task.cpp)。MODE_IO(非CAN単体)はBOARD_SOKI
+// のみ対応(Rx_16Data/Tx_16Dataの直接インデックスがSOKIのSERVO/SW配置前提のため)。
+// BOARD_SOKIは既存動作のまま変更なし。
+#define BOARD_VARIANT BOARD_SOKI
+
 // ================= MD関連 =================
 // ENC1_MD/ENC2_MD(下記)でENCポートをMDへ切替えた場合のみ有効。
 // MDはENCのA/Bピンを流用するため、実機はDCモータ非搭載の想定のまま
@@ -65,6 +78,13 @@ Copyright (c) 2025 RRST-NHK-Project. All rights reserved.
 #define SERVO4_MAX_DEG 270
 #define SERVO4_INIT_DEG 0
 
+// SERVO5はBOARD_SS専用(defs.hppでBOARD_SS選択時のみSERVO5ピンが定義される)
+#define SERVO5_MIN_US 500
+#define SERVO5_MAX_US 2500
+#define SERVO5_MIN_DEG 0
+#define SERVO5_MAX_DEG 270
+#define SERVO5_INIT_DEG 0
+
 // ================= 高度な設定（通常は変更不要） =================
 
 // 以下の設定は必要に応じて変更
@@ -78,23 +98,44 @@ Copyright (c) 2025 RRST-NHK-Project. All rights reserved.
 // ENC/MDポートの設定（エンコーダ:0, MD:1）
 // ENC1(ENC1_A/ENC1_B)をMD1のPWM/DIRへ、ENC2(ENC2_A/ENC2_B)をMD2のPWM/DIRへ転用する。
 // MDに切替えたチャンネルはエンコーダとして読めなくなる(帰還スロットは0固定になる)。
+// BOARD_MESはMD1/MD2がENCと別ピン(常時専用)のため、この2つはBOARD_SOKI専用。
 #define ENC1_MD 1
 #define ENC2_MD 1
 
+// BOARD_MES専用: ENC2(ENC2_A/ENC2_B)とSW2/SW3はピン共有のため、どちらで使うか選択する
+// (0=ENC2をエンコーダとして使用、1=SW2/SW3をスイッチとして使用)。
+#define ENC2_SW 0
+
 // CANのノード割り当て設定
-// 1つのCANバス上で最大4ノードまで対応し、1ノードあたり5スロットをCANで送受信する
-// ビットレートは1Mbps固定(can_task.cpp)。MODE_ROBOMAS/MODE_CUBEMARSと同じ物理バスに
-// 同居させる場合でも指令/帰還のCAN ID帯が重ならないよう設計されているが、CAN_NODE_COUNT
-// を大きくしすぎるとロボマス側のID帯(0x1FE, 0x200-0x208)に近づくため、増やす場合は
-// 帰還ID(0x180 + node*16 + chunk)の上限がそこへ届かないことを確認すること。
+// 1つのCANバス上でCAN_NODE_COUNTノードまで対応し、1ノードあたりCAN_SLOTS_PER_NODE
+// スロットをCANで送受信する。ビットレートは1Mbps固定(can_task.cpp)。
+// MODE_ROBOMAS/MODE_CUBEMARSと同じ物理バスに同居させる場合でも指令/帰還のCAN ID帯が
+// 重ならないよう設計されているが、CAN_NODE_COUNTを大きくしすぎるとロボマス側の
+// ID帯(0x1FE, 0x200-0x208)に近づくため、増やす場合は帰還ID(0x180 + node*16 + chunk)
+// の上限がそこへ届かないことを確認すること。
 // 重要: ここは「対応可能な最大数」ではなく「実際にバスへ接続されているノード数
 // (ホスト自身を含む)」に必ず合わせること。ホストは毎周期、自分以外の
 // [0, CAN_NODE_COUNT) 全ノードへ指令フレームを送信するため、存在しないノード宛の
 // 分だけACKエラーが発生し続け、ホスト自身のCANコントローラがBus-Offに陥る
 // (実測: 4ノード設定・実接続2台の場合、起動後約40msでBus-Off)。
-// 現在の実接続: ホスト(node0)+STM32 b-g431-esc1_can2io(node1)の2台のみ。
+// 現在の実接続(BOARD_SOKI): ホスト(node0)+STM32 b-g431-esc1_can2io(node1)の2台のみ。
+//
+// BOARD_SS(SERVO1-5+TR1-4=9指令チャンネル)はCAN_SLOTS_PER_NODE=5に収まらないため
+// 9へ拡張し、Tx_16Data/Rx_16Dataの24スロット枠に収まるようCAN_NODE_COUNTを2
+// (host+1)までに抑えている(下のstatic_assert相当のチェックも参照)。この値を
+// 手で変える場合は必ず CAN_NODE_COUNT * CAN_SLOTS_PER_NODE <= 24 を保つこと。
+#if BOARD_VARIANT == BOARD_SS
+#define CAN_NODE_COUNT 2
+#define CAN_SLOTS_PER_NODE 9
+#else
 #define CAN_NODE_COUNT 4
 #define CAN_SLOTS_PER_NODE 5
+#endif
+
+#if (CAN_NODE_COUNT * CAN_SLOTS_PER_NODE) > 24
+#error "CAN_NODE_COUNT * CAN_SLOTS_PER_NODE exceeds the 24-slot Tx_16Data/Rx_16Data buffer (frame_data.hpp)"
+#endif
+
 // CAN_ID の下位2桁をノード番号として使用する。
 // 例: CAN_ID=101 -> node 1, CAN_ID=102 -> node 2, CAN_ID=103 -> node 3, CAN_ID=104 -> node 4
 #define CAN_NODE_INDEX ((CAN_ID % 100U) - 1U)

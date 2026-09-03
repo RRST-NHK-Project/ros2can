@@ -184,6 +184,10 @@ void setup() {
 #if (defined(MODE_IO) + defined(MODE_CAN) + defined(MODE_CAN_HOST) + defined(MODE_DEBUG) + defined(MODE_CAN_MONITOR) + defined(MODE_ROBOMAS) + defined(MODE_CUBEMARS)) != 1
 #error "Invalid mode configuration. Please define exactly *one mode* in config.hpp."
 #endif
+
+#if defined(MODE_IO) && BOARD_VARIANT != BOARD_SOKI
+#error "MODE_IO is only implemented for BOARD_SOKI (Rx_16Data/Tx_16Data direct-index layout assumes SOKI's SERVO/SW pin mapping). Use MODE_CAN/MODE_CAN_HOST for BOARD_MES/BOARD_SS."
+#endif
 }
 
 // ================= LOOP =================

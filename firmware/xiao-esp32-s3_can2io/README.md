@@ -57,7 +57,21 @@ Only set `CAN_ID` per board; `CAN_NODE_INDEX`, node addressing, and CAN frame ID
 
 ---
 
+## 3a. Board Variants (`BOARD_VARIANT`)
+
+This same firmware source targets multiple physical boards built around the XIAO ESP32-S3, each with its own pin layout (`src/defs.hpp`) and I/O shape. Select exactly one in `src/config.hpp`:
+
+- `BOARD_SOKI` (default): soki's own board — 3x MULTI (SERVO/SW) ports, 2x ENC/MD ports, `CAN_SLOTS_PER_NODE = 5`. Unchanged from the original design; `MODE_IO` is only implemented for this variant.
+- `BOARD_MES`: 2x MD (always dedicated pins, not ENC-shared) + 2x ENC, where ENC2's pins are additionally shared with SW2/SW3 (toggle with `ENC2_SW`). `CAN_SLOTS_PER_NODE = 5` (unchanged).
+- `BOARD_SS`: 5x always-on servo outputs + 4x solenoid-valve digital outputs (`TR1-4`, non-zero command = ON), no ENC/MD/SW at all. Needs 9 command channels, so `CAN_SLOTS_PER_NODE = 9` and `CAN_NODE_COUNT = 2` for this variant (see the bounds check in `config.hpp`: `CAN_NODE_COUNT * CAN_SLOTS_PER_NODE` must stay `<= 24`).
+
+`CanIoRxData`/`CanIoTxData` slot layout differs per variant — see the comments in `src/frame_data.hpp` and the per-variant `IO_*` functions in `src/pin_ctrl_task.cpp`. Only `MODE_CAN`/`MODE_CAN_HOST` are implemented for `BOARD_MES`/`BOARD_SS` (a `MODE_IO` build fails to compile for them, since the `Rx_16Data`/`Tx_16Data` direct-index layout below is SOKI-specific).
+
+---
+
 ## 4. CAN Slot Mapping
+
+**This section describes `BOARD_SOKI`'s layout.** `BOARD_MES`/`BOARD_SS` use the same node/chunk transport mechanics but a different `CanIoRxData`/`CanIoTxData` slot count and meaning — see §3a above.
 
 The 24-slot payload is divided into 4 node blocks of 5 slots each (20 of the 24 slots are used; the remaining 4 are unused headroom):
 
@@ -120,13 +134,14 @@ Each 5-slot block is transmitted as two CAN frames (`identifier = 0x100 + node_i
 ## 6. Configuration Workflow
 
 1. Open `src/config.hpp`.
-2. Set `DEVICE_ID` (serial frame ID, must match the PC-side config for this board).
-3. Set `CAN_ID` (3-digit: bus digit + node number, e.g. `101`..`104`). This also determines `CAN_NODE_INDEX`.
-4. Choose exactly one mode macro (`MODE_IO`, `MODE_CAN`, `MODE_CAN_HOST`, `MODE_CAN_MONITOR`, or `MODE_DEBUG`).
-5. Set `MULTI1`/`MULTI2`/`MULTI3` per board (`0` = switch input, `1` = servo output) to match the wiring.
-6. Set `ENC1_MD`/`ENC2_MD` per board (`0` = encoder input, `1` = MD PWM+DIR output) to match the wiring. `ENCn_A` becomes the MD PWM pin and `ENCn_B` becomes the MD DIR pin when switched to MD.
-7. Adjust PWM, servo range, MD PWM frequency/resolution, and pin settings if required.
-8. Build and flash with PlatformIO.
+2. Set `BOARD_VARIANT` (`BOARD_SOKI`/`BOARD_MES`/`BOARD_SS`, see §3a) to match the physical board being flashed.
+3. Set `DEVICE_ID` (serial frame ID, must match the PC-side config for this board).
+4. Set `CAN_ID` (3-digit: bus digit + node number, e.g. `101`..`104`). This also determines `CAN_NODE_INDEX`.
+5. Choose exactly one mode macro (`MODE_IO`, `MODE_CAN`, `MODE_CAN_HOST`, `MODE_CAN_MONITOR`, or `MODE_DEBUG`). `MODE_IO` is `BOARD_SOKI`-only.
+6. `BOARD_SOKI` only: set `MULTI1`/`MULTI2`/`MULTI3` (`0` = switch input, `1` = servo output) to match the wiring.
+7. `BOARD_SOKI` only: set `ENC1_MD`/`ENC2_MD` (`0` = encoder input, `1` = MD PWM+DIR output) to match the wiring. `ENCn_A` becomes the MD PWM pin and `ENCn_B` becomes the MD DIR pin when switched to MD. `BOARD_MES` only: set `ENC2_SW` (`0` = ENC2 encoder, `1` = SW2/SW3 switches) to match the wiring.
+8. Adjust PWM, servo range, MD PWM frequency/resolution, and pin settings if required.
+9. Build and flash with PlatformIO.
 
 ---
 
