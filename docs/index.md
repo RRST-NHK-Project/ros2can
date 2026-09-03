@@ -45,20 +45,6 @@ title: ros2can マニュアル
 センサ値をリアルタイムに表示することができます。また、`serial_bridge` と同様に
 トピックを用いた外部ノードとの接続も可能です。
 
-```
-  [ros2can (GUI, スタンドアローン)]
-       │
-       ├─ port_scanner ─── /dev/ttyUSB*, /dev/ttyACM* を探索
-       │
-       └─ USBシリアル ──► CANホスト (MODE_CAN_HOST)
-                             │
-                             └─ CANバス
-                                  ├─ ノード1 (CAN_ID=101)
-                                  ├─ ノード2 (CAN_ID=102)
-                                  ├─ ノード3 (CAN_ID=103)
-                                  └─ ノード4 (CAN_ID=104)
-```
-
 ![CANホスト＋ノードのデイジーチェーン接続イメージ](images/diagram_daisychain.svg)
 
 上図はUSB接続からCANバスの物理的なつながり方（デイジーチェーン、バス両端の終端抵抗）
