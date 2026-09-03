@@ -18,14 +18,15 @@ title: ros2can マニュアル
   - [6.2 Monitor タブ（センサ受信）](#62-monitor-タブセンサ受信)
   - [6.3 Raw タブ（全24スロット）](#63-raw-タブ全24スロット)
   - [6.4 Info タブ](#64-info-タブ)
-- [7. プロファイル](#7-プロファイル)
-- [8. CubeMars AKシリーズ（MODE_CUBEMARS）](#8-cubemars-akシリーズmode_cubemars)
-- [9. DJIロボマス（MODE_ROBOMAS）](#9-djiロボマスmode_robomas)
-- [10. ファームウェア生成・書き込み](#10-ファームウェア生成書き込み)
-- [11. 設定](#11-設定)
-- [12. エンコーダ初期化](#12-エンコーダ初期化)
-- [13. 安全機能について](#13-安全機能について)
-- [14. About](#14-about)
+- [7. 外部ノードとの接続](#7-外部ノードとの接続)
+- [8. プロファイル](#8-プロファイル)
+- [9. CubeMars AKシリーズ（MODE_CUBEMARS）](#9-cubemars-akシリーズmode_cubemars)
+- [10. DJIロボマス（MODE_ROBOMAS）](#10-djiロボマスmode_robomas)
+- [11. ファームウェア生成・書き込み](#11-ファームウェア生成書き込み)
+- [12. 設定](#12-設定)
+- [13. エンコーダ初期化](#13-エンコーダ初期化)
+- [14. 安全機能について](#14-安全機能について)
+- [15. About](#15-about)
 
 ---
 
@@ -56,7 +57,7 @@ title: ros2can マニュアル
 
 ホストのUSBシリアル側は常に `serial_bridge` 互換の24 x int16スロット
 （TX: ROS→ホスト、RX: ホスト→ROS）を1フレームとしてやり取りします。この24スロットを
-CANバス上の各ノードへどう割り当てるかを決めるのが後述の「[7. プロファイル](#7-プロファイル)」です。
+CANバス上の各ノードへどう割り当てるかを決めるのが後述の「[8. プロファイル](#8-プロファイル)」です。
 
 `xiao-esp32-s3_can2io` ファームウェア自体は、ノードを束ねる「CANホスト」以外にも、
 CANバスに直接ぶら下がる独立デバイスとしていくつかのモードを持っています。
@@ -65,8 +66,8 @@ CANバスに直接ぶら下がる独立デバイスとしていくつかのモ�
 |:---|:---|:---|
 | `MODE_CAN_HOST` | 複数ノードを束ねるCANホスト本体（本マニュアルの主対象） | XIAO ESP32S3 SMD/MES/SS (CAN Host) |
 | `MODE_CAN` | ホスト配下の汎用IOノード（通常の子マイコン） | （CAN Host側のプロファイルに内包） |
-| `MODE_ROBOMAS` | DJIロボマス最大4台を直接駆動する独立デバイス | [xiao-esp32-s3_can2io (MODE_ROBOMAS, DJIロボマス x4)](#9-djiロボマスmode_robomas) |
-| `MODE_CUBEMARS` | CubeMars AKシリーズ最大4台を直接駆動する独立デバイス | [xiao-esp32-s3_can2io (MODE_CUBEMARS, CubeMars AKシリーズ x4)](#8-cubemars-akシリーズmode_cubemars) |
+| `MODE_ROBOMAS` | DJIロボマス最大4台を直接駆動する独立デバイス | [xiao-esp32-s3_can2io (MODE_ROBOMAS, DJIロボマス x4)](#10-djiロボマスmode_robomas) |
+| `MODE_CUBEMARS` | CubeMars AKシリーズ最大4台を直接駆動する独立デバイス | [xiao-esp32-s3_can2io (MODE_CUBEMARS, CubeMars AKシリーズ x4)](#9-cubemars-akシリーズmode_cubemars) |
 | `MODE_IO` | CAN無し、IOのみのスタンドアロン動作 | 汎用 Raw 等 |
 | `MODE_CAN_MONITOR` | 生CANフレームをシリアル出力するだけの診断用モード | （ros2canのデバイス一覧には出ない。「CANモニター…」参照） |
 | `MODE_DEBUG` | デバッグ用 | - |
@@ -144,7 +145,7 @@ ros2 launch ros2can ros2can.launch.py
   故障コード等、実機では指令と無関係な独立したセンサ入力に相当するRXは、この
   自動ループバックの対象外になります。詳細は [6.2 Monitor タブ](#62-monitor-タブセンサ受信) 参照）。
 - 実機接続時と同じく `serial_rx_[ID]` を Publish / `serial_tx_[ID]` を Subscribe
-  するため、rqt や他の ROS ノードからのテストにもそのまま使えます。
+  するため、rqt や他の ROS ノードからのテストにもそのまま使えます（[7. 外部ノードとの接続](#7-外部ノードとの接続) 参照）。
 - デバイス一覧でデバイスを右クリックすると「このデバイスを削除」で取り除けます。
 - デバッグデバイス追加時にプロファイルを指定すれば、CubeMars / ロボマス構成の
   UIもハードウェアなしでそのまま確認できます（本マニュアルの画面キャプチャも
@@ -183,7 +184,7 @@ ros2 launch ros2can ros2can.launch.py
   数値は、対応するTXスロットの生値がそのまま流れ込んだものです）。
 
 各チャンネルの「原点セット」ボタンで、その場の値をソフトウェア上のゼロ点として
-記録できます（[12. エンコーダ初期化](#12-エンコーダ初期化) 参照）。
+記録できます（[13. エンコーダ初期化](#13-エンコーダ初期化) 参照）。
 
 ![Monitorタブ: スイッチON・エンコーダカウントを手動設定した状態](images/04_monitor_tab.png)
 
@@ -203,7 +204,254 @@ CAN分配を介さず、生の24 x int16スロットを直接編集/確認でき
 
 ![Infoタブ: 接続状態やフレームカウンタの詳細](images/06_info_tab.png)
 
-## 7. プロファイル
+## 7. 外部ノードとの接続
+
+`ros2can` は `serial_bridge` と同じトピックインターフェースを提供するため、
+自作のROS 2ノードから指令送信・センサ受信を行えます。GUIの「ダイレクト送信」に
+頼らず、常時ノードから自動制御したい場合はこの方法を使ってください。
+
+### 7.1 トピック・サービス一覧
+
+デバイスごとに `DEVICE_ID`（GUIのデバイス一覧やInfoタブで確認できます）に
+対応した以下のトピック・サービスが生成されます。
+
+**Subscribe トピック（ROS → CANホスト）**
+
+| トピック | 型 | 説明 |
+|:---|:---|:---|
+| `serial_tx_[DEVICE_ID]` | `std_msgs/msg/Int16MultiArray` | CANホストへの制御指令（生の24スロット） |
+
+**Publish トピック（CANホスト → ROS）**
+
+| トピック | 型 | 説明 |
+|:---|:---|:---|
+| `serial_rx_[DEVICE_ID]` | `std_msgs/msg/Int16MultiArray` | センサ値（生の24スロット、`serial_bridge` 互換） |
+| `serial_rx_[DEVICE_ID]_unwrapped` | `std_msgs/msg/Int32MultiArray` | エンコーダのオーバーフローを展開した積算値（実機接続時/デバッグデバイスのみ） |
+| `serial_rx_[DEVICE_ID]_zeroed` | `std_msgs/msg/Int32MultiArray` | 上記から「原点セット」時点のオフセットを差し引いた相対値（同上） |
+
+**サービス**
+
+| サービス | 型 | 説明 |
+|:---|:---|:---|
+| `zero_channel` | `ros2can_interfaces/srv/ZeroChannel` | 指定デバイス・チャンネルの現在値を原点（0）としてソフトウェアオフセットを設定する。`channel_index=-1` で全24チャンネル一括原点セット |
+
+`serial_tx_[ID]`/`serial_rx_[ID]` は `serial_bridge` と同一の型・命名規則のため、
+既存の `serial_bridge` 向けノードをほぼそのまま流用できます。
+
+### 7.2 GUIとの関係（トピック通過 / ダイレクト送信）
+
+自作ノードからの指令をデバイスに反映するには、対象デバイスの「トピック通過」
+チェック（既定ON）が有効になっている必要があります。「ダイレクト送信」を
+ONにするとGUIパネルの値が優先され、外部ノードからの `serial_tx_[ID]` は
+無視されるので注意してください（両者は排他: [6.1 Control タブ](#61-control-タブ指令送信) 参照）。
+
+ハードウェアがまだ接続されていない段階でも、ツールバーの「デバイスを手動追加…」
+から `DEVICE_ID` を登録しておけば、`serial_tx_[ID]`/`serial_rx_[ID]` を
+Publish/Subscribeするだけの「トピッククライアント」として先に動作確認できます
+（[5. デバッグモード](#5-デバッグモード実機不要でのui確認) も参照）。
+
+### 7.3 スロット割当ライブラリ（パケットコントローラ）
+
+24スロットの生配列を直接インデックスで操作するとプロファイルとの対応が
+崩れやすいため、`common/include/common/` にスロット割当を意識せず安全に
+アクセスするためのラッパークラスが用意されています。
+
+| ヘッダ | 対応プロファイル | 主なメソッド |
+|:---|:---|:---|
+| `Ros2CanPacketController.hpp` | 既定プロファイル `xiao_smd_can_host`（4ノード x 5スロット） | `setServo(node, servo_no, deg)` / `getSW(node, sw_no)` / `getEnc(node, enc_no)` |
+| `Ros2CanCubemarsPacketController.hpp` | `cubemars_ak_driver`（MODE_CUBEMARS） | `setPosition(motor, deg)` / `setVelocity(motor, erpm)` / `setMit(motor, deg, ff, kp, kd, ff)` / `stop(motor)` / `stopAll()` / `getPosition`・`getVelocity`・`getCurrent`・`getTemperature`・`getError` |
+
+いずれも送信配列 `tx_` / 受信配列 `rx_` を直接公開しているため、ラッパーに
+無い操作は `operator[]` や `tx_`/`rx_` への直接アクセスで補えます。
+`updateRx()` でSubscribeした `Int16MultiArray` の内容を反映し、`toVector()`
+で送信用配列を取り出してそのまま `publish()` します。
+
+> MODE_ROBOMAS（[10. DJIロボマス](#10-djiロボマスmode_robomas)）用の専用コントローラは
+> 本リポジトリにはまだ実装がありません。[10.1節](#101-指令チャンネルcontrol-タブ)の
+> スロット表に従って、生配列を直接操作してください。
+
+### 7.4 サンプルノード1: CubeMars位置制御（cr26_soki より）
+
+`cr26_soki` パッケージの `ros2can_practice.cpp` は、PS4コントローラの入力で
+CubeMars（MODE_CUBEMARS、ノード0番=CAN_ID 101）をMIT(Force Control)モードで
+位置制御する実例です。外部ノードの基本形として、以下の骨格に注目してください。
+
+```cpp
+class Ros2CanCubemarsControl : public rclcpp::Node {
+public:
+    Ros2CanCubemarsControl(uint8_t tx_device_id, uint8_t rx_device_id)
+        : Node("ros2can_cubemars_" + std::to_string(tx_device_id)),
+          tx_device_id_(tx_device_id), rx_device_id_(rx_device_id) {
+
+        // ros2canへの指令をpublish
+        publisher_ = create_publisher<std_msgs::msg::Int16MultiArray>(
+            "serial_tx_" + std::to_string(tx_device_id_), 10);
+
+        // 一定周期でtx_をそのまま送り続ける(20ms = 50Hz)
+        timer_ = create_wall_timer(std::chrono::milliseconds(PUBLISH_RATE_MS),
+            std::bind(&Ros2CanCubemarsControl::publisher_timer_callback, this));
+
+        // ros2canからのセンサ値をsubscribe
+        sensor_sub_ = create_subscription<std_msgs::msg::Int16MultiArray>(
+            "serial_rx_" + std::to_string(rx_device_id_), 10,
+            std::bind(&Ros2CanCubemarsControl::sensor_callback, this, std::placeholders::_1));
+
+        // firmwareにフェイルセーフは無いため、ノード終了時に全モータへゼロ指令を送る
+        rclcpp::on_shutdown([this]() { send_zero_and_stop(); });
+    }
+
+private:
+    void publisher_timer_callback() {
+        std_msgs::msg::Int16MultiArray msg;
+        msg.data = ctrlPkt_.toVector();
+        publisher_->publish(msg);
+    }
+
+    void sensor_callback(const std_msgs::msg::Int16MultiArray::SharedPtr msg) {
+        ctrlPkt_.updateRx(msg->data);
+        // ctrlPkt_.getPosition(TARGET_MOTOR) 等で帰還値を取得できる
+    }
+
+    void send_zero_and_stop() {
+        ctrlPkt_.stopAll();
+        publisher_timer_callback();
+    }
+
+    rclcpp::Publisher<std_msgs::msg::Int16MultiArray>::SharedPtr publisher_;
+    rclcpp::Subscription<std_msgs::msg::Int16MultiArray>::SharedPtr sensor_sub_;
+    rclcpp::TimerBase::SharedPtr timer_;
+    Ros2CanCubemarsPacketController ctrlPkt_;
+};
+```
+
+ボタン入力に応じて `ctrlPkt_.setMit(TARGET_MOTOR, target_angle_deg_, 0.0, MIT_KP, MIT_KD, 0.0)`
+を呼ぶと、次のタイマー周期でその指令がそのまま送信されます（`tx_` は最後に
+設定した値を保持し続けるため、値を変更したときだけ呼べば十分です）。ノード
+終了時（Ctrl+C等）には `rclcpp::on_shutdown` に登録した `send_zero_and_stop()`
+が呼ばれ、全モータへゼロ速度指令を送ってその場停止させます。ファームウェア側に
+CAN/シリアル途絶時のフェイルセーフは無く、最後に受信した指令を保持し続ける
+仕様のため、この後始末はノード側の責務になります。
+
+完全なソース（PS4ジョイスティックでの角度指令、エラーログ出力等を含む）は
+[`cr26_soki/src/ros2can_practice.cpp`](https://github.com/RRST-NHK-Project/rrst-ros2-ws/blob/develop/cr26_soki/src/ros2can_practice.cpp)
+を参照してください。
+
+### 7.5 サンプルノード2: 既定プロファイル（SERVO/SW/ENC）の最小例
+
+専用コントローラがある場合と同じ骨格を、既定プロファイル (`xiao_smd_can_host`)
+向けにも適用できます。ここではノード1 (CAN_ID=101) のSERVO1を正弦波で往復させ、
+SW1/ENC1の帰還をログ出力する最小例を示します。
+
+```cpp
+/*
+ros2can (MODE_CAN_HOST, 既定プロファイル xiao_smd_can_host) ノードの
+ホスト側最小サンプル。ノード1(CAN_ID=101)のSERVO1を周期的に往復させ、
+SW1とENC1の帰還をログ出力する。Ros2CanPacketControllerでスロット割当を
+意識せずに送受信配列へアクセスする。
+*/
+
+#include <chrono>
+#include <cmath>
+#include "rclcpp/rclcpp.hpp"
+#include <std_msgs/msg/int16_multi_array.hpp>
+#include "common/Ros2CanPacketController.hpp"
+
+#define TX_DEVICE_ID 1
+#define RX_DEVICE_ID 1
+#define PUBLISH_RATE_MS 50
+#define TARGET_NODE 0  // ノード1 (CAN_ID=101)、0-origin
+
+class Ros2CanServoSweepExample : public rclcpp::Node {
+public:
+    Ros2CanServoSweepExample(uint8_t tx_device_id, uint8_t rx_device_id)
+        : Node("ros2can_servo_sweep_example"),
+          tx_device_id_(tx_device_id), rx_device_id_(rx_device_id) {
+
+        publisher_ = create_publisher<std_msgs::msg::Int16MultiArray>(
+            "serial_tx_" + std::to_string(tx_device_id_), 10);
+
+        sensor_sub_ = create_subscription<std_msgs::msg::Int16MultiArray>(
+            "serial_rx_" + std::to_string(rx_device_id_), 10,
+            std::bind(&Ros2CanServoSweepExample::sensor_callback, this, std::placeholders::_1));
+
+        timer_ = create_wall_timer(std::chrono::milliseconds(PUBLISH_RATE_MS),
+            std::bind(&Ros2CanServoSweepExample::timer_callback, this));
+
+        start_time_ = now();
+
+        // firmwareにフェイルセーフは無いため、ノード終了時にSERVOを0degへ戻す
+        rclcpp::on_shutdown([this]() { send_zero_and_stop(); });
+    }
+
+private:
+    void timer_callback() {
+        double t = (now() - start_time_).seconds();
+        int deg = 135 + static_cast<int>(135.0 * std::sin(t));  // 0~270degで往復
+        ctrlPkt_.setServo(TARGET_NODE, /*servo_no=*/1, deg);
+
+        std_msgs::msg::Int16MultiArray msg;
+        msg.data = ctrlPkt_.toVector();
+        publisher_->publish(msg);
+    }
+
+    void sensor_callback(const std_msgs::msg::Int16MultiArray::SharedPtr msg) {
+        ctrlPkt_.updateRx(msg->data);
+        bool sw1 = ctrlPkt_.getSW(TARGET_NODE, 1);
+        int16_t enc1 = ctrlPkt_.getEnc(TARGET_NODE, 1);
+        RCLCPP_INFO_THROTTLE(get_logger(), *get_clock(), 500,
+            "SW1=%s ENC1=%d", sw1 ? "ON" : "OFF", enc1);
+    }
+
+    void send_zero_and_stop() {
+        ctrlPkt_.setServo(TARGET_NODE, 1, 0);
+        std_msgs::msg::Int16MultiArray msg;
+        msg.data = ctrlPkt_.toVector();
+        publisher_->publish(msg);
+    }
+
+    uint8_t tx_device_id_, rx_device_id_;
+    rclcpp::Publisher<std_msgs::msg::Int16MultiArray>::SharedPtr publisher_;
+    rclcpp::Subscription<std_msgs::msg::Int16MultiArray>::SharedPtr sensor_sub_;
+    rclcpp::TimerBase::SharedPtr timer_;
+    rclcpp::Time start_time_;
+    Ros2CanPacketController ctrlPkt_;
+};
+
+int main(int argc, char *argv[]) {
+    rclcpp::init(argc, argv);
+    auto node = std::make_shared<Ros2CanServoSweepExample>(TX_DEVICE_ID, RX_DEVICE_ID);
+    rclcpp::spin(node);
+    rclcpp::shutdown();
+    return 0;
+}
+```
+
+`package.xml`/`CMakeLists.txt` の依存関係やビルド設定は `cr26_soki` パッケージの
+ものを参考にしてください（`rclcpp`、`std_msgs`、`common` パッケージへの依存と
+インクルードパスが必要です）。
+
+### 7.6 コマンドラインからの簡易テスト
+
+ノードを書く前に、まずはCLIで疎通確認するのが手早い方法です。
+
+```bash
+# RXを購読して生の24スロットを流し見する
+ros2 topic echo /serial_rx_1
+
+# TXへ一度だけ24スロット(先頭=SERVO1のみ90、残り0)を送る例
+ros2 topic pub --once /serial_tx_1 std_msgs/msg/Int16MultiArray \
+  "{data: [90,0,0,0,0, 0,0,0,0,0, 0,0,0,0,0, 0,0,0,0,0, 0,0,0,0]}"
+
+# デバイス1の全チャンネルを一括で原点セットする
+ros2 service call /zero_channel ros2can_interfaces/srv/ZeroChannel \
+  "{device_id: 1, channel_index: -1}"
+```
+
+`ros2 topic pub` は既定で周期送信になるため、1回だけ送りたい場合は
+`--once` を付け忘れないよう注意してください（付け忘れると「ダイレクト送信」
+無しでも指令が送られ続けます）。
+
+## 8. プロファイル
 
 「プロファイル」は、ホストのUARTフレーム24スロットをどう解釈するかを定義する
 設定セットです。デバイスパネル上部の「プロファイル:」ドロップダウンから
@@ -215,8 +463,8 @@ CAN分配を介さず、生の24 x int16スロットを直接編集/確認でき
 | `xiao_can2io_with_foc` | xiao-esp32-s3_can2io + b-g431-esc1_can2io (FOCモータ, robomas互換) | 2ノード構成のうち1ノードをFOCモータ(SimpleFOC、速度制御のみ)用チャンネルに置き換え |
 | `xiao_mes_can_host` | XIAO ESP32S3 MES (CAN Host) | BOARD_MES用。各ノードMD1-2(指令)/SW1+ENC1-2+SW3(帰還)。ENC2とSW2/SW3はピン共有(ファーム側config.hppで排他固定) |
 | `xiao_ss_can_host` | XIAO ESP32S3 SS (CAN Host) | BOARD_SS用。SERVO1-5+TR1-4(ソレノイドバルブ)の9指令チャンネルのため1ノード9スロットに拡張、24スロットの制約でノード数は既定2まで |
-| `robomas_driver` | xiao-esp32-s3_can2io (MODE_ROBOMAS, DJIロボマス x4) | ノード分配なし。独立デバイスとしてDJIロボマス最大4台を直接制御。詳細は[9章](#9-djiロボマスmode_robomas) |
-| `cubemars_ak_driver` | xiao-esp32-s3_can2io (MODE_CUBEMARS, CubeMars AKシリーズ x4) | ノード分配なし。独立デバイスとしてCubeMars AKシリーズ最大4台を直接制御。詳細は[8章](#8-cubemars-akシリーズmode_cubemars) |
+| `robomas_driver` | xiao-esp32-s3_can2io (MODE_ROBOMAS, DJIロボマス x4) | ノード分配なし。独立デバイスとしてDJIロボマス最大4台を直接制御。詳細は[10章](#10-djiロボマスmode_robomas) |
+| `cubemars_ak_driver` | xiao-esp32-s3_can2io (MODE_CUBEMARS, CubeMars AKシリーズ x4) | ノード分配なし。独立デバイスとしてCubeMars AKシリーズ最大4台を直接制御。詳細は[9章](#9-cubemars-akシリーズmode_cubemars) |
 | `generic_raw` | 汎用 Raw (24スロット、CAN分配なし) | ホストのUARTフレーム24スロットをそのまま直接編集/表示する |
 
 ファームウェア側の `config.hpp` で `CAN_NODE_COUNT` / `CAN_SLOTS_PER_NODE`
@@ -242,7 +490,7 @@ SERVOn と SWn はピン共有 (ファームウェア config.hpp の MULTIn で�
 ノードの CAN_ID は 101,102,103,104 (下2桁 = ノード番号)
 ```
 
-## 8. CubeMars AKシリーズ（MODE_CUBEMARS）
+## 9. CubeMars AKシリーズ（MODE_CUBEMARS）
 
 `cubemars_ak_driver` プロファイルは、CubeMars AKシリーズ（AK40-10等）の
 アクチュエータ最大4台を、CANホストのノード分配を介さず直接制御するための
@@ -257,7 +505,7 @@ SERVOn と SWn はピン共有 (ファームウェア config.hpp の MULTIn で�
 
 ![CubeMars Controlタブ: M1をMITモードに設定した状態](images/10_cubemars_control.png)
 
-### 8.1 指令チャンネル（Control タブ）
+### 9.1 指令チャンネル（Control タブ）
 
 モータごとに以下の6チャンネルがあります（`M{n}` の `n` は1〜4）。
 
@@ -285,7 +533,7 @@ torque = Kp * (pos_des - pos) + Kd * (vel_des - vel) + torque_ff
 > ファーム側を書き換えた場合は、GUI側の「プロファイル編集」でも
 > レンジを合わせて調整する必要があります。
 
-### 8.2 帰還チャンネル（Monitor タブ）
+### 9.2 帰還チャンネル（Monitor タブ）
 
 ![CubeMars Monitorタブ: 各モータの位置・速度・電流・温度・故障コード](images/11_cubemars_monitor.png)
 
@@ -310,7 +558,7 @@ torque = Kp * (pos_des - pos) + Kd * (vel_des - vel) + torque_ff
 | 6 | MOSFET over-temp |
 | 7 | motor stall |
 
-### 8.3 運用上の注意
+### 9.3 運用上の注意
 
 - ノード分配側（`MODE_CAN` 等）とCAN速度を1Mbpsに統一済みのため、同一物理バスへの
   混在は可能です（CAN IDが重ならないよう設計されていれば問題ありません）。
@@ -320,7 +568,7 @@ torque = Kp * (pos_des - pos) + Kd * (vel_des - vel) + torque_ff
   `firmware/xiao-esp32-s3_can2io/README.md` で確認してください。
 - 1バスに接続できるのは最大4台（`config.hpp` の `CUBEMARS_MOTOR_COUNT`）です。
 
-## 9. DJIロボマス（MODE_ROBOMAS）
+## 10. DJIロボマス（MODE_ROBOMAS）
 
 `robomas_driver` プロファイルは、DJIロボマス（M3508 / M2006 / GM6020 のいずれか）
 最大4台を、CANホストのノード分配を介さず直接制御するためのプロファイルです。
@@ -330,7 +578,7 @@ torque = Kp * (pos_des - pos) + Kd * (vel_des - vel) + torque_ff
 
 ![ロボマス Controlタブ: M1をMIT(位置PD)モードに設定した状態](images/12_robomas_control.png)
 
-### 9.1 指令チャンネル（Control タブ）
+### 10.1 指令チャンネル（Control タブ）
 
 | チャンネル | 種別 | 説明 |
 |:---|:---|:---|
@@ -355,7 +603,7 @@ ESC/GM6020はCANで生の電流指令しか受け付けないため、位置PD�
 > スケール値はファームウェア側 `config.hpp` の `ROBOMAS_MIT_*` と必ず
 > 一致させてください。
 
-### 9.2 帰還チャンネル（Monitor タブ）
+### 10.2 帰還チャンネル（Monitor タブ）
 
 ![ロボマス Monitorタブ: 各モータの角度・速度・電流](images/13_robomas_monitor.png)
 
@@ -365,7 +613,7 @@ ESC/GM6020はCANで生の電流指令しか受け付けないため、位置PD�
 | `M{n} velocity` | 数値表示 | 出力軸rpm |
 | `M{n} current` | 数値表示 | 相電流。0.001A/LSB |
 
-### 9.3 運用上の注意
+### 10.3 運用上の注意
 
 - ノード分配側（`MODE_CAN` 等）もCAN速度を1Mbpsに統一済みのため、同一物理バスへの
   混在は可能です（CAN IDが重ならない設計であること）。
@@ -373,7 +621,7 @@ ESC/GM6020はCANで生の電流指令しか受け付けないため、位置PD�
   `robomas.cpp`）。台数を増やす場合はバス帯域の余裕を
   `firmware/xiao-esp32-s3_can2io/README.md` で確認してください。
 
-## 10. ファームウェア生成・書き込み
+## 11. ファームウェア生成・書き込み
 
 ツールバーの「ファームウェア生成・書き込み…」から、`xiao-esp32-s3_can2io` を
 テンプレートに、実機ごとに異なる設定だけを反映したプロジェクト一式を
@@ -382,7 +630,7 @@ ESC/GM6020はCANで生の電流指令しか受け付けないため、位置PD�
 
 ![ファームウェア生成・書き込みダイアログ](images/14_firmware_dialog.png)
 
-### 10.1 生成できる設定項目
+### 11.1 生成できる設定項目
 
 | 項目 | 内容 |
 |:---|:---|
@@ -404,7 +652,7 @@ ESC/GM6020はCANで生の電流指令しか受け付けないため、位置PD�
 同様に、ROBOMASの速度PIDゲイン等、実測でチューニングされた値もこのGUIの対象外です
 （テンプレートの値がそのまま引き継がれます）。
 
-### 10.2 生成の流れ
+### 11.2 生成の流れ
 
 1. 「テンプレート:」欄に `firmware/xiao-esp32-s3_can2io` が自動検出されます
    （見つからない場合は「変更…」で手動選択）。
@@ -417,7 +665,7 @@ ESC/GM6020はCANで生の電流指令しか受け付けないため、位置PD�
    不要になった生成物は、下の「書き込み」欄でプロジェクトを選択して
    「削除」から取り除けます。
 
-### 10.3 書き込みの流れと安全性
+### 11.3 書き込みの流れと安全性
 
 1. 下の「書き込み」欄で、生成済みのプロジェクトと書き込み先のポートを選択します。
 2. 「書き込み」を押すと確認ダイアログが出ます。承諾すると
@@ -435,7 +683,7 @@ ESC/GM6020はCANで生の電流指令しか受け付けないため、位置PD�
 PlatformIO CLI（`pio` コマンド）が必要です。見つからない場合は
 `pip install -U platformio` 等でインストールしてください。
 
-## 11. 設定
+## 12. 設定
 
 ツールバーの「設定…」から、ハードウェア直結スキャンの挙動（除外ポート、
 タイムアウト、スキャン間隔、device_id ↔ プロファイル対応など）を編集できます。
@@ -450,7 +698,7 @@ PlatformIO CLI（`pio` コマンド）が必要です。見つからない場合
 
 の順です。
 
-## 12. エンコーダ初期化
+## 13. エンコーダ初期化
 
 デバイスごとの Monitor タブにもチャンネル単位の「原点セット」ボタンがありますが、
 起動時に複数デバイスをまとめて初期化したい場合は、ツールバーの「エンコーダ初期化…」
@@ -464,7 +712,7 @@ PlatformIO CLI（`pio` コマンド）が必要です。見つからない場合
 原点を書き込みたい場合は、上部の「外部ノードのTriggerサービス呼び出し」から
 対象ノードが提供する `std_srvs/Trigger` サービスを呼び出してください。
 
-## 13. 安全機能について
+## 14. 安全機能について
 
 - 起動直後は全デバイスの「ダイレクト送信」が OFF になっており、実際の指令は
   送信されません。意図した値を設定してから ON にしてください。
@@ -477,8 +725,12 @@ PlatformIO CLI（`pio` コマンド）が必要です。見つからない場合
   その場停止します。
 - ツールバーの「全デバイス E-STOP」は、接続中の全デバイスへゼロ指令を送信し
   ダイレクト送信を無効化します。緊急時はこれを押してください。
+- 外部ノードから接続する場合、ファームウェア側にCAN/シリアル途絶時の
+  フェイルセーフは無く、最後に受信した指令を保持し続けます。ノード終了時に
+  ゼロ指令を送る後始末は各ノードの責務です（[7.4節](#74-サンプルノード1-cubemars位置制御cr26_sokiより)
+  の `send_zero_and_stop()` を参照）。
 
-## 14. About
+## 15. About
 
 ツールバー右端の「Info…」から、バージョン情報とGitHubリンクを確認できます。
 
