@@ -2,6 +2,8 @@
 
 > 📖 マニュアル(GitHub Pages): https://rrst-nhk-project.github.io/ros2can/
 > （初めての方は [クイックスタート](https://rrst-nhk-project.github.io/ros2can/quickstart) がおすすめです）
+> 内部の処理の流れ（スレッド/タスク構成、シリアル/CANプロトコル詳細等）は
+> [技術マニュアル（内部実装編）](https://rrst-nhk-project.github.io/ros2can/internals) を参照してください。
 
 > 本パッケージは [serial_bridge](https://github.com/RRST-NHK-Project/serial_bridge) の後継です。
 > serial_bridgeとの比較（配線・GUI・対応アクチュエータ等）は
