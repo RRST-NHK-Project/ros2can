@@ -6,6 +6,7 @@ ros2can のデバイス一覧に対して行う。ANSIエスケープで画面�
 
 from __future__ import annotations
 
+import re
 import sys
 import unicodedata
 
@@ -24,6 +25,8 @@ _PANEL_WIDTH = 100
 
 _SPINNER_FRAMES = ("⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏")
 
+_ANSI_RE = re.compile(r"\x1b\[[0-9;]*m")
+
 _MODE_LABEL = {
     MODE_HARDWARE: "HW",
     MODE_SIMULATOR: "SIM",
@@ -40,17 +43,28 @@ def _display_width(text: str) -> int:
 
 
 def _fit(text: str, width: int) -> str:
-    """表示幅(全角=2)基準で切り詰め/右パディングする。"""
+    """表示幅(全角=2)基準で切り詰め/右パディングする。ANSIエスケープ(色指定)は
+    そのまま出力に残しつつ、幅計算にはカウントしない(カウントすると、色付き
+    文字列を埋め込んだ行だけパディング不足で右の枠線がズレる)。"""
     if width <= 0:
         return ""
     out = []
     total = 0
-    for c in text:
+    i = 0
+    n = len(text)
+    while i < n:
+        m = _ANSI_RE.match(text, i)
+        if m:
+            out.append(m.group())
+            i = m.end()
+            continue
+        c = text[i]
         w = 2 if unicodedata.east_asian_width(c) in ("F", "W") else 1
         if total + w > width:
             break
         out.append(c)
         total += w
+        i += 1
     pad = width - total
     return "".join(out) + (" " * pad if pad > 0 else "")
 
