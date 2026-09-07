@@ -19,8 +19,8 @@ Copyright (c) 2025 RRST-NHK-Project. All rights reserved.
 #define CAN_ID 103
 
 // モードの設定，どれか一つをコメントアウト解除すること
-// #define MODE_CAN
-#define MODE_CAN_HOST
+#define MODE_CAN
+// #define MODE_CAN_HOST
 // #define MODE_IO
 // #define MODE_DEBUG
 // #define MODE_CAN_MONITOR
