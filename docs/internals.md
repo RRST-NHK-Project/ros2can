@@ -33,6 +33,17 @@ title: ros2can 技術マニュアル（内部実装編）
 - [6. 安全機構・フェイルセーフの全体まとめ](#6-安全機構フェイルセーフの全体まとめ)
 - [7. 既知の注意点・実装上のTODO](#7-既知の注意点実装上のtodo)
 - [8. 主要ファイル索引](#8-主要ファイル索引)
+- [9. 付録: `serial_bridge`（前身パッケージ）の内部実装](#9-付録-serial_bridge前身パッケージの内部実装)
+  - [9.1 開発背景・設計思想](#91-開発背景設計思想)
+  - [9.2 ポート番号問題とID方式・仲介ノードという設計判断](#92-ポート番号問題とid方式仲介ノードという設計判断)
+  - [9.3 通信フレームの設計](#93-通信フレームの設計)
+  - [9.4 ROS 2側: 常駐スキャンスレッドと動的ノード生成 (`main.cpp`)](#94-ros-2側-常駐スキャンスレッドと動的ノード生成-maincpp)
+  - [9.5 ポートスキャン (`port_scanner.cpp`)](#95-ポートスキャン-port_scannercpp)
+  - [9.6 SerialBridgeNode: 接続管理・RX・TX (`bridge_node.cpp`)](#96-serialbridgenode-接続管理rxtx-bridge_nodecpp)
+  - [9.7 グラフィカルUI (`graphical_ui.hpp`)](#97-グラフィカルui-graphical_uihpp)
+  - [9.8 マイコン側: FreeRTOSタスク構成 (`firmware/esp32_serial_bridge`)](#98-マイコン側-freertosタスク構成-firmwareesp32_serial_bridge)
+  - [9.9 `ros2can` との主要な差分](#99-ros2can-との主要な差分)
+  - [9.10 `serial_bridge` 側 主要ファイル索引](#910-serial_bridge-側-主要ファイル索引)
 
 ---
 
@@ -55,6 +66,8 @@ title: ros2can 技術マニュアル（内部実装編）
 - **ノード/独立デバイス**: 同じ `xiao-esp32-s3_can2io` ファームウェアを別モード（`MODE_CAN`）で書き込んだ子基板、または `MODE_ROBOMAS`/`MODE_CUBEMARS` で書き込まれ独立CANバスに直結する基板、あるいは STM32 B-G431B-ESC1 上で SimpleFOC を使う `b-g431-esc1_can2io`（FOCモータ用、DJI RoboMaster互換のデータモデルで通信）。
 
 3系統ともプロトコルの型（24スロット、`int16`、ビッグエンディアン、XORチェックサム、CAN ID帯の分離など）を共有しており、**PC側とファームウェア側は独立して実装されているが、フレームフォーマットの取り決めのみで結合している**（共通ライブラリはない）。
+
+この「24スロットint16・XORチェックサム・バイト単位再同期」というプロトコルの原型は前身パッケージ `serial_bridge` に由来します。開発背景・設計判断の経緯や `serial_bridge` 自体の内部実装は[9. 付録: `serial_bridge`（前身パッケージ）の内部実装](#9-付録-serial_bridge前身パッケージの内部実装)を参照してください。
 
 ---
 
@@ -514,6 +527,142 @@ rxUpdated シグナル → DevicePanel.refresh_from_rx()（Monitor/Rawタブ更�
 | `can_task.cpp/hpp` | CANノード分配プロトコル（xiaoホストと共通方式） |
 | `frame_data.cpp/hpp` | 5スロットデータ実体 |
 | `status_led.cpp/hpp` | 状態LED |
+
+---
+
+## 9. 付録: `serial_bridge`（前身パッケージ）の内部実装
+
+> `serial_bridge` は `ros2can` の前身にあたる ROS 2 パッケージで、CANによるノード分配を持たず、マイコン1台につきUSBシリアル1本を直接ブリッジする「星型配線」構成です（[1.1 serial_bridgeとの比較](index.md#11-serial_bridgeとの比較)参照）。`ros2can` の `frame_codec.py`/`serial_task.cpp` が踏襲している「24スロットint16フレーム・START_BYTE(0xAA)によるバイト単位再同期・XORチェックサム」という設計は、すべて `serial_bridge` に由来するものであり、`ros2can` の基盤となった技術です。本節は開発当時の設計文書（社内解説記事）と `serial_bridge` 側のソース（`src/`, `include/serial_bridge/`, 代表ファームウェア `firmware/esp32_serial_bridge/`）を突き合わせてまとめたものです。
+
+### 9.1 開発背景・設計思想
+
+学ロボ25では無線（UDP）通信を採用していましたが、電波干渉により会場での通信が不安定になるという問題があり、学ロボ26では有線通信への切り替えが目標になりました。ロボコンでの有線通信はEtherCAT・CANが主流ですが、EtherCATは導入コストが大きく、CANは導入コストは低いものの開発コスト（CAN対応MD、CAN⇔各アクチュエータの変換など）が高いと判断され、いずれも当時の開発体制（開発者1名・低予算）には見合わないとして採用が見送られました。
+
+代わりに選ばれたのが**シリアル通信 + ESP32（Arduino言語）**という構成です。決定にあたっては以下の要件が明示的に定められていました。
+
+- 現在のリソース（開発者1名）で開発できること
+- 低予算で実装可能なもの
+- 追加のハードウェアが少ないこと（既存のハードをそのまま活用できること）
+- 高速・軽量であること
+- 学習コストが低いこと（できればArduino言語で）
+- ROS依存でないこと
+- 有線通信であること
+- 汎用性が高いこと（別の大会・機体でも流用できる）
+
+マイコンにSTM32ではなくESP32を選んだのも、「他大学ではSTM32が主流だが、CubeIDEの学習コストが高すぎて断念」という、同じ「1回生が大多数」という体制上の制約に基づく判断です。通信部分（フレームプロトコル）自体は特定マイコンに依存しないシンプルな設計にすることが最初から意図されており、後年 `stm32_serial_bridge`・`b-g431-esc1_simplefoc_serial_bridge` など他マイコン向けファームウェアへの移植や、`ros2can` 側での再設計・拡張が可能になった土台はここにあります。
+
+### 9.2 ポート番号問題とID方式・仲介ノードという設計判断
+
+Linux上のシリアルポートはUSBに挿した順番で `/dev/ttyUSBn` の番号が割り当てられるため、「機体側の各制御ノードが個別に決め打ちのポート番号を扱う」設計では、マイコンを挿す順序が変わるたびに対応関係が崩れます（起動のたびに順番通り挿し直すのは非現実的、という課題として明記されています）。
+
+この問題への対応として、次の2段階の設計判断がなされました。
+
+1. **マイコン側にIDを持たせ、常時PCへ送信し続ける**: ポート番号ではなくフレームに埋め込まれたIDでマイコンを識別することで、挿す順序に依存しなくなる。
+2. **ポート操作を単一の仲介ノードに集約する**: 各ノードが個別に「ポートを開いてIDを確認し、違えば閉じて次のポートを試す」という探索を行うと、複数ノードのポートオープン/クローズのタイミングが互いに干渉し、正常に動作しない。そのため、ポートの走査・オープン・ID確認を一手に引き受ける専用ノード（`serial_bridge` 本体）を用意し、他の制御ノードは `serial_tx_[ID]`/`serial_rx_[ID]` というトピックのみを介してやり取りする。
+
+この「ポート専有主体を1つに集約する」という設計判断は `ros2can` にもそのまま引き継がれており、`hardware_manager.py` が単一の `HardwareManager`（GUIプロセス内で唯一シリアルポートを直接握る主体）としてスキャン・オープン・専有を一元管理する構造の原型になっています（[2.4節](#24-ハードウェア検出管理-hardware_managerpy)）。
+
+### 9.3 通信フレームの設計
+
+フレーム構造は「スタートバイト（フレーム破損時の復帰点）」「ID（マイコンの識別）」「ペイロード長（受信データの処理に利用）」「ペイロード（アクチュエータ指令値・センサ値）」「チェックサム（受信フレームの検証、破損がないか確認）」という役割分担で設計されています。ペイロードの各値はノード上では16bitとして扱われますが、シリアル通信で送信する際には8bit（1バイト）×2に分割されます（ビッグエンディアン）。
+
+代表ファームウェア `esp32_serial_bridge` における標準スロット割当は以下の通りです。
+
+| 方向 | スロット | 用途 |
+|:---|---:|:---|
+| ROS 2 → マイコン | 1–8 | DCモーターの指令値（-255〜255） |
+| ROS 2 → マイコン | 9–16 | PWMサーボの指令値（0〜270） |
+| ROS 2 → マイコン | 17–23 | トランジスタアレイへの指令値（0 or 1） |
+| マイコン → ROS 2 | 1–8 | エンコーダーのパルス |
+| マイコン → ROS 2 | 9–16 | マイクロスイッチ（デジタル入力） |
+| マイコン → ROS 2 | 17–23 | その他センサのために予約 |
+
+サーボ指令値のレンジ「0〜270」は、`ros2can` の `device_profiles.py` におけるサーボ既定レンジ（0〜270deg、[9.2節](index.md#92-mitモードの活用)の角度クランプ議論でも参照される値）と一致しており、単なる偶然ではなく `serial_bridge` 時代からの値がそのまま踏襲されていることが伺えます。
+
+このスロット割当は `ros2can` の `device_profiles.py` のような可変プロファイルではなく、ファームウェアターゲットごとに固定された単一の取り決めです。どのスロットが何を意味するかを解釈する仕組み（GUI等）は `serial_bridge` 自体には無く、この規約を踏まえて各制御ノードを自作する前提になっています。
+
+### 9.4 ROS 2側: 常駐スキャンスレッドと動的ノード生成（`main.cpp`）
+
+`main.cpp` は次の要素で構成されます。
+
+- `rclcpp::init()` 後、`excluded_ports`/`rx_timeout_sec`/`reconnect_interval_sec`/`scan_interval_ms` をパラメータとして読み込む `debug_node`（ステータス確認用の空ノード）を生成し、`MultiThreadedExecutor` に登録する。
+- `kLogOutputMode` が `kNone`/`kGraphical` の場合、`rcutils_logging_set_default_logger_level(RCUTILS_LOG_SEVERITY_FATAL)` でデフォルトロガーの重大度をFATALまで引き上げる。**この設定はノード個別のロガーにも及ぶ**ため、`kGraphical` モードでは `bridge_node.cpp` 内の通常の `RCLCPP_INFO`/`RCLCPP_WARN`（`verbose_packet_log` によるフレームダンプ含む）も実質的に画面へ出力されなくなる点に注意（見えるのは `graphical_ui` が直接 `std::cout` へ書き込むASCIIダッシュボードのみ）。
+- バックグラウンド `std::thread`（スキャナスレッド）を1本起動し、`node_map`（ID→`SerialBridgeNode`）・`known_ports` を `std::mutex`（`map_mutex`）で保護しながら共有する。ループごとに:
+  1. `known_ports` を「既に使用中のポート」としてコピーし、`detect_serial_devices(skip, excluded_ports)` を呼ぶ。
+  2. 検出結果を走査し、未知のIDなら `SerialBridgeNode` を新規生成して `node_map`/`known_ports`/`executor` に登録。既知だが切断中のIDが別ポートで再検出された場合は、旧ノードを `executor.remove_node()` してから新ノードを生成・登録（差し替え）。接続中の既知IDは何もしない。
+  3. `scan_interval_ms`（既定5000ms）を100ms刻みで待機し、シャットダウン要求（`running`/`rclcpp::ok()`）に迅速に反応できるようにする。
+- コード中のコメントには「`is_connected()` はatomicだが `map_mutex` とは同期しないため、接続直後のノードを稀に置き換えてしまう可能性があるが、新ノードが即座に再接続するため実害はない」という既知の（許容された）レースコンディションが明記されています。
+
+これは `ros2can` の `HardwareManager`/`_ScannerThread`（[2.4節](#24-ハードウェア検出管理-hardware_managerpy)）の直接の前身ですが、アーキテクチャは異なります。`ros2can` はQtの単一イベントループ+タイマーでロックを一切使わない設計に移行済みですが、`serial_bridge` は古典的な「ROS 2 `MultiThreadedExecutor` + 素の `std::thread` + `std::mutex`」というマルチスレッドモデルのままです。
+
+### 9.5 ポートスキャン（`port_scanner.cpp`）
+
+- `list_serial_ports()`: `/dev/ttyUSB*`・`/dev/ttyACM*` を `glob()` で列挙する。
+- `detect_serial_devices(skip_ports, excluded_ports)`: 列挙したポートのうち `skip_ports`（他ノードが既に専有中）・`excluded_ports`（設定ファイルで除外指定）に含まれるものを飛ばし、残りを1つずつ:
+  1. `open_serial_port()`: `open()`(raw) → `cfmakeraw` → 115200bps → `VMIN=0`/`VTIME=1`(0.1秒) → `usleep(500000)`（USB CDCの安定待ち、0.5秒）。
+  2. `read_frame(fd, frame, timeout_ms=2000)`: 1バイトずつ読み、`START_BYTE` を待ってからLENGTHを取得し（フレーム全長 `3+LEN+1` が `MAX_FRAME_SIZE=256` を超えれば失敗）、チェックサム（ID〜DATAのXOR）を検証してから `Frame{id, data}` を返す。最大2秒でタイムアウト。
+  3. 成功すれば `result[frame.id] = port`。
+- **排他制御（`TIOCEXCL`等）は一切使われていません**。`ros2can` 側で既に述べられている通り（[2.3節](#23-シリアルリンク層と排他制御-serial_linkpy)）、これが「`ros2can` が先にポートを掴んでいれば `serial_bridge` の `open()` は失敗するだけで済むが、逆方向は防げない」という非対称な保護の根本原因です。
+- 走査1周分のコストは、未接続・非対応ポートが多いと「ポート数 × 最大約2.5秒（0.5秒安定待ち+最大2秒タイムアウト）」に達し得ます。この走査はバックグラウンドスレッドから `scan_interval_ms`（既定5秒）ごとに直列実行されます。
+
+### 9.6 SerialBridgeNode: 接続管理・RX・TX（`bridge_node.cpp`）
+
+1デバイス=1 `rclcpp::Node`（`serial_bridge_<id>`）です。`serial_rx_<id>`（Publish）/`serial_tx_<id>`（Subscribe）を持ち、`kUpdatePeriodMs=5ms` のwall timerが `update()`（再接続判定+RX）を駆動します。TXは**タイマーではなくsubscriptionコールバック駆動**（`tx_callback()`）で、メッセージが来た瞬間にその場で書き込みます。
+
+- **`try_open_port()`**: `close_port()` → `open()`(`O_RDWR|O_NOCTTY|O_SYNC`) → `cfmakeraw`+115200bps+`VMIN=0`/`VTIME=0`（非ブロッキング）→ `tcflush(fd_, TCIOFLUSH)`。このflushは「スキャナが同じポートを一時的に開いて読み込んだ後に残ったバイト列や、切断前の途中フレームがバッファに残っていると START_BYTE 同期が取れなくなる」ことを明示的に防ぐための処理です（コードコメントに明記）。
+- **`update()`**: 未接続なら `reconnect_interval_sec`（既定3.0秒）間隔で再接続を試行。接続中なら `read()` で最大 `kReadBufferSize=512` バイトを読み込み、`rx_buffer_`（`std::deque<uint8_t>`）へ追加します。**このバッファは以前は関数内の `static` 変数でしたが、「セグフォ防止のため」メンバ変数へ移動された経緯がコメントに残っています**（過去に踏んだ既知の不具合）。読み取り0バイトが `rx_timeout_sec`（既定2.0秒）続くと切断扱い、`EIO`/`ENODEV`/`ENXIO` の読み取りエラーは即切断扱いです。
+- フレーム抽出は1回の `update()` あたり最大 `MAX_FRAMES=64` フレームまでという上限付きで、バッファが尽きるかフレーム未充足になるまでループします（1デバイスの大量データがexecutor全体を長時間占有しないための上限）。
+  - 先頭が `START_BYTE` でなければ1バイト破棄。
+  - `LENGTH` からフレーム全長を計算し、バッファがまだ足りなければ `return`（次回受信を待つ）。
+  - チェックサム不一致は1バイト破棄して再走査。
+  - **ID不一致の場合は1バイトではなく検証済みフレーム全体（`frame_size`バイト）を破棄**します（チェックサムで整合性が確認済みの「別デバイス宛の正常なフレーム」なので、1バイトずつ捨てるより安全かつ効率的にスキップできます）。
+  - 全て一致すれば24個の `int16`（ビッグエンディアン）にデコードし `Int16MultiArray` として `serial_rx_<id>` へPublish、`verbose_packet_log` が有効なら内容をログ出力。
+- **`tx_callback()`**: `fd_<0` または受信データ長が24未満なら黙って破棄。それ以外はフレーム（`[0xAA][ID][LEN=48][24×int16 big-endian][XOR checksum]`）を組み立てて即座に `write()`。**周期的な再送や直近値の保持・自動再送機構は無く**、外部ノードが `serial_tx_<id>` へのPublishを止めれば（クラッシュ等）、マイコン側は最後に受信した指令を保持し続けます（`ros2can` の `direct_tx` 20Hzの周期送信のような仕組みは存在しません）。
+- **`maybe_log_status()`**: `status_log_period_ms`（既定100ms、下限100ms）ごとにRXレート・帯域・バス利用率（115200bpsに対する `(rx+tx)Bps×10bit/byte` の割合、`kUartBitsPerByte=10.0`）を集計します。`kGraphical` モードでは1デバイス1行のASCIIバー付き固定行として `graphical_ui` へ、それ以外は `RCLCPP_INFO` 2行として出力します。
+
+### 9.7 グラフィカルUI（`graphical_ui.hpp`）
+
+`kGraphical` モード専用の、ANSIエスケープシーケンスによる簡易ターミナルダッシュボードです。`kGraphicalUiFrameMs`（既定100ms）ごとに動作する専用アニメーションスレッド（`std::thread` + `std::mutex` で状態を保護）が画面全体を `\033[H\033[2J` で再描画し、スキャン状況・検出済みID一覧・デバイスごとの状態行（接続状態`[ON]`/`[OFF]`、RXレートのASCIIバー、送受信カウンタ、チェックサム/IDミスマッチ/ドロップ数、バッファ長、累積バイト数など）を1画面にまとめて表示します。行の色は利用率・エラー数から動的に判定されます（緑=低負荷無エラー→黄→オレンジ→赤=高負荷またはエラー多数）。`ros2can` にはこれに相当するターミナルダッシュボードは無く、代わりにPyQt5のフルGUI（Monitor/Rawタブ等）が同等の役割を担います。
+
+### 9.8 マイコン側: FreeRTOSタスク構成（`firmware/esp32_serial_bridge`）
+
+代表ターゲット `esp32_serial_bridge` の `main.cpp`/`serial_task.cpp` は次の構成です。
+
+- 起動時: `Serial.begin(115200)` → `delay(200)` → `delay(100 * DEVICE_ID)`（IDごとに起動タイミングをずらす、複数マイコン同時起動時のバス輻輳回避）→ LEDを `DEVICE_ID` 回点滅（自身のIDを目視確認できるようにする自己診断）→ `serialTask` を生成（スタック2048語・優先度10）。
+- `serialTask` は1つのFreeRTOSタスク内でRX（`receive_frame()`、毎ループ呼び出し）とTX（`send_frame()`、`TX_PERIOD_MS` 経過判定つき）の両方を処理し、ループ末尾で `vTaskDelay(1ms)` します。`TX_PERIOD_MS` は既定100msですが、`MODE_INPUT`/`MODE_ROBOMAS_PLUS_INPUT` では20msに短縮されます（入力系はセンサ値の更新をより高頻度に送りたいため）。
+  - RXは `WAIT_START → WAIT_ID → WAIT_LEN → WAIT_DATA → WAIT_CHECKSUM` のバイト単位ステートマシンで、`LENGTH` が `Rx16NUM×2` を超える等の異常があれば即座に `WAIT_START` へ戻ります。チェックサム一致かつID一致の場合のみ `Rx_16Data[]` へ反映されます。
+- `config.hpp` で選択する8種類の `MODE_*`（`MODE_OUTPUT`/`MODE_INPUT`/`MODE_IO`/`MODE_ROBOMAS`/`MODE_ROBOMAS_PLUS_OUTPUT`/`MODE_ROBOMAS_PLUS_INPUT`/`MODE_ROBOMAS_PLUS_IO`/`MODE_DEBUG`）はちょうど1つだけ定義する必要があり、0個または2個以上の定義は `#error` でコンパイルエラーになります（`ros2can` の `xiao-esp32-s3_can2io` ファームウェアにおける同様の排他チェック、[3.1節](#31-freertosタスク構成とモード分岐)と同じ設計パターン）。
+- `Output_Task`/`Input_Task`（`MODE_IO`では統合された `IO_Task`）は5ms周期（`vTaskDelayUntil`）で、`Rx_16Data[]`/`Tx_16Data[]` を介してGPIO（サーボ角度→パルス幅→duty変換、モータのPWM+DIR出力、トランジスタON/OFF、エンコーダのPCNT読み取り、スイッチのdigitalRead）を処理します。
+- `stm32_serial_bridge`・`xiao_esp32_s3_(smd_)serial_bridge`・`esp32_s3_serial_bridge`・`arduino_uno_serial_bridge`（WIP）・`b-g431-esc1_simplefoc_serial_bridge` など他ターゲットも同一のフレームプロトコル・FreeRTOSタスク構成パターン（`serial_bridge/docs/flow_chart.md` 参照）を踏襲しています。
+
+### 9.9 `ros2can` との主要な差分
+
+| 観点 | `serial_bridge` | `ros2can` |
+|:---|:---|:---|
+| 配線 | マイコン1台＝USB1本の星型 | CANホスト1台（USB1本）＋CANバスでのデイジーチェーン |
+| ポート専有 | 排他フラグなし | `TIOCEXCL`（片方向のみ保護、[2.3節](#23-シリアルリンク層と排他制御-serial_linkpy)） |
+| プロセス/スレッドモデル | `MultiThreadedExecutor`＋独立`std::thread`（`mutex`で共有状態を保護） | Qt単一イベントループ＋`QTimer`（ロック無し）、スキャンのみ`QThread` |
+| UI | ターミナルのみ（テキスト/ASCIIグラフィカル/サイレントの3モード） | PyQt5フルGUI（Control/Monitor/Raw/Info） |
+| TXの周期送信 | 無し（Subscribeの都度、即時write） | あり（`direct_tx`ON時、20Hzで`publish_all_direct()`が周期送信） |
+| スロットの意味付け | ファームウェアターゲットごとに固定（TX1-8=DCモータ等） | `device_profiles.py`による可変プロファイル、CANノードへの動的分配 |
+| エンコーダのラップアラウンド展開 | 無し（生パルス値をそのままPublish） | あり（`counter_unwrapper.py`、[2.7節](#27-エンコーダunwrapアルゴリズム-counter_unwrapperpy)） |
+| 実機不要の動作確認 | 無し | あり（仮想デバイス機能） |
+| CubeMars/RoboMaster専用ドライバ | 無し | あり（MITモード等、[9章](index.md#9-cubemars-akシリーズmode_cubemars)/[10章](index.md#10-djiロボマスmode_robomas)） |
+
+いずれも `ros2can` が、`serial_bridge` の実運用（学ロボ25の無線通信不安定化を受けた有線化、ポート番号問題とID方式、単一仲介ノードによる排他）から得た知見を土台に、CAN化とGUI化によって拡張したものです。
+
+### 9.10 `serial_bridge` 側 主要ファイル索引
+
+| ファイル | 役割 |
+|:---|:---|
+| `src/main.cpp` | エントリポイント、`MultiThreadedExecutor`、バックグラウンドスキャンスレッド |
+| `src/port_scanner.cpp` | ポート走査・プローブ受信によるID検出 |
+| `src/bridge_node.cpp` | 1デバイス1ノード、フレームの送受信・再接続・ステータスログ |
+| `include/serial_bridge/config.hpp` | フレーム定数・ログ出力モード・グラフィカル表示項目の設定 |
+| `include/serial_bridge/graphical_ui.hpp` | ASCIIダッシュボード（`kGraphical`モード専用） |
+| `firmware/esp32_serial_bridge/src/main.cpp` | setup/loop、`MODE_*`分岐、タスク生成 |
+| `firmware/esp32_serial_bridge/src/serial_task.cpp` | UARTフレームの送受信ステートマシン |
+| `firmware/esp32_serial_bridge/src/pin_ctrl_task.cpp` | GPIO（サーボ/モータ/TR/エンコーダ/スイッチ）処理 |
 
 ---
 
