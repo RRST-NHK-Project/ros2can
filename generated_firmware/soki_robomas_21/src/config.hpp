@@ -181,9 +181,10 @@ Copyright (c) 2025 RRST-NHK-Project. All rights reserved.
 #define ROBOMAS_OUTPUT_GAIN 10.0f   // PID出力 -> 電流指令[A]への換算係数
 #define ROBOMAS_MAX_CURRENT_A 20.0f // 電流指令の飽和値[A] (C620仕様上限)
 #elif ROBOMAS_MOTOR_TYPE == ROBOMAS_MOTOR_M2006
-// Kp=0.8のため誤差1.25rpm(=max_out/Kp)を超えると出力は電流上限1.0Aに張り付く。
-// 目標200rpmに対し実測が183rpm付近で頭打ちなのはこの電流上限による飽和であり、
-// ゲインでは解消しない(電流上限を上げない前提で追い込む場合はここが天井)。
+// Kp=0.8のため誤差1.25rpm(=max_out/Kp)を超えると出力は電流上限(ROBOMAS_MAX_
+// CURRENT_A)に張り付く。目標200rpmに対し実測が183rpm付近で頭打ちなのはこの
+// 電流上限による飽和であり、ゲインでは解消しない(電流上限を上げない前提で
+// 追い込む場合はここが天井)。
 // Kdは旧増分PID(dt未除算)向けの値0.02のままだった。PID.hppのDifferential_は
 // dtで除算する実装のため、dt≈1msでは同じKd値でも実効ゲインが約1000倍になり、
 // 速度センサの数rpmのノイズがそのまま数十A相当に増幅されて出力を瞬間的に
@@ -193,7 +194,17 @@ Copyright (c) 2025 RRST-NHK-Project. All rights reserved.
 #define ROBOMAS_KI_VEL 0.0f
 #define ROBOMAS_KD_VEL 0.0f
 #define ROBOMAS_OUTPUT_GAIN 1.0f
-#define ROBOMAS_MAX_CURRENT_A 1.0f
+// 2026-09-09、ユーザー指摘: 「M2006は10Aいけるはず」。C610の実仕様上限は10A
+// (robomas.cppのsendCurC620()がM2006向けに MAX_CUR=10.0f / MAX_CUR_VAL=10000
+// でCAN送信をクランプしているのがその根拠。以前ここは1.0Aだった)。ここ
+// (ROBOMAS_MAX_CURRENT_A、MIT/速度PID制御ループ側のソフトウェア飽和値)は
+// sendCurC620()より手前でconstrainFloat()により先に頭打ちにしていたため、
+// 実際にはCAN配線上送れる10Aの1/10しか出せていなかった。差動z/rの「動き出し
+// トルク不足」の主因はゲイン不足よりこの制限自体だった可能性が高い。
+// 仕様上限10Aへ一気に引き上げるのは発熱・機構への負荷の観点で急すぎるため、
+// 段階的な引き上げとしてまず5.0Aへ変更(ユーザー判断、2026-09-09)。実機で
+// 発熱・振動・機構の負荷を確認しながら、必要ならさらに引き上げること。
+#define ROBOMAS_MAX_CURRENT_A 5.0f
 #elif ROBOMAS_MOTOR_TYPE == ROBOMAS_MOTOR_GM6020
 // PD制御 (Ki=0)。実測: P単独でKp=0.0080から振動 -> 限界感度 Ku=0.0080。
 //
@@ -244,6 +255,21 @@ Copyright (c) 2025 RRST-NHK-Project. All rights reserved.
 #define ROBOMAS_MIT_KP_LSB 0.001f            // 比例ゲイン。0.001(A/deg)/LSB
 #define ROBOMAS_MIT_KD_LSB 0.0001f           // 微分ゲイン。0.0001(A/rpm)/LSB
 #define ROBOMAS_MIT_CURRENT_FF_LSB_A 0.001f  // 電流フィードフォワード。0.001A/LSB
+
+// ---- CAN帰還(ESC->本機)の途絶検出 ----
+// ESC(C610/C620)側だけ電源を落とす/入れ直しても本基板(マイコン)自体は動き続ける
+// 構成(ユーザー報告: マイコンの電源は入れたまま他モーターの電源を落として再起動)
+// では、何もしないとreceiveFeedback()が更新しなくなったangle[]/vel[]を「現在値」
+// としてMIT位置PD制御・ホストへの帰還送信の両方に使い続けてしまい、ESC電源復帰の
+// 瞬間に古いangle[]と(host側は途絶に気付かず送り続けている)新しい指令値との差分
+// で電流指令が急変し、モータが唐突に動き出す不具合の原因になっていた
+// (2026-09-08、robomas.cpp receiveFeedback()/robomasTask()参照)。
+#define ROBOMAS_FEEDBACK_STALE_MS 100  // これ以上帰還が来なければ「途絶」とみなす
+                                        // (通常の帰還間隔5msに対し十分大きく、
+                                        // 電源off/onの時間スケールに対しては
+                                        // 十分小さい)
+#define ROBOMAS_RESYNC_HOLD_MS 200     // 途絶から復帰した直後、電流指令を0に
+                                        // 固定しておく猶予時間
 
 // ================= CubeMars AK関連 (MODE_CUBEMARSのみ有効) =================
 // MODE_CUBEMARSはMODE_ROBOMASと同様、xiao-esp32-s3_can2ioのノード/スロット分配方式
