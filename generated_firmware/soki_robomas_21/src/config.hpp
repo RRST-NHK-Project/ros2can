@@ -179,7 +179,10 @@ Copyright (c) 2025 RRST-NHK-Project. All rights reserved.
 #define ROBOMAS_KI_VEL 0.0f
 #define ROBOMAS_KD_VEL 0.05f
 #define ROBOMAS_OUTPUT_GAIN 10.0f   // PID出力 -> 電流指令[A]への換算係数
-#define ROBOMAS_MAX_CURRENT_A 20.0f // 電流指令の飽和値[A] (C620仕様上限)
+#define ROBOMAS_MAX_CURRENT_A 20.0f // 電流指令の飽和値[A] (C620仕様上限、MITモード用)
+// 速度モード用の電流上限(2026-09-09追加。M2006の項のコメント参照)。M3508は
+// MITモードでガクガクの問題が出ていないため、ひとまずMITモードと同じ値のまま。
+#define ROBOMAS_MAX_CURRENT_VEL_A 20.0f
 #elif ROBOMAS_MOTOR_TYPE == ROBOMAS_MOTOR_M2006
 // Kp=0.8のため誤差1.25rpm(=max_out/Kp)を超えると出力は電流上限(ROBOMAS_MAX_
 // CURRENT_A)に張り付く。目標200rpmに対し実測が183rpm付近で頭打ちなのはこの
@@ -204,7 +207,20 @@ Copyright (c) 2025 RRST-NHK-Project. All rights reserved.
 // 仕様上限10Aへ一気に引き上げるのは発熱・機構への負荷の観点で急すぎるため、
 // 段階的な引き上げとしてまず5.0Aへ変更(ユーザー判断、2026-09-09)。実機で
 // 発熱・振動・機構の負荷を確認しながら、必要ならさらに引き上げること。
+//
+// ただし5.0Aへの引き上げ後、ホーミング(速度モード)がガクガクする副作用が
+// 出た(ユーザー報告、2026-09-09)。速度モードの電流上限は元々1.25rpm
+// (=1.0A/ROBOMAS_KP_VEL)を超えると1.0Aへ張り付く設計で、1.0Aという飽和が
+// 事実上のダンピングとして働いていた。5.0Aまで出せるようになったことで
+// 誤差1.25~6.25rpmの範囲で最大5倍の電流が出るようになり、Kd=0(微分ダンピング
+// 無し)のP制御がこの領域で強く効きすぎて振動するようになった。
+// MITモード(位置制御、動き出しトルク不足の対策が必要)と速度モード(ホーミング、
+// 元の1.0Aで安定していた)とで要求が異なるため、電流上限をモードごとに分離した
+// (ユーザー指定:「速度制御モードのときのみ1.0Aに制限」)。ROBOMAS_MAX_CURRENT_A
+// はMITモード用(5.0A)、ROBOMAS_MAX_CURRENT_VEL_Aは速度モード用(元の1.0Aへ復元)。
+// robomas.cppのrobomasTask()側で使い分けること。
 #define ROBOMAS_MAX_CURRENT_A 5.0f
+#define ROBOMAS_MAX_CURRENT_VEL_A 1.0f
 #elif ROBOMAS_MOTOR_TYPE == ROBOMAS_MOTOR_GM6020
 // PD制御 (Ki=0)。実測: P単独でKp=0.0080から振動 -> 限界感度 Ku=0.0080。
 //
@@ -229,6 +245,9 @@ Copyright (c) 2025 RRST-NHK-Project. All rights reserved.
 // sendCurGm6020()が±3.0A(±16384)で切っているので外側もそこに合わせる。
 // 10.0Aのままだと飽和点が実効上限とずれ、アンチワインドアップが機能しない。
 #define ROBOMAS_MAX_CURRENT_A 3.0f
+// 速度モード用の電流上限(2026-09-09追加。M2006の項のコメント参照)。GM6020は
+// MITモードでガクガクの問題が出ていないため、ひとまずMITモードと同じ値のまま。
+#define ROBOMAS_MAX_CURRENT_VEL_A 3.0f
 #else
 #error "ROBOMAS_MOTOR_TYPE: unknown motor type"
 #endif

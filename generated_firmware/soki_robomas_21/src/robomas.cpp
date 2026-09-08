@@ -355,7 +355,16 @@ void robomasTask(void *pvParameters) {
                 target_rpm[i] = Rx_16Data[i];
                 vel_pid[i].set_target(target_rpm[i]);
                 float vel_out = vel_pid[i].update(vel[i], dt);
-                motor_output_current[i] = constrainFloat(vel_out * ROBOMAS_OUTPUT_GAIN, -ROBOMAS_MAX_CURRENT_A, ROBOMAS_MAX_CURRENT_A);
+                // 速度モード専用の電流上限(config.hppのROBOMAS_MAX_CURRENT_VEL_A
+                // コメント参照、2026-09-09追加)。MITモード用のROBOMAS_MAX_CURRENT_Aを
+                // 引き上げた際、速度モード(homing_node)の速度PID(Kp=0.8のみで
+                // Kd=0)がそれまで電流上限への飽和で得ていたダンピングを失い、
+                // ホーミングがガクガクする副作用が出た(ユーザー報告)。速度モードだけ
+                // 元の(安定していた)電流上限に戻すことで、MITモード側の動き出し
+                // トルク不足対策と両立させる(ユーザー指定:「速度制御モードの
+                // ときのみ1.0Aに制限」)。
+                motor_output_current[i] = constrainFloat(vel_out * ROBOMAS_OUTPUT_GAIN,
+                    -ROBOMAS_MAX_CURRENT_VEL_A, ROBOMAS_MAX_CURRENT_VEL_A);
             }
         }
 
