@@ -9,7 +9,7 @@
 [xiao-esp32-s3_can2io/src/frame_data.hpp, can_task.cpp, config.hpp より]
 
   ENCx2/MDx2, SWx3, SERVOx3。SERVOn/SWn はピン共有 (config.hpp の MULTIn で切替、
-  0=スイッチ入力/1=サーボ出力)。ENCn/MDn もピン共有 (config.hpp の ENCn_MD で切替、
+  0=スイッチ入力/1=サーボ出力/2=デジタル出力)。ENCn/MDn もピン共有 (config.hpp の ENCn_MD で切替、
   0=エンコーダ入力/1=MD(PWM+DIR)出力)。MDn は符号=方向、絶対値=PWMデューティ
   (±MD_PWM_MAX、config.hppのMD_PWM_RESOLUTIONから算出、既定8bitで255)。
 
@@ -141,7 +141,11 @@ def _append_generic_io_node_channels(
 ) -> None:
     """汎用IOノード (xiao-esp32-s3_can2io 系, ENCx2/MDx2/SWx3/SERVOx3) の
     1ノード分のチャンネルを tx/rx に追加する。SERVOn と SWn はピン共有
-    (ファームウェア config.hpp の MULTIn で入出力を切替、n=1..3、0=スイッチ入力/1=サーボ出力)。
+    (ファームウェア config.hpp の MULTIn で入出力を切替、n=1..3、
+    0=スイッチ入力/1=サーボ出力/2=デジタル出力)。ここではMULTIn=1(サーボ)の
+    前提でSERVOnをdeg単位のチャンネルとして生成する。MULTIn=2(デジタル出力)で
+    使う場合、送信するdeg値は0か非0かだけがファームウェアで参照される
+    (角度としての意味は持たない)。
     ENCn と MDn もピン共有 (config.hpp の ENCn_MD で入出力を切替、n=1..2、
     0=エンコーダ入力/1=MD(PWM+DIR)出力)。MDn は符号=方向、絶対値=PWMデューティ
     (±MD_PWM_MAX、config.hppのMD_PWM_RESOLUTIONから算出、既定8bitで255)。
@@ -376,7 +380,8 @@ def make_can_host_profile(
     """xiao-esp32-s3_can2io MODE_CAN_HOST 用プロファイル。
 
     ENCx2/MDx2, SWx3, SERVOx3。SERVOn と SWn はピン共有 (ファームウェア
-    config.hpp の MULTIn で入出力を切替、n=1..3, 0=スイッチ入力/1=サーボ出力)。
+    config.hpp の MULTIn で入出力を切替、n=1..3, 0=スイッチ入力/1=サーボ出力/
+    2=デジタル出力)。
     ENCn と MDn もピン共有 (config.hpp の ENCn_MD で入出力を切替、n=1..2、
     0=エンコーダ入力/1=MD(PWM+DIR)出力)。
 

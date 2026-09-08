@@ -93,9 +93,9 @@ Copyright (c) 2025 RRST-NHK-Project. All rights reserved.
 // 汎用（MULTI）ポートの設定（スイッチ入力:0, サーボ出力:1, デジタル出力:2）
 // デジタル出力(2)はSERVOn_MIN_US等の角度/パルス幅設定を無視し、指令値が0か
 // 非0かでHIGH/LOWを出力する(pin_ctrl_task.cppのIO_Servo_Outout()参照)。
-#define MULTI1 0
-#define MULTI2 0
-#define MULTI3 0
+#define MULTI1 2
+#define MULTI2 2
+#define MULTI3 2
 
 // ENC/MDポートの設定（エンコーダ:0, MD:1）
 // ENC1(ENC1_A/ENC1_B)をMD1のPWM/DIRへ、ENC2(ENC2_A/ENC2_B)をMD2のPWM/DIRへ転用する。

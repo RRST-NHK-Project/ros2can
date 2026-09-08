@@ -223,6 +223,11 @@ class FirmwareDialog(QDialog):
             combo = QComboBox()
             combo.addItem("スイッチ入力 (0)", 0)
             combo.addItem("サーボ出力 (1)", 1)
+            combo.addItem("デジタル出力 (2)", 2)
+            combo.setToolTip(
+                "デジタル出力(2)は角度/パルス幅設定を無視し、指令値が0か非0かで"
+                "HIGH/LOWを出力します(サーボではなくリレーやLED等の単純なON/OFF"
+                "負荷向け)。")
             self.multi_combos.append(combo)
             form.addRow(f"MULTI{i + 1}:", combo)
 
@@ -250,7 +255,8 @@ class FirmwareDialog(QDialog):
             "SERVOn_MIN_US/MAX_US(パルス幅) と MIN_DEG/MAX_DEG/INIT_DEG(角度) を"
             "サーボごとに設定します。BOARD_SOKIではMULTIn=1(サーボ出力)のチャンネルの"
             "みSERVO1-3が有効、BOARD_SSではSERVO1-5が常時有効です(SERVO4/5は"
-            "BOARD_SOKI/BOARD_MESでは未配線・未使用)。")
+            "BOARD_SOKI/BOARD_MESでは未配線・未使用)。MULTIn=2(デジタル出力)の"
+            "チャンネルはこの設定を無視します。")
         servo_note.setWordWrap(True)
         servo_note.setStyleSheet("color: #5f6368;")
         gen_layout.addWidget(servo_note)
