@@ -24,10 +24,22 @@ config.hppのROBOMAS_MOTOR_TYPEで選択した機種(M3508/M2006/GM6020)を、
     4-7:   control_mode  モータ1-4: 0=速度ループ(既定), 1=MIT(位置PD制御)
                           全ゼロ(E-STOP/未接続時の既定)で0=速度・target=0となり、
                           安全にゼロ速度指令(その場停止)になる(既存動作から変更無し)。
-    8-11:  mit_velocity_ff (モータ1-4): MITモード時のみ参照。目標速度FF、1rpm/LSB
-    12-15: mit_kp          (モータ1-4): MITモード時のみ参照。比例ゲイン、0.001(A/deg)/LSB
-    16-19: mit_kd          (モータ1-4): MITモード時のみ参照。微分ゲイン、0.0001(A/rpm)/LSB
-    20-23: mit_current_ff  (モータ1-4): MITモード時のみ参照。電流FF、0.001A/LSB
+    8-23: MITモードと速度モードでスロットの意味が異なる(モータごとのcontrol_mode
+          で排他的に切り替わるため衝突しない、2026-09-09、速度モード側追加):
+      MITモード(control_mode=1)時のみ参照:
+        8-11:  mit_velocity_ff (モータ1-4): 目標速度FF、1rpm/LSB
+        12-15: mit_kp          (モータ1-4): 比例ゲイン、0.001(A/deg)/LSB
+        16-19: mit_kd          (モータ1-4): 微分ゲイン、0.0001(A/rpm)/LSB
+        20-23: mit_current_ff  (モータ1-4): 電流FF、0.001A/LSB
+      速度モード(control_mode=0)時のみ参照(以前は未使用だった):
+        8-11:  vel_kp           (モータ1-4): 速度PID比例ゲイン、config.hppのROBOMAS_VEL_KP_LSB
+        12-15: vel_ki           (モータ1-4): 速度PID積分ゲイン、ROBOMAS_VEL_KI_LSB
+        16-19: vel_kd           (モータ1-4): 速度PID微分ゲイン、ROBOMAS_VEL_KD_LSB
+        20-23: vel_max_current_a(モータ1-4): 速度モード電流上限[A]、ROBOMAS_VEL_MAX_CURRENT_LSB
+      全ゼロ(E-STOP/未接続時の既定)では速度モードのKp/Ki/Kd/電流上限も全て0になり、
+      target(速度指令)が非ゼロでも出力電流は常に0(安全側)。ROS側は速度モードを
+      使う際、targetだけでなくこれらのスロットも毎周期送る必要がある
+      (homing_node.py参照)。
 
   Tx_16Data (本機 -> PC, 帰還。速度/MIT共通、変更無し):
     0-3: angle  [0.1deg単位] (出力軸換算、M3508/M2006はギア比込み)
@@ -56,6 +68,13 @@ constexpr int MIT_SLOT_VELOCITY_FF = 8;  // 8-11
 constexpr int MIT_SLOT_KP = 12;          // 12-15
 constexpr int MIT_SLOT_KD = 16;          // 16-19
 constexpr int MIT_SLOT_CURRENT_FF = 20;  // 20-23
+
+// 速度モード用の追加スロット(MITモードと同じ8-23を、control_modeで排他的に
+// 意味を切り替えて流用する。2026-09-09追加、ファイル先頭コメント参照)
+constexpr int VEL_SLOT_KP = 8;           // 8-11
+constexpr int VEL_SLOT_KI = 12;          // 12-15
+constexpr int VEL_SLOT_KD = 16;          // 16-19
+constexpr int VEL_SLOT_MAX_CURRENT = 20; // 20-23
 
 // -------- 状態量 (CAN受信フィードバック) -------- //
 int16_t encoder_count[NUM_MOTOR] = {0};
@@ -352,19 +371,31 @@ void robomasTask(void *pvParameters) {
                 // 毎周期リセットして待機させておく。
                 vel_pid[i].reset();
             } else {
+                // 速度モードのKp/Ki/Kd・電流上限はMITモードのkp/kd/current_ffと同様に
+                // 毎周期ROSから可変で送られる(2026-09-09追加、config.hppの「速度モード
+                // ゲイン/電流上限のROS可変スロット」・ファイル先頭コメント参照)。
+                // 全ゼロ(E-STOP/未接続/ROS未送信)ではKp=Ki=Kd=電流上限=0になり、
+                // targetが非ゼロでも出力は常に0(安全側)。
+                float vel_kp = Rx_16Data[VEL_SLOT_KP + i] * ROBOMAS_VEL_KP_LSB;
+                float vel_ki = Rx_16Data[VEL_SLOT_KI + i] * ROBOMAS_VEL_KI_LSB;
+                float vel_kd = Rx_16Data[VEL_SLOT_KD + i] * ROBOMAS_VEL_KD_LSB;
+                float vel_max_current = Rx_16Data[VEL_SLOT_MAX_CURRENT + i] * ROBOMAS_VEL_MAX_CURRENT_LSB;
+
                 target_rpm[i] = Rx_16Data[i];
+                vel_pid[i].set_gain(vel_kp, vel_ki, vel_kd);
+                // PID内部のmax_out_(アンチワインドアップ・出力クランプの両方に使われる、
+                // PID.hpp参照)もこの周期の電流上限に追随させる。以前はここが
+                // ROBOMAS_MAX_CURRENT_A(MITモード用の固定5.0A)のままになっており、
+                // 実際の出力クランプ(下記constrainFloat)だけがROBOMAS_MAX_CURRENT_VEL_A
+                // (1.0A)を見ていたため、Ki!=0でアンチワインドアップを使う場合に基準が
+                // 食い違う問題があった(Ki=0の間は無害)。ROSから電流上限も可変になった
+                // 今、内部と外部の基準を一致させておかないと「vel_max_currentを上げても
+                // 5.0Aで頭打ちのまま」という混乱を招くため統一する。
+                vel_pid[i].set_max_out(vel_max_current / ROBOMAS_OUTPUT_GAIN);
                 vel_pid[i].set_target(target_rpm[i]);
                 float vel_out = vel_pid[i].update(vel[i], dt);
-                // 速度モード専用の電流上限(config.hppのROBOMAS_MAX_CURRENT_VEL_A
-                // コメント参照、2026-09-09追加)。MITモード用のROBOMAS_MAX_CURRENT_Aを
-                // 引き上げた際、速度モード(homing_node)の速度PID(Kp=0.8のみで
-                // Kd=0)がそれまで電流上限への飽和で得ていたダンピングを失い、
-                // ホーミングがガクガクする副作用が出た(ユーザー報告)。速度モードだけ
-                // 元の(安定していた)電流上限に戻すことで、MITモード側の動き出し
-                // トルク不足対策と両立させる(ユーザー指定:「速度制御モードの
-                // ときのみ1.0Aに制限」)。
                 motor_output_current[i] = constrainFloat(vel_out * ROBOMAS_OUTPUT_GAIN,
-                    -ROBOMAS_MAX_CURRENT_VEL_A, ROBOMAS_MAX_CURRENT_VEL_A);
+                    -vel_max_current, vel_max_current);
             }
         }
 

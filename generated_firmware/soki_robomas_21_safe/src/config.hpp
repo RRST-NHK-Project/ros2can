@@ -175,7 +175,14 @@ Copyright (c) 2025 RRST-NHK-Project. All rights reserved.
 // 使用するモータ機種を1つ選択すること。
 #define ROBOMAS_MOTOR_TYPE ROBOMAS_MOTOR_M2006
 
-// 速度PIDゲイン。ros2can(PC)側からは変更できない固定値。チューニングはここで行う。
+// 速度PIDゲイン初期値。2026-09-09までは「ros2can(PC)側からは変更できない固定値」
+// だったが、MITモードのkp/kd/current_ffと同様にCAN経由で毎周期ROSから可変にできる
+// ようにした(下記「速度モード ゲイン/電流上限のROS可変スロット」参照、robomas.cppの
+// control_mode=ROBOMAS_MODE_VELOCITY時のみ参照)。ここの#defineはPIDController構築時の
+// 初期値としてのみ使われ、ROSから一度でも値が送られれば(通常は起動直後の最初の周期から)
+// 上書きされて実質参照されなくなる。全ゼロ(E-STOP/未接続時)ではKp=Ki=Kd=最大電流=0に
+// なり安全側(速度指令があっても出力0)なので、ROS側(homing_node.py等)は速度モードを
+// 使う際に必ずゲイン・電流上限スロットも送ること。
 #if ROBOMAS_MOTOR_TYPE == ROBOMAS_MOTOR_M3508
 #define ROBOMAS_KP_VEL 0.8f
 #define ROBOMAS_KI_VEL 0.0f
@@ -270,6 +277,22 @@ float kd_vel = 0.05;
 #else
 #error "ROBOMAS_MOTOR_TYPE: unknown motor type"
 #endif
+
+// ---- 速度モード ゲイン/電流上限のROS可変スロット (2026-09-09追加) ----
+// MITモードは24スロットを全て(target/control_mode/velocity_ff/kp/kd/current_ff)
+// 使い切っているが、速度モード(control_mode=ROBOMAS_MODE_VELOCITY)ではMIT専用の
+// スロット8-23が未使用のまま(homing_node.py等はtarget(0-3)しか埋めていない)だった。
+// これを流用し、速度PID(vel_pid[])のKp/Ki/Kd、および速度モード用電流上限
+// (ROBOMAS_MAX_CURRENT_VEL_A相当)を毎周期ROSから送れるようにした(robomas.cpp
+// robomasTask()のROBOMAS_MODE_VELOCITY分岐参照)。MITモード用電流上限
+// (ROBOMAS_MAX_CURRENT_A)は既に24スロット使い切っているため対象外(引き続き
+// この#defineのコンパイル時固定値のまま)。
+// Kdは速度モードでは(上記M2006の項のコメント参照)dt換算で極小値を扱うため、
+// MITのKD_LSB(0.0001)と同じ粗さだと分解能が足りない。専用に細かいLSBを使う。
+#define ROBOMAS_VEL_KP_LSB 0.001f            // 比例ゲイン。0.001/LSB(速度モード出力単位)
+#define ROBOMAS_VEL_KI_LSB 0.001f            // 積分ゲイン。0.001/LSB
+#define ROBOMAS_VEL_KD_LSB 0.0000005f        // 微分ゲイン。0.0000005/LSB(dt換算後の極小値用)
+#define ROBOMAS_VEL_MAX_CURRENT_LSB 0.001f   // 速度モード電流上限。0.001A/LSB
 
 // ---- MIT(位置PD制御)モード関連 ----
 // CubeMarsのMITモードと異なり、ロボマス側ESC(C610/C620)やGM6020はCANで生の電流指令

@@ -32,6 +32,10 @@ public:
         Kd_ = Kd;
     }
 
+    void set_max_out(float max_out) {
+        max_out_ = max_out;
+    }
+
     void reset() {
         Error_ = 0.0f;
         last_Error_ = 0.0f;
