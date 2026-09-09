@@ -199,6 +199,23 @@ Copyright (c) 2025 RRST-NHK-Project. All rights reserved.
 #define ROBOMAS_KI_VEL 0.0f
 #define ROBOMAS_KD_VEL 0.0f
 #define ROBOMAS_OUTPUT_GAIN 1.0f
+
+/*
+キャチロボ25より引用
+//------------PIDゲイン-----------//
+float kp_pos = 0.4; // 0.4;
+float ki_pos = 0.01;
+float kd_pos = 0.04; // 0.02;
+
+float kp_th = 0.4; // 0.4;
+float ki_th = 0.01;
+float kd_th = 0.04; // 0.02;
+
+float kp_vel = 1.0;
+float ki_vel = 0.0;
+float kd_vel = 0.05;
+*/
+
 // 2026-09-09、ユーザー指摘: 「M2006は10Aいけるはず」。C610の実仕様上限は10A
 // (robomas.cppのsendCurC620()がM2006向けに MAX_CUR=10.0f / MAX_CUR_VAL=10000
 // でCAN送信をクランプしているのがその根拠。以前ここは1.0Aだった)。ここ
@@ -285,12 +302,12 @@ Copyright (c) 2025 RRST-NHK-Project. All rights reserved.
 // 瞬間に古いangle[]と(host側は途絶に気付かず送り続けている)新しい指令値との差分
 // で電流指令が急変し、モータが唐突に動き出す不具合の原因になっていた
 // (2026-09-08、robomas.cpp receiveFeedback()/robomasTask()参照)。
-#define ROBOMAS_FEEDBACK_STALE_MS 100  // これ以上帰還が来なければ「途絶」とみなす
-                                        // (通常の帰還間隔5msに対し十分大きく、
-                                        // 電源off/onの時間スケールに対しては
-                                        // 十分小さい)
-#define ROBOMAS_RESYNC_HOLD_MS 200     // 途絶から復帰した直後、電流指令を0に
-                                        // 固定しておく猶予時間
+#define ROBOMAS_FEEDBACK_STALE_MS 100 // これ以上帰還が来なければ「途絶」とみなす
+                                      // (通常の帰還間隔5msに対し十分大きく、
+                                      // 電源off/onの時間スケールに対しては
+                                      // 十分小さい)
+#define ROBOMAS_RESYNC_HOLD_MS 200    // 途絶から復帰した直後、電流指令を0に
+                                      // 固定しておく猶予時間
 
 // ================= CubeMars AK関連 (MODE_CUBEMARSのみ有効) =================
 // MODE_CUBEMARSはMODE_ROBOMASと同様、xiao-esp32-s3_can2ioのノード/スロット分配方式
