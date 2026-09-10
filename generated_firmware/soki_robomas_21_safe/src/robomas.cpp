@@ -226,6 +226,30 @@ void sendCurrentCommand(const float cur_array[NUM_MOTOR]) {
 #endif
 }
 
+// TWAI受信キューの深さ。TWAI_GENERAL_CONFIG_DEFAULTの既定は5しかなく、
+// これでは足りない(2026-09-10、ユーザー報告「ロボマスエンコーダーのラップ処理に
+// 問題がある可能性。途中で0度の位置がずれる」の原因)。
+// C610/C620の帰還は1モータあたり1kHz。receiveFeedback()はrobomasTaskのループ
+// (5ms周期=200Hz)から呼ばれてキューを一気に空にする作りなので、1回のdrainまでに
+// 3モータ分で15フレームが積まれる。さらにフィルタがACCEPT_ALLのため、同じ1Mbps
+// バスを共有しているCubeMars・センサノードのフレームまで同じキューを消費する。
+// 既定の5では毎周期あふれてフレームが落ち、あるモータの帰還が数周期届かない
+// ギャップができる。すると下の周回検出(diffの符号)が「ロータ半回転ぶん以上
+// 進んだ」ケースを取り違え、rotation_countが±1ずれる。ずれは1回につき
+// 360/ギア比=10deg(出力軸)で、tip_theta_jointなら約7.1degぶん原点がずれたまま
+// 戻らない(累積する)。
+// 5ms窓に積まれるフレーム数(15 + 他デバイス分)に十分な余裕を持たせる。
+constexpr int ROBOMAS_RX_QUEUE_LEN = 64;
+
+// 周回検出の曖昧域。|diff|がこれを超えたら、diffの符号ではなくESCが返す実回転数
+// (rpm、ロータ基準)の符号で回転方向を決める(receiveFeedback参照)。diffだけでは
+// 「+3000カウント進んだ」のか「-5192カウント戻った」のか区別できず、サンプルが
+// 疎になるほど取り違えやすい。rpmは同じ帰還フレームに入っている実測値なので、
+// これを使えばギャップがあっても向きを間違えない(1サンプルでロータ1回転以上
+// 進んだ場合だけは原理的に復元不能で、これはどんな方法でも同じ)。
+constexpr int ROBOMAS_WRAP_AMBIGUOUS_COUNTS = ENCODER_MAX / 4;  // 2048
+constexpr int ROBOMAS_WRAP_RPM_FLOOR = 10;   // これ未満のrpmはノイズとみなしdiffに従う
+
 // -------- CAN受信 (ESC -> 帰還) -------- //
 
 void receiveFeedback() {
@@ -276,10 +300,22 @@ void receiveFeedback() {
         } else {
             // エンコーダ回転数計算 (周回検出)
             int diff = encoder_count[m] - last_encoder[m];
+            int wrap = 0;
             if (diff > HALF_ENCODER)
-                rotation_count[m]--;
+                wrap = -1;
             else if (diff < -HALF_ENCODER)
-                rotation_count[m]++;
+                wrap = 1;
+            // 曖昧域では実回転数(rpm)の符号を優先する
+            // (ROBOMAS_WRAP_AMBIGUOUS_COUNTS宣言部のコメント参照)。
+            // 真の移動量 = wrap * ENCODER_MAX + diff がrpmと同じ符号になるよう選ぶ。
+            if (abs(diff) > ROBOMAS_WRAP_AMBIGUOUS_COUNTS
+                && abs(rpm[m]) >= ROBOMAS_WRAP_RPM_FLOOR) {
+                if (rpm[m] > 0)
+                    wrap = (diff < 0) ? 1 : 0;
+                else
+                    wrap = (diff > 0) ? -1 : 0;
+            }
+            rotation_count[m] += wrap;
             last_encoder[m] = encoder_count[m];
         }
 
@@ -306,6 +342,8 @@ void receiveFeedback() {
 
 void robomasInit() {
     twai_general_config_t g_config = TWAI_GENERAL_CONFIG_DEFAULT((gpio_num_t)CAN_TX, (gpio_num_t)CAN_RX, TWAI_MODE_NORMAL);
+    // 既定の5では帰還フレームを取りこぼす(ROBOMAS_RX_QUEUE_LEN宣言部のコメント参照)。
+    g_config.rx_queue_len = ROBOMAS_RX_QUEUE_LEN;
     twai_timing_config_t t_config = TWAI_TIMING_CONFIG_1MBITS(); // DJI RoboMasterシリーズは1Mbps固定
     twai_filter_config_t f_config = TWAI_FILTER_CONFIG_ACCEPT_ALL();
 
