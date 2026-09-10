@@ -82,6 +82,14 @@ int16_t rpm[NUM_MOTOR] = {0};
 int16_t current_raw[NUM_MOTOR] = {0};
 int last_encoder[NUM_MOTOR] = {0};
 int rotation_count[NUM_MOTOR] = {0};
+// 角度の基準点(この値をangle[]=0とする)。初回フレーム/途絶からの復帰フレームで
+// そのときのencoder_countを書き込む。C610/C620の帰還は1回転内の絶対値(0-8191)
+// しか持たないため、これを引かないとangle[]の起点が電源投入時のロータ位相次第で
+// 0-(360/ギア比)degのランダム値になる(M2006なら出力軸0-10deg)。tip_theta_jointは
+// 原点センサを持たず「電源投入位置=0deg」を前提にしているので、その前提が崩れて
+// 起動直後に手先θがそのオフセット分だけ勝手に回っていた(2026-09-10、ユーザー報告:
+// 「起動時原点にいるのに勝手に回る。少しずつ回って停止する」)。
+int encoder_origin[NUM_MOTOR] = {0};
 long total_encoder[NUM_MOTOR] = {0};
 float angle[NUM_MOTOR] = {0};   // 出力軸角度[deg]
 float vel[NUM_MOTOR] = {0};     // 出力軸速度[rpm]
@@ -262,6 +270,8 @@ void receiveFeedback() {
         if (was_stale) {
             rotation_count[m] = 0;
             last_encoder[m] = encoder_count[m];
+            // このフレームをangle[]=0の基準にする(encoder_origin宣言部コメント参照)。
+            encoder_origin[m] = encoder_count[m];
             last_resync_ms[m] = now_ms;
         } else {
             // エンコーダ回転数計算 (周回検出)
@@ -273,7 +283,8 @@ void receiveFeedback() {
             last_encoder[m] = encoder_count[m];
         }
 
-        total_encoder[m] = rotation_count[m] * (long)ENCODER_MAX + encoder_count[m];
+        total_encoder[m] = rotation_count[m] * (long)ENCODER_MAX
+                         + encoder_count[m] - encoder_origin[m];
 
 #if ROBOMAS_MOTOR_TYPE == ROBOMAS_MOTOR_M3508
         angle[m] = total_encoder[m] * (360.0f / (ENCODER_MAX * gear_m3508));
