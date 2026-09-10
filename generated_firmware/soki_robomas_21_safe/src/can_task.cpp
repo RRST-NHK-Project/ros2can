@@ -410,12 +410,26 @@ void canTask(void *) {
         }
 #endif  // CAN_HOST_DIAG_ENABLE
 #else
+        // 指令(node_slot_buffer)と帰還(node_feedback_buffer)で必ず別のバッファを
+        // 使うこと(2026-09-11修正、ユーザー報告「ros2can単体でテスト、101,102,103,104が
+        // 接続されている状態でサーボを動かしたが細かく振動する挙動」)。
+        // 以前は両方ともnode_slot_bufferを使っており、buildNodeSlotBlockFromLocal
+        // Feedbackが自ノードの担当スロット(= 受信した指令が入っているのと同じ
+        // スロット範囲)をCanIoTxData(スイッチ状態・エンコーダ値等の帰還値)で
+        // 上書きしていた。このループはvTaskDelay(1)の1ms周期でapplyNodeSlotBlockTo
+        // LocalControlを呼ぶのに対し、ホストからの指令フレームはCAN_TX_PERIOD_MS
+        // (5ms)間隔でしか来ないため、指令が届いた直後の1周期だけ本来の角度、
+        // 残りは帰還値がそのままサーボへ出る。結果、サーボが約200Hzで2つの値の間を
+        // 往復して細かく振動していた。MODE_CAN_HOST側は元から
+        // node_feedback_buffer/host_tx_payloadと分けてあり、この問題は無い
+        // (ホスト自身のポンプ/LED出力は正常だがノード配下のサーボだけ振動する、
+        // という切り分けと一致する)。
         canRecvNodeSlotBlock(node_slot_buffer, CAN_NODE_INDEX);
         applyNodeSlotBlockToLocalControl(node_slot_buffer, CAN_NODE_INDEX);
 
         if (xTaskGetTickCount() - last_tx >= pdMS_TO_TICKS(CAN_TX_PERIOD_MS)) {
-            buildNodeSlotBlockFromLocalFeedback(node_slot_buffer, CAN_NODE_INDEX);
-            canSendNodeSlotBlock(node_slot_buffer, CAN_NODE_INDEX, CAN_FRAME_ID_FB_BASE);
+            buildNodeSlotBlockFromLocalFeedback(node_feedback_buffer, CAN_NODE_INDEX);
+            canSendNodeSlotBlock(node_feedback_buffer, CAN_NODE_INDEX, CAN_FRAME_ID_FB_BASE);
             last_tx = xTaskGetTickCount();
         }
 #endif

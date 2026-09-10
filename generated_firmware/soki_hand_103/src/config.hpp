@@ -63,7 +63,7 @@ Copyright (c) 2025 RRST-NHK-Project. All rights reserved.
 #define SERVO2_MIN_US 500
 #define SERVO2_MAX_US 2500
 #define SERVO2_MIN_DEG 0
-#define SERVO2_MAX_DEG 180
+#define SERVO2_MAX_DEG 270
 #define SERVO2_INIT_DEG 0
 
 #define SERVO3_MIN_US 500
