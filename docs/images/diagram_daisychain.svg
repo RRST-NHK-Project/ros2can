@@ -19,16 +19,16 @@
   <text x="265" y="130" text-anchor="middle" font-size="10.5" fill="#1f4d33">xiao_esp32_s3_smd_</text>
   <text x="265" y="143" text-anchor="middle" font-size="10.5" fill="#1f4d33">serial_bridge</text>
   <text x="265" y="156" text-anchor="middle" font-size="10.5" fill="#1f4d33">MODE_CAN_HOST</text>
-  <text x="265" y="173" text-anchor="middle" font-size="11" font-weight="bold" fill="#a23b1e">CAN_ID=101（ノード0）</text>
+  <text x="265" y="173" text-anchor="middle" font-size="11" font-weight="bold" fill="#a23b1e">CAN_ID=101（ノード1）</text>
   <text x="265" y="192" text-anchor="middle" font-size="10" fill="#1f4d33">SERVO1-3 / SW1-3</text>
   <text x="265" y="204" text-anchor="middle" font-size="10" fill="#1f4d33">ENC1-2（自身の分も直接処理）</text>
-  <text x="265" y="219" text-anchor="middle" font-size="9.5" fill="#5a6b63">※ホストもノード0として動作</text>
+  <text x="265" y="219" text-anchor="middle" font-size="9.5" fill="#5a6b63">※ホストもノード1として動作</text>
 
   <!-- Node boxes -->
   <g id="nodes">
     <!-- Node1 -->
     <rect x="400" y="90" width="150" height="140" rx="8" fill="#f5f2ff" stroke="#5b3fa0" stroke-width="2"/>
-    <text x="475" y="115" text-anchor="middle" font-size="13" font-weight="bold" fill="#3a276b">ノード1</text>
+    <text x="475" y="115" text-anchor="middle" font-size="13" font-weight="bold" fill="#3a276b">ノード2</text>
     <text x="475" y="133" text-anchor="middle" font-size="10.5" fill="#3a276b">xiao-esp32-s3_can2io</text>
     <text x="475" y="146" text-anchor="middle" font-size="10.5" fill="#3a276b">MODE_CAN</text>
     <text x="475" y="163" text-anchor="middle" font-size="11" font-weight="bold" fill="#a23b1e">CAN_ID=102</text>
@@ -37,7 +37,7 @@
 
     <!-- Node2 -->
     <rect x="580" y="90" width="150" height="140" rx="8" fill="#f5f2ff" stroke="#5b3fa0" stroke-width="2"/>
-    <text x="655" y="115" text-anchor="middle" font-size="13" font-weight="bold" fill="#3a276b">ノード2</text>
+    <text x="655" y="115" text-anchor="middle" font-size="13" font-weight="bold" fill="#3a276b">ノード3</text>
     <text x="655" y="133" text-anchor="middle" font-size="10.5" fill="#3a276b">xiao-esp32-s3_can2io</text>
     <text x="655" y="146" text-anchor="middle" font-size="10.5" fill="#3a276b">MODE_CAN</text>
     <text x="655" y="163" text-anchor="middle" font-size="11" font-weight="bold" fill="#a23b1e">CAN_ID=103</text>
@@ -46,7 +46,7 @@
 
     <!-- Node3 -->
     <rect x="760" y="90" width="150" height="140" rx="8" fill="#f5f2ff" stroke="#5b3fa0" stroke-width="2"/>
-    <text x="835" y="115" text-anchor="middle" font-size="13" font-weight="bold" fill="#3a276b">ノード3</text>
+    <text x="835" y="115" text-anchor="middle" font-size="13" font-weight="bold" fill="#3a276b">ノード4</text>
     <text x="835" y="133" text-anchor="middle" font-size="10.5" fill="#3a276b">xiao-esp32-s3_can2io</text>
     <text x="835" y="146" text-anchor="middle" font-size="10.5" fill="#3a276b">MODE_CAN</text>
     <text x="835" y="163" text-anchor="middle" font-size="11" font-weight="bold" fill="#a23b1e">CAN_ID=104</text>

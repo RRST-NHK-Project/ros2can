@@ -40,19 +40,19 @@
 
   <rect x="700" y="115" width="110" height="90" rx="8" fill="#eef7f0" stroke="#1f7a4d" stroke-width="2.2"/>
   <text x="755" y="145" text-anchor="middle" font-size="11.5" font-weight="bold" fill="#1f4d33">CANホスト</text>
-  <text x="755" y="160" text-anchor="middle" font-size="10" fill="#1f4d33">（ノード0）</text>
+  <text x="755" y="160" text-anchor="middle" font-size="10" fill="#1f4d33">（ノード1）</text>
   <text x="755" y="176" text-anchor="middle" font-size="9.5" fill="#5a6b63">自身のI/Oも処理</text>
 
   <rect x="850" y="115" width="90" height="90" rx="6" fill="#f5f2ff" stroke="#5b3fa0" stroke-width="2"/>
-  <text x="895" y="150" text-anchor="middle" font-size="11" fill="#3a276b">ノード1</text>
+  <text x="895" y="150" text-anchor="middle" font-size="11" fill="#3a276b">ノード2</text>
   <text x="895" y="166" text-anchor="middle" font-size="9.5" fill="#3a276b">CAN_ID=102</text>
 
   <rect x="960" y="115" width="90" height="90" rx="6" fill="#f5f2ff" stroke="#5b3fa0" stroke-width="2"/>
-  <text x="1005" y="150" text-anchor="middle" font-size="11" fill="#3a276b">ノード2</text>
+  <text x="1005" y="150" text-anchor="middle" font-size="11" fill="#3a276b">ノード3</text>
   <text x="1005" y="166" text-anchor="middle" font-size="9.5" fill="#3a276b">CAN_ID=103</text>
 
   <text x="1050" y="150" text-anchor="middle" font-size="10" fill="#3a276b">…</text>
-  <text x="1050" y="166" text-anchor="middle" font-size="9">(最大4台)</text>
+  <text x="1050" y="166" text-anchor="middle" font-size="9">(ホスト含め最大4台)</text>
 
   <!-- CAN bus line connecting host + nodes (daisy chain) -->
   <line x1="755" y1="240" x2="1005" y2="240" stroke="#d35400" stroke-width="4"/>

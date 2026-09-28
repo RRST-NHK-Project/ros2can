@@ -10,6 +10,10 @@ title: ros2can マニュアル
 >
 > スレッド/タスク構成・シリアル/CANプロトコルの詳細・制御ループの計算式など、内部の処理の流れを知りたい方は
 > [技術マニュアル（内部実装編）](internals.md) を参照してください。
+>
+> 講習資料（PowerPoint）: [ros2can 講習](https://github.com/RRST-NHK-Project/ros2can/blob/main/pptx/ros2can%E8%AC%9B%E7%BF%92.pptx) ／
+> [serial_bridge から ros2can へ（移行ガイド）](https://github.com/RRST-NHK-Project/ros2can/blob/main/pptx/serial_bridge%E3%81%8B%E3%82%89ros2can%E3%81%B8_%E7%A7%BB%E8%A1%8C%E3%82%AC%E3%82%A4%E3%83%89.pptx) ／
+> [serial_bridge 講習](https://github.com/RRST-NHK-Project/serial_bridge/blob/main/pptx/serial_bridge%E8%AC%9B%E7%BF%92.pptx)
 
 ## 目次
 
@@ -43,7 +47,7 @@ title: ros2can マニュアル
 （MODE_CAN_HOST）専用の ROS 2 GUI パッケージです。
 
 この基板は USB シリアルでつながる「CANホスト」で、自身の配下に CAN バス経由で
-最大4台の子マイコン（ノード）をデイジーチェーン接続可能です。`ros2can` はホストの
+最大3台の子マイコンをデイジーチェーン接続可能です（ホスト自身を含めて1バス最大4ノード）。`ros2can` はホストの
 シリアルポートを直接掴み、バス上の各ノードへアクチュエータ指令を直接送信したり、
 センサ値をリアルタイムに表示することができます。また、`serial_bridge` と同様に
 トピックを用いた外部ノードとの接続も可能です。
@@ -51,8 +55,9 @@ title: ros2can マニュアル
 ![CANホスト＋ノードのデイジーチェーン接続イメージ](images/diagram_daisychain.svg)
 
 上図はUSB接続からCANバスの物理的なつながり方（デイジーチェーン、バス両端の終端抵抗）
-までを示したイメージです。ホスト自身も「ノード0」として自分のI/Oを直接処理する点に
-注意してください。各ノードの SERVO/SW、ENC/MD が具体的にどう配線されるかは
+までを示したイメージです。ホスト自身も「ノード1」として自分のI/Oを直接処理する点に
+注意してください（ノード番号はGUIのタブ表記・CAN_IDの下2桁と同じ1始まりです。
+コードやファームウェア内部のインデックス `node_index` は0始まりで、ノード1 → 0 に対応します）。各ノードの SERVO/SW、ENC/MD が具体的にどう配線されるかは
 [8. プロファイル](#8-プロファイル) の対応スロットマッピング図を参照してください。
 
 ホストのUSBシリアル側は常に `serial_bridge` 互換の24 x int16スロット
@@ -435,7 +440,7 @@ SERVOn と SWn はピン共有 (ファームウェア config.hpp の MULTIn で�
 0=スイッチ入力/1=サーボ出力)。ENCn と MDn もピン共有 (config.hpp の ENCn_MD で
 切替、0=エンコーダ入力/1=MD(PWM+DIR)出力)。
 
-グローバルスロット index = node_index(0-origin) * 5 + local_index
+グローバルスロット index = node_index(0-origin、ノード1 → 0) * 5 + local_index
 ノードの CAN_ID は 101,102,103,104 (下2桁 = ノード番号)
 ```
 

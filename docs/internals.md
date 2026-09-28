@@ -300,7 +300,7 @@ slot_offset = node_index * CAN_SLOTS_PER_NODE;
 // buildNodeSlotBlockFromLocalFeedback(): CanIoTxData[i] -> slot_buffer[slot_offset + i]
 ```
 
-- **MODE_CAN_HOST**: 5ms周期(`CAN_TX_PERIOD_MS`)で `Rx_16Data` をスナップショットし、自ノード（`CAN_NODE_INDEX`）分は**CANを介さず直接**ローカルの `CanIoRxData` へ反映、他ノード分は `canSendNodeSlotBlock()` でCAN送信します（＝ホスト自身が「ノード0」を兼務）。帰還側は `canRecvAllNodeSlotBlocks()` が全ノードからのフレームを持続バッファへマージします（**未受信スロットは前回値を保持**——ノード送信周期(5ms)とホストのポーリング周期のズレを吸収するため）。
+- **MODE_CAN_HOST**: 5ms周期(`CAN_TX_PERIOD_MS`)で `Rx_16Data` をスナップショットし、自ノード（`CAN_NODE_INDEX`）分は**CANを介さず直接**ローカルの `CanIoRxData` へ反映、他ノード分は `canSendNodeSlotBlock()` でCAN送信します（＝ホスト自身が「ノード1」（`CAN_NODE_INDEX`=0）を兼務）。帰還側は `canRecvAllNodeSlotBlocks()` が全ノードからのフレームを持続バッファへマージします（**未受信スロットは前回値を保持**——ノード送信周期(5ms)とホストのポーリング周期のズレを吸収するため）。
 - **MODE_CAN（子ノード）**: 自ノード宛の指令のみ受信・反映し、5ms周期でローカルのセンサ値を帰還フレームとして送信します。
 - CAN送信は `twai_transmit(&message, 0)`（**タイムアウト0＝非ブロッキング**）で行われます。ブロッキングするとホスト自身のローカルエンコーダ値publishまで遅延するバグがあった経緯があり、1周期分の送信ドロップは次の5ms周期での再送に任せる設計です。
 - **Bus-Off自動復帰**: TWAIドライバは`BUS_OFF`から自動復帰しないため、100msごとに状態を確認し `twai_initiate_recovery()` → `twai_start()` を行うロジックが `canTask`・`cubemarsTask`・`robomasTask` それぞれに重複実装されています。
