@@ -378,6 +378,17 @@ motor disable) from the manual are not used by this firmware.
 
 ---
 
+## 11a. RobStride EduLite 05 Driver Mode (`MODE_ROBSTRIDE`)
+
+RobStride EduLite 05 (EL05) を、RobStride独自(私有)プロトコル(29bit拡張ID、1Mbps)で直接動かす独立デバイスモード(2026-10-22追加)。
+PC側は `robstride_ctrl` パッケージ(`robstride_driver_node` 等)を使う。実装とスロット割り当ては `src/robstride.cpp` 先頭コメント参照。
+
+- 速度モード(run_mode=2, `spd_ref`)と位置モードCSP(run_mode=5, `loc_ref`/`limit_spd`)。
+- 8スロット/モータ(最大2台)。目標と位置はint32(2スロット、0.001単位)。帰還の位置は±4πで折り返す角度ではなく、多回転の `mechPos`(0x7019)を100Hzで読んで返す。
+- 停止中は通信タイプ4(停止)を50Hzで送り、その応答で状態を読む。
+- 安全: PC途絶(`ROBSTRIDE_CMD_TIMEOUT_MS`)で停止、モータ側CANタイムアウト(`ROBSTRIDE_MOTOR_TIMEOUT_MS`、0x7028)を有効化のたびに設定、運転中にモータが運転モードを外れたら停止をラッチ(PCが0を送るまで再始動しない)。
+- モータのCAN IDが分からない場合: 帰還が無い間、全ID(0-127)へ通信タイプ0を送ってスキャンし、結果を `Tx_16Data[20-23]` に出す。
+
 ## 12. Bus Bandwidth When Mixing Modes on One CAN Bus
 
 `MODE_ROBOMAS`, `MODE_CUBEMARS`, and the node/slot protocol (`MODE_IO`/`MODE_CAN`/

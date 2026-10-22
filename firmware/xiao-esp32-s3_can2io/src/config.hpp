@@ -12,7 +12,10 @@ SPDX-License-Identifier: MIT
 // ================= 基本設定 =================
 
 // IDの設定，シリアルフレームのDEVICE_IDとして使用します。
-#define DEVICE_ID 101
+// MODE_DAMIAO/MODE_ROBSTRIDE(独立デバイス)は既存のCANホスト/ノード(101-104)と
+// 衝突しない番号を使うこと。Damiaoは201、RobStrideは202で使っている
+// (2026-10-22。Damiaoに戻すときはここを201、モードをMODE_DAMIAOにする)。
+#define DEVICE_ID 202
 
 // CAN_IDは3桁形式で指定します。
 // 1桁目はバス番号、末尾2桁はノード番号を表します。
@@ -21,12 +24,14 @@ SPDX-License-Identifier: MIT
 
 // モードの設定，どれか一つをコメントアウト解除すること
 // #define MODE_CAN
-#define MODE_CAN_HOST
+// #define MODE_CAN_HOST
 // #define MODE_IO
 // #define MODE_DEBUG
 // #define MODE_CAN_MONITOR
 // #define MODE_ROBOMAS
 // #define MODE_CUBEMARS
+// #define MODE_DAMIAO
+#define MODE_ROBSTRIDE
 
 // ================= 基板バリアントの設定 =================
 // このマイコン(XIAO ESP32-S3)を搭載する基板ごとにピン配置が異なるため、
@@ -365,3 +370,101 @@ SPDX-License-Identifier: MIT
 #define CUBEMARS_MIT_KP_MAX 500.0f
 #define CUBEMARS_MIT_KD_MIN 0.0f
 #define CUBEMARS_MIT_KD_MAX 5.0f
+
+// ================= Damiao関連 (MODE_DAMIAOのみ有効) =================
+// MODE_DAMIAOはMODE_ROBOMAS/MODE_CUBEMARSと同様、ノード/スロット分配方式
+// とは別系統で、Damiao DM2325+DM3520(ESC)のCANプロトコル(VEL/POS_VELモード、
+// 達妙公式Python実装 github.com/cmjang/DM_Control_Python の DM_CAN.py を
+// 一次情報とした)を直接喋る独立デバイスとして動作する。CubeMars同様、
+// アクチュエータ内蔵のクローズドループにそのまま追従させるため、
+// ホスト側PIDは不要。CAN速度は他モードと同じ1Mbps固定(damiao.cpp)。
+//
+// スロット割り当て (frame_data.hppのTx_16Data/Rx_16Dataを使用、独立デバイス
+// として24スロットをそのまま使う。6スロット/モータ x 最大4台):
+//   Rx_16Data (PC -> 本機, 指令。モータnのオフセット = (n-1)*6):
+//     +0: mode_word (0=DISABLE, 1=VEL, 2=POS_VEL)。全ゼロ(E-STOP/未接続時の
+//         デフォルト)=DISABLEとなり安全(Damiaoは明示的なEnableコマンドを
+//         送るまでCAN指令を無視する仕様のため)。
+//     +1: target (0.001単位/LSB。VELならrad/s、POS_VELならrad)
+//     +2: vel_limit (0.001 rad/s/LSB。POS_VELモードでのみ使用)
+//   Tx_16Data (本機 -> PC, 帰還):
+//     +3: position [0.001 rad/LSB]
+//     +4: velocity [0.001 rad/s/LSB]
+//     +5: torque   [0.001 N・m/LSB]
+
+#define DAMIAO_MOTOR_COUNT 1 // 接続台数(最大4、kMaxMotors=frame_data 24/6)
+
+// 各モータのCAN ID。工場出荷時は0x01のことが多いが、実機で要確認
+// (達妙デバッグツールが無い場合、firmware/esp32_damiao_bridgeの
+// scanTaskで探索した値をここに反映する)。
+#define DAMIAO_MOTOR_ID_1 0x01 // 実機確認済み(2026-10-14, レジスタ読み出しに応答)
+
+// 帰還(状態・レジスタ返信)が返ってくるCAN ID。モータIDとは別の設定値で、
+// 実機は0x000(2026-10-14、レジスタ読み出しの返信IDで確認)。
+#define DAMIAO_MASTER_ID 0x000
+
+// PCからの有効フレームがこの時間途絶えたらモータをDisableする[ms]。
+// DM3520のタイムアウト設定(RID9)は0=途絶しても止まらない、だったため必須。
+// ros2canの--noguiは20Hz(50ms)で送り直すので300msあれば誤停止しない。
+// GUIで「ダイレクト送信」OFFかつノードの指令が間欠的だと止まる点に注意。
+#define DAMIAO_CMD_TIMEOUT_MS 300
+// DM3520自身の通信タイムアウト[ms]。最後のCANフレームからこの時間何も届かないと
+// モータが自分でDisableし、状態D(13=通信喪失)になる。ESP32が固まった・CAN線が
+// 抜けたときの最後の砦(上のDAMIAO_CMD_TIMEOUT_MSはPC側が止まったとき用)。
+// Enableのたびにレジスタ(RID9, 1あたり50us=2026-10-14実測)へ書き込む。
+// 書き込みはRAMのみで、モータの電源を切ると元の設定(0=無効)に戻る。
+// ESP32は5ms周期で指令を送るので100msあれば誤停止しない。状態Dからの復帰は
+// PCから一度0(DISABLE)を送り、改めてモードを指定する(ClearErrorはEnable時に送る)。
+#define DAMIAO_MOTOR_TIMEOUT_MS 100
+#define DAMIAO_MOTOR_ID_2 0x02
+#define DAMIAO_MOTOR_ID_3 0x03
+#define DAMIAO_MOTOR_ID_4 0x04
+
+// フィードバックのデコードに使うレンジ(位置±P_MAX[rad]、速度±V_MAX[rad/s]、
+// トルク±T_MAX[N・m])。VEL/POS_VELモードでの「制御」自体には影響しない
+// (生のfloat値をそのまま送るため)。影響するのは帰還スロットの数値の
+// 正しさのみ。値はDM3520のレジスタ(RID21/22/23)を読み出して確認済み
+// (2026-10-14、減速比RID20=25、位置・速度は出力軸基準)。
+// 注: 速度のスロットは0.01 rad/s単位(±327.67 rad/s)。最高速度は無負荷560rpm=58.6rad/s。
+#define DAMIAO_P_MAX 12.5f  // RID21
+#define DAMIAO_V_MAX 200.0f // RID22
+#define DAMIAO_T_MAX 10.0f  // RID23
+
+// ================= RobStride関連 (MODE_ROBSTRIDEのみ有効) =================
+// MODE_ROBSTRIDEはMODE_DAMIAOと同様、ノード/スロット分配方式とは別系統で、
+// RobStride EduLite 05(EL05)の独自(私有)プロトコル(29bit拡張ID, 1Mbps)を
+// 直接喋る独立デバイスとして動作する。速度モード(run_mode=2)と位置モード
+// CSP(run_mode=5)を使い、モータ内蔵のループにそのまま追従させる(ホスト側PID不要)。
+// スロット割り当ては robstride.cpp の先頭コメント参照(8スロット/モータ、最大2台)。
+// モータはMotorStudio等でMITプロトコル/CANopenに切り替えていないこと(工場出荷は独自プロトコル)。
+
+#define ROBSTRIDE_MOTOR_COUNT 1 // 接続台数(最大2)
+
+// 各モータのCAN ID(0-127)。説明書では工場出荷は1だが、実機は127(0x7F)だった例がある。
+// 起動時のIDスキャン結果(帰還スロット20-23)で確認してここへ反映すること。
+#define ROBSTRIDE_MOTOR_ID_1 127
+#define ROBSTRIDE_MOTOR_ID_2 2
+
+// 本機(ホスト)のCAN ID。説明書・公式ツールの例と同じ0xFD。
+#define ROBSTRIDE_HOST_ID 0xFD
+
+// PCからの有効フレームがこの時間途絶えたらモータを停止する[ms](MODE_DAMIAOと同じ考え方)。
+#define ROBSTRIDE_CMD_TIMEOUT_MS 300
+
+// EL05自身のCANタイムアウト[ms]。この時間CANフレームが届かないとモータが自分で停止
+// (Resetモード)する。ESP32が固まった・CAN線が抜けたときの最後の砦。有効化のたびに
+// パラメータ0x7028(1あたり50us)へ書く(RAMのみ。電源を入れ直すと工場値に戻る)。
+// ESP32は約5ms周期で指令を送るので100msあれば誤停止しない。
+#define ROBSTRIDE_MOTOR_TIMEOUT_MS 100
+
+// 速度・位置モードの電流上限[A](パラメータ0x7018 limit_cur。工場値11A)。
+// 初回の動作確認用に3Aへ下げてある(参考資料の実機試験で、3Aでも無負荷20rad/sまで追従)。
+// 機構に組み込んでトルクが足りないときに上げること(上限11)。
+#define ROBSTRIDE_LIMIT_CUR_A 3.0f
+
+// 速度モードの加速度[rad/s^2](パラメータ0x7022 acc_rad)。実機の工場値10と同じ。
+#define ROBSTRIDE_VEL_ACC_RADPS2 10.0f
+
+// 速度指令・位置モードの速度上限をこの値で切る[rad/s](プロトコルの上限±50)。
+// 実際の最高速度は電源電圧で決まる(24Vで約23.5rad/s、48Vで約45rad/s)。
+#define ROBSTRIDE_V_MAX_RADPS 50.0f
