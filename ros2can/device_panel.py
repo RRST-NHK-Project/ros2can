@@ -251,10 +251,12 @@ class DevicePanel(QWidget):
             control_tabs = SizedTabWidget()
             monitor_tabs = SizedTabWidget()
             for node in range(profile.node_count):
-                base = node * profile.slots_per_node
                 node_no = node + 1
-                node_tx = [c for c in defined_tx if base <= c.index < base + profile.slots_per_node]
-                node_rx = [c for c in defined_rx if base <= c.index < base + profile.slots_per_node]
+                # ノードごとにスロット数が違うプロファイルもあるため、範囲はプロファイルから取る
+                tx_base, tx_count = profile.node_tx_range(node)
+                rx_base, rx_count = profile.node_rx_range(node)
+                node_tx = [c for c in defined_tx if tx_base <= c.index < tx_base + tx_count]
+                node_rx = [c for c in defined_rx if rx_base <= c.index < rx_base + rx_count]
 
                 cw, crows = self._build_channel_rows(node_tx, self._make_control_row)
                 self.control_rows.update(crows)

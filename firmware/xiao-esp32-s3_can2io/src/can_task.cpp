@@ -2,7 +2,8 @@
 <can_task.cpp>
 ・CAN通信（TWAI + MCP2561）を用いた制御データ転送
 
-シリアル通信の 24 スロットを CAN バス上の最大 4 ノードへ分配し、各ノードが自分の担当スロットだけを受信・送信する。
+シリアル通信の 24 スロットを CAN バス上の各ノードへ分配し、各ノードが自分の担当スロットだけを受信・送信する。
+ノードごとのスロット数は config.hpp の割り当て表(CAN_NODE_CMD_SLOTS / CAN_NODE_FB_SLOTS)で決まる。
 ノードモードでは、自分の担当スロットを GPIO / サーボへ反映し、エンコーダ / スイッチの状態をそのスロットへ戻す。
 ホストモードでは、シリアルで受け取った 24 スロットを各ノードへ配り、各ノードから返ってきたデータをまとめてシリアルへ返す。
 Copyright (c) 2025 RRST-NHK-Project. All rights reserved.
@@ -25,8 +26,58 @@ constexpr uint32_t CAN_FRAME_ID_CMD_BASE = 0x100; // host -> node (指令)
 constexpr uint32_t CAN_FRAME_ID_FB_BASE = 0x180;  // node -> host (帰還)
 constexpr uint8_t CAN_FRAME_DLC = 8;
 constexpr uint8_t CAN_VALUES_PER_FRAME = 4;
-constexpr uint8_t CAN_CHUNK_COUNT_PER_NODE = (CAN_SLOTS_PER_NODE + CAN_VALUES_PER_FRAME - 1) / CAN_VALUES_PER_FRAME;
 constexpr uint32_t CAN_TX_PERIOD_MS = 5;
+
+// ================= ノードごとのスロット割り当て =================
+// config.hpp の CAN_NODE_CMD_SLOTS(指令) / CAN_NODE_FB_SLOTS(帰還) の表。
+// ノードnのスロットは、24スロットの中でノード0〜n-1の合計の位置から始まる。
+// CANフレームが運ぶのは「ノード内の何番目か」だけなので、ホストとノードで
+// 表が同じなら、ノードごとにスロット数が違っても正しく届く。
+constexpr uint8_t kCanNodeCmdSlots[] = CAN_NODE_CMD_SLOTS;
+constexpr uint8_t kCanNodeFbSlots[] = CAN_NODE_FB_SLOTS;
+
+// slots[0] 〜 slots[node-1] の合計 (= ノードnodeの先頭スロット)
+constexpr uint8_t canSlotOffset(const uint8_t *slots, uint8_t node) {
+    return node == 0 ? 0 : (uint8_t)(canSlotOffset(slots, node - 1) + slots[node - 1]);
+}
+
+constexpr uint8_t canChunkCount(uint8_t slot_count) {
+    return (uint8_t)((slot_count + CAN_VALUES_PER_FRAME - 1) / CAN_VALUES_PER_FRAME);
+}
+
+static_assert(sizeof(kCanNodeCmdSlots) == CAN_NODE_COUNT,
+              "CAN_NODE_CMD_SLOTS の要素数を CAN_NODE_COUNT と同じにしてください (config.hpp)");
+static_assert(sizeof(kCanNodeFbSlots) == CAN_NODE_COUNT,
+              "CAN_NODE_FB_SLOTS の要素数を CAN_NODE_COUNT と同じにしてください (config.hpp)");
+static_assert(canSlotOffset(kCanNodeCmdSlots, CAN_NODE_COUNT) <= Rx16NUM,
+              "CAN_NODE_CMD_SLOTS の合計が24スロットを超えています (config.hpp)");
+static_assert(canSlotOffset(kCanNodeFbSlots, CAN_NODE_COUNT) <= Tx16NUM,
+              "CAN_NODE_FB_SLOTS の合計が24スロットを超えています (config.hpp)");
+// 指令IDは 0x100 + node*16 + chunk。帰還ID帯(0x180〜)に届かないよう8ノードまで。
+static_assert(CAN_NODE_COUNT >= 1 && CAN_NODE_COUNT <= 8, "CAN_NODE_COUNT は1〜8にしてください (config.hpp)");
+
+#if defined(MODE_CAN) || defined(MODE_CAN_HOST)
+static_assert(CAN_NODE_INDEX < CAN_NODE_COUNT,
+              "CAN_ID のノード番号が CAN_NODE_COUNT を超えています。割り当て表に自分のノードがありません (config.hpp)");
+static_assert(kCanNodeCmdSlots[CAN_NODE_INDEX] >= CAN_IO_CMD_SLOTS_USED,
+              "自ノードの指令スロット数が、この基板に必要な数より少ないです (config.hpp の CAN_NODE_CMD_SLOTS)");
+static_assert(kCanNodeFbSlots[CAN_NODE_INDEX] >= CAN_IO_FB_SLOTS_USED,
+              "自ノードの帰還スロット数が、この基板に必要な数より少ないです (config.hpp の CAN_NODE_FB_SLOTS)");
+#endif
+
+// 24スロット中の、あるノードの範囲
+struct CanSlotRange {
+    uint8_t offset; // 先頭スロット
+    uint8_t count;  // スロット数
+};
+
+static CanSlotRange canCmdRange(uint8_t node_index) {
+    return {canSlotOffset(kCanNodeCmdSlots, node_index), kCanNodeCmdSlots[node_index]};
+}
+
+static CanSlotRange canFbRange(uint8_t node_index) {
+    return {canSlotOffset(kCanNodeFbSlots, node_index), kCanNodeFbSlots[node_index]};
+}
 
 static twai_general_config_t g_config = TWAI_GENERAL_CONFIG_DEFAULT((gpio_num_t)CAN_TX, (gpio_num_t)CAN_RX, TWAI_MODE_NORMAL);
 // MODE_ROBOMAS/MODE_CUBEMARSと同一バスに同居できるよう1Mbpsに統一。
@@ -38,14 +89,17 @@ static portMUX_TYPE g_can_frame_lock = portMUX_INITIALIZER_UNLOCKED;
 
 #if defined(MODE_CAN_MONITOR)
 constexpr uint32_t CAN_MONITOR_SUMMARY_PRINT_INTERVAL_MS = 50; // ノードごとの要約出力スロットル
-static int16_t g_monitor_node_slots[CAN_MONITOR_MAX_NODES * CAN_SLOTS_PER_NODE] = {0};
-static uint8_t g_monitor_node_chunk_mask[CAN_MONITOR_MAX_NODES] = {0};
-static uint32_t g_monitor_node_last_print_ms[CAN_MONITOR_MAX_NODES] = {0};
+// 要約デコードは割り当て表(config.hpp)にあるノードだけが対象。帰還スロットの位置で保持する。
+static int16_t g_monitor_node_slots[Tx16NUM] = {0};
+static uint8_t g_monitor_node_chunk_mask[CAN_NODE_COUNT] = {0};
+static uint32_t g_monitor_node_last_print_ms[CAN_NODE_COUNT] = {0};
 #endif
 
 static uint8_t canFrameNodeIndex(uint32_t id_base, uint32_t identifier);
 static uint8_t canFrameChunkIndex(uint32_t id_base, uint32_t identifier);
-static uint8_t canChunkValueCount(uint8_t chunk);
+static uint8_t canChunkValueCount(uint8_t slot_count, uint8_t chunk);
+static void canUnpackChunk(const twai_message_t &message, int16_t *buffer, CanSlotRange range, uint8_t chunk,
+                           uint8_t buffer_size);
 
 static void copyRx16DataSnapshot(int16_t *buffer) {
     portENTER_CRITICAL(&g_can_frame_lock);
@@ -82,11 +136,11 @@ static void printCanRawFrame(const twai_message_t &message) {
 // ラベルはプロファイル(SW/ENC/rpm等)に依存しないよう、生のslot番号のみで表示する。
 static void printCanMonitorNodeSummary(uint8_t node_index, const int16_t *slot_buffer) {
     char line[220] = {0};
-    const uint8_t slot_offset = node_index * CAN_SLOTS_PER_NODE;
+    const CanSlotRange range = canFbRange(node_index);
     int len = snprintf(line, sizeof(line), "[CAN MON] node=%u", (unsigned)node_index);
-    for (uint8_t s = 0; s < CAN_SLOTS_PER_NODE && len > 0 && (size_t)len < sizeof(line); s++) {
+    for (uint8_t s = 0; s < range.count && len > 0 && (size_t)len < sizeof(line); s++) {
         len += snprintf(line + len, sizeof(line) - (size_t)len, " slot%u=%d",
-                         (unsigned)s, (int)slot_buffer[slot_offset + s]);
+                         (unsigned)s, (int)slot_buffer[range.offset + s]);
     }
     Serial.println(line);
 }
@@ -100,31 +154,20 @@ static void updateCanMonitorNodeFromFrame(const twai_message_t &message) {
         return;
     }
     const uint8_t frame_node = canFrameNodeIndex(CAN_FRAME_ID_FB_BASE, message.identifier);
-    if (frame_node >= CAN_MONITOR_MAX_NODES) {
+    if (frame_node >= CAN_NODE_COUNT) {
         return;
     }
 
+    const CanSlotRange range = canFbRange(frame_node);
+    const uint8_t chunk_count = canChunkCount(range.count);
     const uint8_t chunk = canFrameChunkIndex(CAN_FRAME_ID_FB_BASE, message.identifier);
-    if (chunk >= CAN_CHUNK_COUNT_PER_NODE) {
+    if (chunk >= chunk_count) {
         return;
     }
-    const uint8_t values_to_unpack = canChunkValueCount(chunk);
-    const uint8_t slot_offset = frame_node * CAN_SLOTS_PER_NODE + chunk * CAN_VALUES_PER_FRAME;
-
-    for (uint8_t i = 0; i < values_to_unpack; ++i) {
-        const uint8_t slot_index = slot_offset + i;
-        if (slot_index >= CAN_MONITOR_MAX_NODES * CAN_SLOTS_PER_NODE) {
-            break;
-        }
-
-        const uint8_t byte_index = i * 2;
-        const int16_t hi = (int16_t)((uint8_t)message.data[byte_index] << 8);
-        const int16_t lo = (int16_t)((uint8_t)message.data[byte_index + 1]);
-        g_monitor_node_slots[slot_index] = (int16_t)(hi | lo);
-    }
+    canUnpackChunk(message, g_monitor_node_slots, range, chunk, Tx16NUM);
 
     g_monitor_node_chunk_mask[frame_node] |= (uint8_t)(1u << chunk);
-    if (g_monitor_node_chunk_mask[frame_node] == ((1u << CAN_CHUNK_COUNT_PER_NODE) - 1u)) {
+    if (g_monitor_node_chunk_mask[frame_node] == ((1u << chunk_count) - 1u)) {
         const uint32_t now_ms = millis();
         if (now_ms - g_monitor_node_last_print_ms[frame_node] >= CAN_MONITOR_SUMMARY_PRINT_INTERVAL_MS) {
             printCanMonitorNodeSummary(frame_node, g_monitor_node_slots);
@@ -149,23 +192,45 @@ static uint8_t canFrameChunkIndex(uint32_t id_base, uint32_t identifier) {
     return (uint8_t)((identifier - id_base) % 16U);
 }
 
-static uint8_t canChunkValueCount(uint8_t chunk) {
-    const uint8_t remaining_slots = (uint8_t)(CAN_SLOTS_PER_NODE - chunk * CAN_VALUES_PER_FRAME);
+static uint8_t canChunkValueCount(uint8_t slot_count, uint8_t chunk) {
+    // slot_count個のスロットを4値ずつ区切ったとき、chunk番目のフレームに入る値の数
+    const uint8_t remaining_slots = (uint8_t)(slot_count - chunk * CAN_VALUES_PER_FRAME);
     return (remaining_slots < CAN_VALUES_PER_FRAME) ? remaining_slots : CAN_VALUES_PER_FRAME;
 }
 
-static void canSendNodeSlotBlock(const int16_t *data, uint8_t node_index, uint32_t id_base) {
-    // 指定ノード向け(指令)/指定ノードとしての(帰還)スロットデータを複数フレームに分けて送信する
-    for (uint8_t chunk = 0; chunk < CAN_CHUNK_COUNT_PER_NODE; chunk++) {
+static void canUnpackChunk(const twai_message_t &message, int16_t *buffer, CanSlotRange range, uint8_t chunk,
+                           uint8_t buffer_size) {
+    // 受信フレーム(chunk番目)の値を、24スロットバッファ内のノードの範囲(range)へ書き込む
+    const uint8_t slot_offset = range.offset + chunk * CAN_VALUES_PER_FRAME;
+    const uint8_t values_to_unpack = canChunkValueCount(range.count, chunk);
+    for (uint8_t i = 0; i < values_to_unpack; i++) {
+        const uint8_t slot_index = slot_offset + i;
+        if (slot_index >= buffer_size) {
+            break;
+        }
+
+        const uint8_t byte_index = i * 2;
+        const int16_t hi = (int16_t)((uint8_t)message.data[byte_index] << 8);
+        const int16_t lo = (int16_t)((uint8_t)message.data[byte_index + 1]);
+        buffer[slot_index] = (int16_t)(hi | lo);
+    }
+}
+
+static void canSendNodeSlotBlock(const int16_t *data, uint8_t node_index, uint32_t id_base, CanSlotRange range) {
+    // 指定ノード向け(指令)/指定ノードとしての(帰還)スロットデータを複数フレームに分けて送信する。
+    // rangeは24スロット中のそのノードの範囲(指令ならcanCmdRange、帰還ならcanFbRange)。
+    // スロット数0のノードは何も送らない。
+    const uint8_t chunk_count = canChunkCount(range.count);
+    for (uint8_t chunk = 0; chunk < chunk_count; chunk++) {
         twai_message_t message{};
         message.identifier = id_base + (node_index * 16U) + chunk;
         message.data_length_code = CAN_FRAME_DLC;
         message.flags = 0;
         std::memset(message.data, 0, sizeof(message.data));
 
-        const uint8_t values_to_pack = canChunkValueCount(chunk);
+        const uint8_t values_to_pack = canChunkValueCount(range.count, chunk);
         for (uint8_t i = 0; i < values_to_pack; i++) {
-            const uint8_t slot_index = node_index * CAN_SLOTS_PER_NODE + chunk * CAN_VALUES_PER_FRAME + i;
+            const uint8_t slot_index = range.offset + chunk * CAN_VALUES_PER_FRAME + i;
             if (slot_index >= Tx16NUM) {
                 break;
             }
@@ -186,6 +251,8 @@ static void canSendNodeSlotBlock(const int16_t *data, uint8_t node_index, uint32
 static void canRecvNodeSlotBlock(int16_t *buffer, uint8_t node_index) {
     // 自ノード宛て(指令, CAN_FRAME_ID_CMD_BASE)のCANフレームだけを受信してローカルバッファへ反映する
     twai_message_t message{};
+    const CanSlotRange range = canCmdRange(node_index);
+    const uint8_t chunk_count = canChunkCount(range.count);
 
     while (twai_receive(&message, pdMS_TO_TICKS(0)) == ESP_OK) {
         if (message.data_length_code != CAN_FRAME_DLC) {
@@ -201,25 +268,12 @@ static void canRecvNodeSlotBlock(int16_t *buffer, uint8_t node_index) {
         }
 
         const uint8_t chunk = canFrameChunkIndex(CAN_FRAME_ID_CMD_BASE, message.identifier);
-        if (chunk >= CAN_CHUNK_COUNT_PER_NODE) {
+        if (chunk >= chunk_count) {
             continue;
         }
 
         statusLedPulseCan();
-
-        const uint8_t slot_offset = node_index * CAN_SLOTS_PER_NODE + chunk * CAN_VALUES_PER_FRAME;
-        const uint8_t values_to_unpack = canChunkValueCount(chunk);
-        for (uint8_t i = 0; i < values_to_unpack; i++) {
-            const uint8_t slot_index = slot_offset + i;
-            if (slot_index >= Rx16NUM) {
-                break;
-            }
-
-            const uint8_t byte_index = i * 2;
-            const int16_t hi = (int16_t)((uint8_t)message.data[byte_index] << 8);
-            const int16_t lo = (int16_t)((uint8_t)message.data[byte_index + 1]);
-            buffer[slot_index] = (int16_t)(hi | lo);
-        }
+        canUnpackChunk(message, buffer, range, chunk, Rx16NUM);
     }
 }
 
@@ -240,53 +294,39 @@ static void canRecvAllNodeSlotBlocks(int16_t *buffer) {
             continue;
         }
 
+        const CanSlotRange range = canFbRange(frame_node);
         const uint8_t chunk = canFrameChunkIndex(CAN_FRAME_ID_FB_BASE, message.identifier);
-        if (chunk >= CAN_CHUNK_COUNT_PER_NODE) {
+        if (chunk >= canChunkCount(range.count)) {
             continue;
         }
 
         statusLedPulseCan();
-
-        const uint8_t slot_offset = frame_node * CAN_SLOTS_PER_NODE + chunk * CAN_VALUES_PER_FRAME;
-        const uint8_t values_to_unpack = canChunkValueCount(chunk);
-        for (uint8_t i = 0; i < values_to_unpack; i++) {
-            const uint8_t slot_index = slot_offset + i;
-            if (slot_index >= Rx16NUM) {
-                break;
-            }
-
-            const uint8_t byte_index = i * 2;
-            const int16_t hi = (int16_t)((uint8_t)message.data[byte_index] << 8);
-            const int16_t lo = (int16_t)((uint8_t)message.data[byte_index + 1]);
-            buffer[slot_index] = (int16_t)(hi | lo);
-        }
+        canUnpackChunk(message, buffer, range, chunk, Tx16NUM);
     }
 }
 
 static void applyNodeSlotBlockToLocalControl(const int16_t *slot_buffer, uint8_t node_index) {
-    // 受信したノードデータをローカル制御用配列へ反映する
-    // slot_indexはslot_buffer（全ノード分, CAN_NODE_COUNT*CAN_SLOTS_PER_NODE要素）内の絶対位置なので、
-    // 書き込み先のCanIoRxData（CAN_IO_SLOT_COUNT要素、基板ごとに異なる）ではなく全体サイズと比較すること
-    const uint8_t slot_offset = node_index * CAN_SLOTS_PER_NODE;
-    constexpr uint8_t kSlotBufferSize = CAN_NODE_COUNT * CAN_SLOTS_PER_NODE;
+    // 受信したノードデータ(24スロット中の自ノードの指令範囲)をローカル制御用配列へ反映する。
+    // 範囲外のCanIoRxDataは0のまま(基板が使うのは CAN_IO_CMD_SLOTS_USED 個まで)。
+    const CanSlotRange range = canCmdRange(node_index);
 
-    for (uint8_t i = 0; i < CAN_IO_SLOT_COUNT; i++) {
-        const uint8_t slot_index = slot_offset + i;
-        if (slot_index < kSlotBufferSize) {
+    for (uint8_t i = 0; i < range.count && i < CAN_IO_SLOT_COUNT; i++) {
+        const uint8_t slot_index = range.offset + i;
+        if (slot_index < Rx16NUM) {
             CanIoRxData[i] = slot_buffer[slot_index];
         }
     }
 }
 
 static void buildNodeSlotBlockFromLocalFeedback(int16_t *slot_buffer, uint8_t node_index) {
-    // ローカルのフィードバック情報をCAN送信用バッファへ組み立てる
+    // ローカルのフィードバック情報を、24スロット中の自ノードの帰還範囲へ組み立てる
     // スロット順序・意味は基板(BOARD_VARIANT)ごとに異なる。frame_data.hppのCanIoTxData
     // コメント参照。
-    const uint8_t slot_offset = node_index * CAN_SLOTS_PER_NODE;
+    const CanSlotRange range = canFbRange(node_index);
 
-    for (uint8_t i = 0; i < CAN_IO_SLOT_COUNT; i++) {
-        if (slot_offset + i < Tx16NUM) {
-            slot_buffer[slot_offset + i] = CanIoTxData[i];
+    for (uint8_t i = 0; i < range.count && i < CAN_IO_SLOT_COUNT; i++) {
+        if (range.offset + i < Tx16NUM) {
+            slot_buffer[range.offset + i] = CanIoTxData[i];
         }
     }
 }
@@ -398,7 +438,7 @@ void canTask(void *) {
                 if (node_index == CAN_NODE_INDEX) {
                     continue;
                 }
-                canSendNodeSlotBlock(host_tx_payload, node_index, CAN_FRAME_ID_CMD_BASE);
+                canSendNodeSlotBlock(host_tx_payload, node_index, CAN_FRAME_ID_CMD_BASE, canCmdRange(node_index));
             }
             last_tx = xTaskGetTickCount();
         }
@@ -429,7 +469,7 @@ void canTask(void *) {
 
         if (xTaskGetTickCount() - last_tx >= pdMS_TO_TICKS(CAN_TX_PERIOD_MS)) {
             buildNodeSlotBlockFromLocalFeedback(node_feedback_buffer, CAN_NODE_INDEX);
-            canSendNodeSlotBlock(node_feedback_buffer, CAN_NODE_INDEX, CAN_FRAME_ID_FB_BASE);
+            canSendNodeSlotBlock(node_feedback_buffer, CAN_NODE_INDEX, CAN_FRAME_ID_FB_BASE, canFbRange(CAN_NODE_INDEX));
             last_tx = xTaskGetTickCount();
         }
 #endif

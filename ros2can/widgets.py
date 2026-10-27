@@ -8,13 +8,20 @@ from PyQt5.QtCore import Qt, QSize, QTimer, pyqtSignal
 from PyQt5.QtWidgets import (
     QWidget, QLabel, QSlider, QDoubleSpinBox, QHBoxLayout,
     QPushButton, QComboBox, QTableWidget, QTableWidgetItem, QHeaderView,
-    QSpinBox, QTabWidget, QStackedWidget,
+    QSpinBox, QTabWidget, QStackedWidget, QCheckBox,
 )
 
 from .device_profiles import (
-    ChannelDef, DIGITAL_OUT, ENUM_OUT,
+    ChannelDef, DIGITAL_OUT, ENUM_OUT, BITS_OUT,
     DIGITAL_IN, ENUM_IN, SLOT_COUNT,
 )
+
+
+def bit_options(chdef: ChannelDef):
+    """BITS_OUT のビット一覧 [(bit番号, 名前), ...]。options が無ければ max から作る。"""
+    if chdef.options:
+        return [(int(bit), str(text)) for bit, text in chdef.options]
+    return [(b, f"bit{b}") for b in range(max(1, int(chdef.max).bit_length()))]
 
 # serial_bridge (CUI版, graphical_ui.hpp の spinner_frame) と同じ点字ドットの
 # 回転スピナー。100ms/frameも合わせてあり、旧CUI版と同じ体感速度で回る。
@@ -227,6 +234,20 @@ class ChannelControlRow(QWidget):
             layout.addWidget(self.combo)
             layout.addStretch(1)
 
+        elif chdef.kind == BITS_OUT:
+            # 1スロットに複数のON/OFFをビットでまとめた指令 (例: SSのTR1-4)
+            self.bit_boxes = []
+            for bit, text in bit_options(chdef):
+                box = QCheckBox(text)
+                box.setToolTip(f"bit{bit}")
+                box.toggled.connect(self._on_bits)
+                layout.addWidget(box)
+                self.bit_boxes.append((bit, box))
+            self.bits_value_label = QLabel("= 0")
+            self.bits_value_label.setStyleSheet("color:#5f6368;")
+            layout.addWidget(self.bits_value_label)
+            layout.addStretch(1)
+
         else:
             # motor / servo / raw_out (数値スライダー+スピンボックス)
             self.slider = QSlider(Qt.Horizontal)
@@ -300,6 +321,15 @@ class ChannelControlRow(QWidget):
         if not self._updating:
             self._emit(1 if checked else 0)
 
+    def _bits_value(self) -> int:
+        return sum(1 << bit for bit, box in self.bit_boxes if box.isChecked())
+
+    def _on_bits(self, _checked: bool) -> None:
+        value = self._bits_value()
+        self.bits_value_label.setText(f"= {value}")
+        if not self._updating:
+            self._emit(value)
+
     def _on_combo(self, _idx: int) -> None:
         if self._updating:
             return
@@ -359,6 +389,10 @@ class ChannelControlRow(QWidget):
                 idx = self.combo.findData(raw)
                 if idx >= 0:
                     self.combo.setCurrentIndex(idx)
+            elif self.chdef.kind == BITS_OUT:
+                for bit, box in self.bit_boxes:
+                    box.setChecked(bool((int(raw) >> bit) & 1))
+                self.bits_value_label.setText(f"= {int(raw)}")
             else:
                 self.slider.setValue(int(max(self.chdef.min, min(self.chdef.max, raw))))
                 self.spin.setValue(raw * self.chdef.scale)

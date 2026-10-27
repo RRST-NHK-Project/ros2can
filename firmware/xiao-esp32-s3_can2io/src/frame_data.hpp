@@ -10,9 +10,23 @@ Copyright (c) 2025 RRST-NHK-Project. All rights reserved.
 
 #define Tx16NUM 24 // 送信するint16データの数
 #define Rx16NUM 24 // 受信するint16データの数
-// CANモードで扱うIO値の数。CAN送受信の1ノード分スロット数(config.hppの
-// CAN_SLOTS_PER_NODE、基板ごとに異なる)と必ず一致させる。
-#define CAN_IO_SLOT_COUNT CAN_SLOTS_PER_NODE
+// CANモードで扱うIO値(CanIoRxData/CanIoTxData)の配列サイズ。全基板で最大の9に固定。
+// 実際にCANでやり取りするのは自ノードの CAN_NODE_CMD_SLOTS / CAN_NODE_FB_SLOTS 分だけ
+// (config.hpp)で、残りは0のまま。
+#define CAN_IO_SLOT_COUNT 9
+
+// この基板が使うスロット数(下のCanIoRxData/CanIoTxDataのレイアウト参照)。
+// config.hppの割り当て表で自ノードの数がこれより少ないとcan_task.cppでコンパイルエラーにする。
+#if BOARD_VARIANT == BOARD_SOKI
+#define CAN_IO_CMD_SLOTS_USED 5
+#define CAN_IO_FB_SLOTS_USED 5
+#elif BOARD_VARIANT == BOARD_MES
+#define CAN_IO_CMD_SLOTS_USED 2
+#define CAN_IO_FB_SLOTS_USED 4
+#elif BOARD_VARIANT == BOARD_SS
+#define CAN_IO_CMD_SLOTS_USED 6
+#define CAN_IO_FB_SLOTS_USED 0
+#endif
 
 extern volatile int16_t Tx_16Data[Tx16NUM];
 /*
@@ -63,9 +77,10 @@ BOARD_MES (5スロット、0-1のみ使用):
   1: MD2 PWM指令
   2-4: 未使用
 
-BOARD_SS (9スロット):
+BOARD_SS (6スロット):
   0-4: SERVO1-5
-  5-8: TR1-4 (ソレノイドバルブ、0以外でON)
+  5: TR1-4 (ソレノイドバルブ)をビットでまとめた値。bit0=TR1, bit1=TR2, bit2=TR3, bit3=TR4 (1でON)
+     例: TR1とTR3をON → 0b0101 = 5
 */
 
 extern volatile int16_t CanIoTxData[CAN_IO_SLOT_COUNT];
@@ -85,5 +100,5 @@ BOARD_MES (5スロット):
   3: SW3 (ENC2_SW == 1 の場合のみ有効、それ以外は常に0)
   4: 未使用
 
-BOARD_SS (9スロット): 帰還なし、全スロット常に0
+BOARD_SS: 帰還なし、全スロット常に0
 */

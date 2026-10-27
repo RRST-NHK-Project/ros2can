@@ -109,33 +109,83 @@ Copyright (c) 2025 RRST-NHK-Project. All rights reserved.
 #define ENC2_SW 0
 
 // CANのノード割り当て設定
-// 1つのCANバス上でCAN_NODE_COUNTノードまで対応し、1ノードあたりCAN_SLOTS_PER_NODE
-// スロットをCANで送受信する。ビットレートは1Mbps固定(can_task.cpp)。
+// 1つのCANバス上でCAN_NODE_COUNTノードまで対応し、ノードごとに決めた数のスロットを
+// CANで送受信する。ビットレートは1Mbps固定(can_task.cpp)。
+// シリアルの24スロットは、ノード0(CAN_ID=101)から順に詰めて割り当てる。
+//   指令(PC→ノード): ノードnの先頭 = ノード0〜n-1の CAN_NODE_CMD_SLOTS の合計
+//   帰還(ノード→PC): ノードnの先頭 = ノード0〜n-1の CAN_NODE_FB_SLOTS の合計
+//
+// 重要: バス上の全マイコン(ホスト・全ノード)で同じ CAN_BUS_PRESET にすること。
+// 違うとCANフレームの区切りがずれ、値が別のチャンネルに入る/届かなくなる。
+// ros2canのプロファイルも、下の表の「ros2canプロファイル」を選ぶこと。
+//
+// ---- CAN_BUS_PRESET: 使うバス構成を1つ選ぶ ----
+//   プリセット          構成 (CAN_ID 101=ホスト)             ros2canプロファイル
+//   CAN_BUS_DEFAULT   基板に合わせた従来の等幅              (SOKI/MES: MES (CAN Host)等, SS: SS (CAN Host))
+//                     SOKI/MES: 4ノード x 5スロット, SS: 2ノード x 9スロット
+//   CAN_BUS_MES2_SS2  MES(101) + MES(102) + SS(103) + SS(104) MES + MES + SS + SS
+//   CAN_BUS_MES4      MES(101) + MES(102) + MES(103) + MES(104) MES (CAN Host)  ※DEFAULTのMESと同じ割り当て
+//   CAN_BUS_SS4       SS(101) + SS(102) + SS(103) + SS(104)     SS x4
+//   CAN_BUS_MES_SS_SOKI MES(101) + SS(102) + SOKI(103)          MES + SS + SOKI
+//   CAN_BUS_CUSTOM    下の CAN_BUS_CUSTOM_* の表を使う(上に無い組み合わせ用)
+//
+// 各基板が最低限必要なスロット数(自分の枠がこれより少ないとコンパイルエラー):
+//   BOARD_SOKI: 指令5(SERVO1-3,MD1-2)          / 帰還5(SW1-3,ENC1-2)
+//   BOARD_MES : 指令2(MD1-2)                   / 帰還4(SW1,ENC1,ENC2,SW3)
+//   BOARD_SS  : 指令6(SERVO1-5, TR1-4はビットで1スロット) / 帰還0
+#define CAN_BUS_DEFAULT 0
+#define CAN_BUS_MES2_SS2 1
+#define CAN_BUS_MES4 2
+#define CAN_BUS_SS4 3
+#define CAN_BUS_MES_SS_SOKI 4
+#define CAN_BUS_CUSTOM 99
+
+#define CAN_BUS_PRESET CAN_BUS_DEFAULT
+
+// CAN_BUS_CUSTOM のときだけ使う表 (例: MES(101) + SS(102) + SS(103))
+#define CAN_BUS_CUSTOM_NODE_COUNT 3
+#define CAN_BUS_CUSTOM_CMD_SLOTS {2, 6, 6}
+#define CAN_BUS_CUSTOM_FB_SLOTS {4, 0, 0}
+
 // MODE_ROBOMAS/MODE_CUBEMARSと同じ物理バスに同居させる場合でも指令/帰還のCAN ID帯が
 // 重ならないよう設計されているが、CAN_NODE_COUNTを大きくしすぎるとロボマス側の
 // ID帯(0x1FE, 0x200-0x208)に近づくため、増やす場合は帰還ID(0x180 + node*16 + chunk)
-// の上限がそこへ届かないことを確認すること。
-// 重要: ここは「対応可能な最大数」ではなく「実際にバスへ接続されているノード数
-// (ホスト自身を含む)」に必ず合わせること。ホストは毎周期、自分以外の
-// [0, CAN_NODE_COUNT) 全ノードへ指令フレームを送信するため、存在しないノード宛の
-// 分だけACKエラーが発生し続け、ホスト自身のCANコントローラがBus-Offに陥る
-// (実測: 4ノード設定・実接続2台の場合、起動後約40msでBus-Off)。
-// 現在の実接続(BOARD_SOKI): ホスト(node0)+STM32 b-g431-esc1_can2io(node1)の2台のみ。
-//
-// BOARD_SS(SERVO1-5+TR1-4=9指令チャンネル)はCAN_SLOTS_PER_NODE=5に収まらないため
-// 9へ拡張し、Tx_16Data/Rx_16Dataの24スロット枠に収まるようCAN_NODE_COUNTを2
-// (host+1)までに抑えている(下のstatic_assert相当のチェックも参照)。この値を
-// 手で変える場合は必ず CAN_NODE_COUNT * CAN_SLOTS_PER_NODE <= 24 を保つこと。
+// の上限がそこへ届かないことを確認すること(can_task.cppで8ノードまでに制限)。
+// 注意: ホストは毎周期、自分以外の [0, CAN_NODE_COUNT) 全ノードへ指令フレームを送信する。
+// 以前の実測で「4ノード設定・実接続2台の場合、起動後約40msでBus-Off」という記録がある
+// (BOARD_SOKI: ホスト + STM32 b-g431-esc1_can2io の2台構成)。
+#if CAN_BUS_PRESET == CAN_BUS_MES2_SS2
+#define CAN_NODE_COUNT 4
+#define CAN_NODE_CMD_SLOTS {2, 2, 6, 6}
+#define CAN_NODE_FB_SLOTS {4, 4, 0, 0}
+#elif CAN_BUS_PRESET == CAN_BUS_MES4
+#define CAN_NODE_COUNT 4
+#define CAN_NODE_CMD_SLOTS {5, 5, 5, 5}
+#define CAN_NODE_FB_SLOTS {5, 5, 5, 5}
+#elif CAN_BUS_PRESET == CAN_BUS_SS4
+#define CAN_NODE_COUNT 4
+#define CAN_NODE_CMD_SLOTS {6, 6, 6, 6}
+#define CAN_NODE_FB_SLOTS {0, 0, 0, 0}
+#elif CAN_BUS_PRESET == CAN_BUS_MES_SS_SOKI
+#define CAN_NODE_COUNT 3
+#define CAN_NODE_CMD_SLOTS {2, 6, 5}
+#define CAN_NODE_FB_SLOTS {4, 0, 5}
+#elif CAN_BUS_PRESET == CAN_BUS_CUSTOM
+#define CAN_NODE_COUNT CAN_BUS_CUSTOM_NODE_COUNT
+#define CAN_NODE_CMD_SLOTS CAN_BUS_CUSTOM_CMD_SLOTS
+#define CAN_NODE_FB_SLOTS CAN_BUS_CUSTOM_FB_SLOTS
+#elif CAN_BUS_PRESET == CAN_BUS_DEFAULT
 #if BOARD_VARIANT == BOARD_SS
 #define CAN_NODE_COUNT 2
-#define CAN_SLOTS_PER_NODE 9
+#define CAN_NODE_CMD_SLOTS {9, 9}
+#define CAN_NODE_FB_SLOTS {9, 9}
 #else
 #define CAN_NODE_COUNT 4
-#define CAN_SLOTS_PER_NODE 5
+#define CAN_NODE_CMD_SLOTS {5, 5, 5, 5}
+#define CAN_NODE_FB_SLOTS {5, 5, 5, 5}
 #endif
-
-#if (CAN_NODE_COUNT * CAN_SLOTS_PER_NODE) > 24
-#error "CAN_NODE_COUNT * CAN_SLOTS_PER_NODE exceeds the 24-slot Tx_16Data/Rx_16Data buffer (frame_data.hpp)"
+#else
+#error "CAN_BUS_PRESET: unknown preset"
 #endif
 
 // CAN_ID の下位2桁をノード番号として使用する。

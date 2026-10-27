@@ -17,12 +17,12 @@ from PyQt5.QtWidgets import (
 
 from .device_profiles import (
     ChannelDef, DeviceProfile, SLOT_COUNT,
-    MOTOR, SERVO, DIGITAL_OUT, ENUM_OUT, RAW_OUT,
+    MOTOR, SERVO, DIGITAL_OUT, ENUM_OUT, BITS_OUT, RAW_OUT,
     COUNTER, DIGITAL_IN, READOUT, ENUM_IN, RAW_IN,
     make_can_host_profile,
 )
 
-TX_KINDS = [MOTOR, SERVO, DIGITAL_OUT, ENUM_OUT, RAW_OUT]
+TX_KINDS = [MOTOR, SERVO, DIGITAL_OUT, ENUM_OUT, BITS_OUT, RAW_OUT]
 RX_KINDS = [COUNTER, DIGITAL_IN, READOUT, ENUM_IN, RAW_IN]
 
 COLUMNS = ["index", "label", "kind", "group", "min", "max", "unit", "scale", "note"]
@@ -95,13 +95,14 @@ class _SlotTable(QTableWidget):
             except ValueError:
                 scale = 1.0
             note = self.item(i, 8).text().strip()
-            # このテーブルに列の無いzeroable属性は元定義から引き継ぐ
-            # (無いとload()前の値に静かにFalseへ戻ってしまうため)。
+            # このテーブルに列の無いzeroable/options(ENUMの選択肢・BITSのビット名)属性は
+            # 元定義から引き継ぐ(無いとload()前の値に静かに消えてしまうため)。
             orig = self._original_by_index.get(i)
             result.append(ChannelDef(
                 index=i, label=label, kind=kind, group=group,
                 min=min_v, max=max_v, unit=unit, scale=scale, note=note,
                 zeroable=orig.zeroable if orig is not None else False,
+                options=orig.options if orig is not None else None,
             ))
         return result
 
@@ -172,6 +173,8 @@ class ProfileEditorDialog(QDialog):
             node_count=node_count, slots_per_node=slots_per_node)
         self.tx_table.load(generated.tx)
         self.rx_table.load(generated.rx)
+        # 等幅で作り直したので、ノードごとのスロット数の表(混在構成用)は使わない
+        self._regenerated_uniform = True
 
     def _on_accept(self) -> None:
         name = self.name_edit.text().strip()
@@ -181,6 +184,9 @@ class ProfileEditorDialog(QDialog):
         self._profile.name = name
         self._profile.node_count = self.node_count_spin.value()
         self._profile.slots_per_node = self.slots_per_node_spin.value()
+        if getattr(self, "_regenerated_uniform", False):
+            self._profile.node_cmd_slots = []
+            self._profile.node_fb_slots = []
         self._profile.tx = self.tx_table.collect()
         self._profile.rx = self.rx_table.collect()
         self._profile.editable = True

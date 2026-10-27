@@ -46,6 +46,7 @@ MOTOR = "motor"          # 双極 PWM 指令 (DCモータ)
 SERVO = "servo"          # サーボ角度指令 [deg]
 DIGITAL_OUT = "digital_out"  # ON/OFF 出力
 ENUM_OUT = "enum_out"     # 選択式の指令値
+BITS_OUT = "bits_out"     # 1スロットに複数のON/OFFをビットでまとめた指令 (options=[(bit番号, 名前), ...])
 RAW_OUT = "raw_out"       # 生の int16 指令値
 
 # --- 受信 (ノード -> CAN -> ホスト -> ROS, sensor feedback) ---
@@ -94,12 +95,31 @@ class DeviceProfile:
     node_count: int = 0
     slots_per_node: int = 0
     editable: bool = False
+    # ノードごとにスロット数が違う構成(ファームの config.hpp CAN_BUS_PRESET で選ぶ混在構成)用。
+    # node_cmd_slots[n] = ノードnの指令(TX)スロット数、node_fb_slots[n] = 帰還(RX)スロット数。
+    # 空なら全ノード slots_per_node の等幅(従来どおり)。
+    node_cmd_slots: List[int] = field(default_factory=list)
+    node_fb_slots: List[int] = field(default_factory=list)
 
     def tx_by_index(self):
         return {c.index: c for c in self.tx}
 
     def rx_by_index(self):
         return {c.index: c for c in self.rx}
+
+    def node_tx_range(self, node: int) -> Tuple[int, int]:
+        """ノードnodeの指令(TX)スロット範囲 (先頭, 数)。"""
+        return _node_range(self.node_cmd_slots, self.slots_per_node, node)
+
+    def node_rx_range(self, node: int) -> Tuple[int, int]:
+        """ノードnodeの帰還(RX)スロット範囲 (先頭, 数)。"""
+        return _node_range(self.node_fb_slots, self.slots_per_node, node)
+
+
+def _node_range(per_node: List[int], uniform: int, node: int) -> Tuple[int, int]:
+    if per_node:
+        return sum(per_node[:node]), per_node[node]
+    return node * uniform, uniform
 
 
 def _raw_out(index: int) -> ChannelDef:
@@ -138,6 +158,7 @@ def _append_generic_io_node_channels(
     node: int, slots_per_node: int,
     servo_min_deg: int, servo_max_deg: int,
     md_pwm_max: int = DEFAULT_MD_PWM_MAX,
+    tx_base: Optional[int] = None, rx_base: Optional[int] = None,
 ) -> None:
     """汎用IOノード (xiao-esp32-s3_can2io 系, ENCx2/MDx2/SWx3/SERVOx3) の
     1ノード分のチャンネルを tx/rx に追加する。SERVOn と SWn はピン共有
@@ -150,7 +171,8 @@ def _append_generic_io_node_channels(
     0=エンコーダ入力/1=MD(PWM+DIR)出力)。MDn は符号=方向、絶対値=PWMデューティ
     (±MD_PWM_MAX、config.hppのMD_PWM_RESOLUTIONから算出、既定8bitで255)。
     """
-    base = node * slots_per_node
+    tb = node * slots_per_node if tx_base is None else tx_base
+    rb = node * slots_per_node if rx_base is None else rx_base
     node_no = node + 1
     can_id = 100 + node_no
     group_cmd = f"ノード{node_no} (CAN_ID={can_id}) 指令"
@@ -158,30 +180,30 @@ def _append_generic_io_node_channels(
 
     servo_slots = min(3, slots_per_node)
     for s in range(servo_slots):
-        tx.append(ChannelDef(base + s, f"N{node_no} SERVO{s + 1}", SERVO,
+        tx.append(ChannelDef(tb + s, f"N{node_no} SERVO{s + 1}", SERVO,
                               group=group_cmd, min=servo_min_deg, max=servo_max_deg, unit="deg",
                               note=f"SW{s + 1} とピン共有。MULTI{s + 1}=1(サーボ)のときのみ有効"))
 
     sw_slots = min(3, slots_per_node)
     for s in range(sw_slots):
-        rx.append(ChannelDef(base + s, f"N{node_no} SW{s + 1}", DIGITAL_IN, group=group_fb,
+        rx.append(ChannelDef(rb + s, f"N{node_no} SW{s + 1}", DIGITAL_IN, group=group_fb,
                               note=f"SERVO{s + 1} とピン共有。MULTI{s + 1}=0(スイッチ)のときのみ有効"))
 
     if slots_per_node > 3:
-        tx.append(ChannelDef(base + 3, f"N{node_no} MD1", MOTOR, group=group_cmd,
+        tx.append(ChannelDef(tb + 3, f"N{node_no} MD1", MOTOR, group=group_cmd,
                               min=-md_pwm_max, max=md_pwm_max,
                               note="ENC1 とピン共有。ENC1_MD=1(MD)のときのみ有効。"
                                    "符号=方向、絶対値=PWMデューティ"))
-        rx.append(ChannelDef(base + 3, f"N{node_no} ENC1", COUNTER, group=group_fb, unit="count",
+        rx.append(ChannelDef(rb + 3, f"N{node_no} ENC1", COUNTER, group=group_fb, unit="count",
                               zeroable=True,
                               note="MD1 とピン共有。ENC1_MD=0(エンコーダ)のときのみ有効"
                                    "(ENC1_MD=1の間は常に0)"))
     if slots_per_node > 4:
-        tx.append(ChannelDef(base + 4, f"N{node_no} MD2", MOTOR, group=group_cmd,
+        tx.append(ChannelDef(tb + 4, f"N{node_no} MD2", MOTOR, group=group_cmd,
                               min=-md_pwm_max, max=md_pwm_max,
                               note="ENC2 とピン共有。ENC2_MD=1(MD)のときのみ有効。"
                                    "符号=方向、絶対値=PWMデューティ"))
-        rx.append(ChannelDef(base + 4, f"N{node_no} ENC2", COUNTER, group=group_fb, unit="count",
+        rx.append(ChannelDef(rb + 4, f"N{node_no} ENC2", COUNTER, group=group_fb, unit="count",
                               zeroable=True,
                               note="MD2 とピン共有。ENC2_MD=0(エンコーダ)のときのみ有効"
                                    "(ENC2_MD=1の間は常に0)"))
@@ -219,6 +241,7 @@ def _append_mes_node_channels(
     tx: List[ChannelDef], rx: List[ChannelDef],
     node: int, slots_per_node: int,
     md_pwm_max: int = DEFAULT_MD_PWM_MAX,
+    tx_base: Optional[int] = None, rx_base: Optional[int] = None,
 ) -> None:
     """BOARD_MES (xiao-esp32-s3_can2io) の1ノード分のチャンネルを tx/rx に追加する。
 
@@ -229,29 +252,30 @@ def _append_mes_node_channels(
     [firmware/xiao-esp32-s3_can2io/src/pin_ctrl_task.cpp のIO_MD_Output/IO_ENC_Input/
     IO_SW_Input(BOARD_MES節)のスロット割当と一致させること]
     """
-    base = node * slots_per_node
+    tb = node * slots_per_node if tx_base is None else tx_base
+    rb = node * slots_per_node if rx_base is None else rx_base
     node_no = node + 1
     can_id = 100 + node_no
     group_cmd = f"ノード{node_no} (CAN_ID={can_id}, MES) 指令"
     group_fb = f"ノード{node_no} (CAN_ID={can_id}, MES) 帰還"
 
-    tx.append(ChannelDef(base + 0, f"N{node_no} MD1", MOTOR, group=group_cmd,
+    tx.append(ChannelDef(tb + 0, f"N{node_no} MD1", MOTOR, group=group_cmd,
                           min=-md_pwm_max, max=md_pwm_max,
                           note="常時専用ピン(ENCと共有しない)。符号=方向、絶対値=PWMデューティ"))
-    tx.append(ChannelDef(base + 1, f"N{node_no} MD2", MOTOR, group=group_cmd,
+    tx.append(ChannelDef(tb + 1, f"N{node_no} MD2", MOTOR, group=group_cmd,
                           min=-md_pwm_max, max=md_pwm_max,
                           note="常時専用ピン(ENCと共有しない)。符号=方向、絶対値=PWMデューティ"))
 
-    rx.append(ChannelDef(base + 0, f"N{node_no} SW1", DIGITAL_IN, group=group_fb,
+    rx.append(ChannelDef(rb + 0, f"N{node_no} SW1", DIGITAL_IN, group=group_fb,
                           note="専用ピン、常時有効"))
-    rx.append(ChannelDef(base + 1, f"N{node_no} ENC1", COUNTER, group=group_fb, unit="count",
+    rx.append(ChannelDef(rb + 1, f"N{node_no} ENC1", COUNTER, group=group_fb, unit="count",
                           zeroable=True, note="常時専用ピン(ENC1_MDのような切替は無い)"))
-    rx.append(ChannelDef(base + 2, f"N{node_no} ENC2", COUNTER, group=group_fb, unit="count",
+    rx.append(ChannelDef(rb + 2, f"N{node_no} ENC2", COUNTER, group=group_fb, unit="count",
                           zeroable=True,
                           note="SW2とピン共有。config.hppのENC2_SW=0(既定)のときのみ有効。"
                                "ENC2_SW=1の場合はこのスロットがSW2として使われる"
                                "(プロファイル編集でDIGITAL_INに変更すること)"))
-    rx.append(ChannelDef(base + 3, f"N{node_no} SW3", DIGITAL_IN, group=group_fb,
+    rx.append(ChannelDef(rb + 3, f"N{node_no} SW3", DIGITAL_IN, group=group_fb,
                           note="ENC2とピン共有。config.hppのENC2_SW=1のときのみ有効"
                                "(既定のENC2_SW=0では常に0)"))
 
@@ -260,16 +284,17 @@ def _append_ss_node_channels(
     tx: List[ChannelDef], rx: List[ChannelDef],
     node: int, slots_per_node: int,
     servo_min_deg: int = 0, servo_max_deg: int = 270,
+    tx_base: Optional[int] = None,
 ) -> None:
     """BOARD_SS (xiao-esp32-s3_can2io) の1ノード分のチャンネルを tx/rx に追加する。
 
-    サーボ5ch常時出力(MULTIによる切替なし)+ソレノイドバルブ4ch(デジタルON/OFF、
-    0以外でON)。ENC/MD/SWは無いため帰還チャンネルは無い。
+    サーボ5ch常時出力(MULTIによる切替なし)+ソレノイドバルブ4ch。TR1-4は
+    1スロットにビットでまとめる(bit0=TR1 ... bit3=TR4、1でON)ので、1ノード6スロット。
+    ENC/MD/SWは無いため帰還チャンネルは無い。
     [firmware/xiao-esp32-s3_can2io/src/pin_ctrl_task.cpp のIO_Servo_Outout/IO_TR_Output
-    (BOARD_SS節)のスロット割当と一致させること。1ノードあたり9スロット必要なため、
-    config.hppのCAN_SLOTS_PER_NODEもBOARD_SS選択時は9に拡張されている]
+    (BOARD_SS節)のスロット割当と一致させること]
     """
-    base = node * slots_per_node
+    base = node * slots_per_node if tx_base is None else tx_base
     node_no = node + 1
     can_id = 100 + node_no
     group_cmd = f"ノード{node_no} (CAN_ID={can_id}, SS) 指令"
@@ -278,9 +303,10 @@ def _append_ss_node_channels(
         tx.append(ChannelDef(base + s, f"N{node_no} SERVO{s + 1}", SERVO, group=group_cmd,
                               min=servo_min_deg, max=servo_max_deg, unit="deg",
                               note="常時サーボ出力(MULTIによる切替なし)"))
-    for s in range(4):
-        tx.append(ChannelDef(base + 5 + s, f"N{node_no} TR{s + 1}", DIGITAL_OUT, group=group_cmd,
-                              note="ソレノイドバルブ。0以外でON"))
+    tx.append(ChannelDef(base + 5, f"N{node_no} TR1-4", BITS_OUT, group=group_cmd,
+                          min=0, max=0xF,
+                          options=[(0, "TR1"), (1, "TR2"), (2, "TR3"), (3, "TR4")],
+                          note="ソレノイドバルブ4本を1スロットにまとめた値。bit0=TR1 ... bit3=TR4 (1でON)"))
     # 帰還チャンネルは無い(ENC/MD/SWを搭載しない)
 
 
@@ -336,10 +362,10 @@ def make_ss_host_profile(
     """xiao-esp32-s3_can2io BOARD_SS / MODE_CAN_HOST 用プロファイル。
 
     24スロットを CAN バス上の最大 node_count ノードへ slots_per_node ずつ分配する。
-    SERVO1-5+TR1-4の9指令チャンネルが1ノード5スロットに収まらないため、
-    config.hppのBOARD_SS節でCAN_SLOTS_PER_NODEを9へ拡張してあり、24スロットの
-    枠内に収まるノード数は既定で2(host+1)まで(config.hppの境界チェック参照)。
-    各ノード: 指令 SERVO1-5 + TR1-4。帰還チャンネルは無い(ENC/MD/SW非搭載)。
+    ファームの config.hpp CAN_BUS_PRESET=CAN_BUS_DEFAULT (BOARD_SS) の割り当て
+    (2ノード x 9スロット) 用。SSが使うのは各ノード先頭6スロット
+    (SERVO1-5 + TR1-4をビットでまとめた1スロット)で、残り3スロットは未使用。
+    帰還チャンネルは無い(ENC/MD/SW非搭載)。SSを4台使う場合は xiao_ss4 を使う。
     """
     tx: List[ChannelDef] = []
     rx: List[ChannelDef] = []
@@ -355,10 +381,9 @@ def make_ss_host_profile(
         name=name,
         description=(
             f"BOARD_SS / MODE_CAN_HOST 用。24スロットを CAN バス上の最大"
-            f"{node_count}ノードへ{slots_per_node}スロットずつ分配する(SERVO1-5+TR1-4の"
-            "9チャンネルが1ノード5スロットに収まらないためconfig.hppでCAN_SLOTS_PER_NODEを"
-            "9へ拡張、24スロットの制約からノード数は既定2まで)。各ノードはSERVO1-5"
-            "(常時サーボ出力)+TR1-4(ソレノイドバルブ、0以外でON)の指令のみで帰還は無い。"
+            f"{node_count}ノードへ{slots_per_node}スロットずつ分配する(ファームの "
+            "CAN_BUS_PRESET=CAN_BUS_DEFAULT)。各ノードはSERVO1-5(常時サーボ出力)+"
+            "TR1-4(ソレノイドバルブ、ビットで1スロット)の指令のみで帰還は無い。"
             "ノード数・スロット数はプロファイル編集で変更可能。"
         ),
         tx=tx,
@@ -700,12 +725,94 @@ def make_cubemars_profile(
     )
 
 
+# 基板ごとの (指令スロット数, 帰還スロット数)。ファームの frame_data.hpp の
+# CAN_IO_CMD_SLOTS_USED / CAN_IO_FB_SLOTS_USED と一致させること。
+MIXED_BOARD_SLOTS = {
+    "SOKI": (5, 5),  # 指令 SERVO1-3,MD1-2 / 帰還 SW1-3,ENC1-2
+    "MES": (2, 4),   # 指令 MD1-2 / 帰還 SW1,ENC1,ENC2,SW3
+    "SS": (6, 0),    # 指令 SERVO1-5, TR1-4(ビットで1スロット) / 帰還なし
+}
+
+
+def make_mixed_can_host_profile(
+    boards: List[str],
+    key: str,
+    name: str,
+    md_pwm_max: int = DEFAULT_MD_PWM_MAX,
+    servo_min_deg: int = 0,
+    servo_max_deg: int = 270,
+    firmware_preset: str = "",
+) -> DeviceProfile:
+    """基板の種類が違うノードを1本のCANバスに混ぜる構成用のプロファイル。
+
+    ファームは全台、config.hpp の CAN_BUS_PRESET をこのプロファイルに対応するもの
+    (または CAN_BUS_CUSTOM で同じ表)にすること。表は node_cmd_slots / node_fb_slots。
+
+    boards: ノード1(ホスト, CAN_ID=101)から順に基板名 ("SOKI"/"MES"/"SS")。
+    各ノードのスロットは24スロットの中に前から詰めて並べる。
+    """
+    cmd_slots = [MIXED_BOARD_SLOTS[b][0] for b in boards]
+    fb_slots = [MIXED_BOARD_SLOTS[b][1] for b in boards]
+    if sum(cmd_slots) > SLOT_COUNT or sum(fb_slots) > SLOT_COUNT:
+        raise ValueError(f"スロット数が24を超えています: 指令{sum(cmd_slots)} / 帰還{sum(fb_slots)}")
+
+    tx: List[ChannelDef] = []
+    rx: List[ChannelDef] = []
+    for node, board in enumerate(boards):
+        tx_base = sum(cmd_slots[:node])
+        rx_base = sum(fb_slots[:node])
+        if board == "SOKI":
+            _append_generic_io_node_channels(tx, rx, node, 5, servo_min_deg, servo_max_deg, md_pwm_max,
+                                             tx_base=tx_base, rx_base=rx_base)
+        elif board == "MES":
+            _append_mes_node_channels(tx, rx, node, 0, md_pwm_max, tx_base=tx_base, rx_base=rx_base)
+        elif board == "SS":
+            _append_ss_node_channels(tx, rx, node, 0, servo_min_deg, servo_max_deg, tx_base=tx_base)
+
+    tx = _fill_remaining(tx, _raw_out)
+    rx = _fill_remaining(rx, _raw_in)
+
+    layout = " + ".join(f"{b}({101 + i})" for i, b in enumerate(boards))
+    preset = firmware_preset or f"CAN_BUS_CUSTOM (指令{cmd_slots} / 帰還{fb_slots})"
+    return DeviceProfile(
+        key=key,
+        name=name,
+        description=(
+            f"基板混在のCANバス用: {layout}。ノードごとにスロット数が違う"
+            f"(指令 {cmd_slots} / 帰還 {fb_slots})。ファームは全台 config.hpp の "
+            f"CAN_BUS_PRESET を {preset} にすること。"
+        ),
+        tx=tx,
+        rx=rx,
+        node_count=len(boards),
+        node_cmd_slots=cmd_slots,
+        node_fb_slots=fb_slots,
+    )
+
+
 def _build_builtin_profiles() -> "dict[str, DeviceProfile]":
     profiles: List[DeviceProfile] = [
         make_can_host_profile(),
         make_can_host_with_foc_node_profile(),
         make_mes_host_profile(),
         make_ss_host_profile(),
+        # ファームの config.hpp CAN_BUS_PRESET=CAN_BUS_MES2_SS2 と組で使う
+        # (generated_firmware/mes2ss2_*)
+        make_mixed_can_host_profile(
+            ["MES", "MES", "SS", "SS"], key="xiao_mes_mes_ss_ss",
+            name="XIAO ESP32S3 MES (CAN Host) + MES + SS + SS",
+            firmware_preset="CAN_BUS_MES2_SS2"),
+        # CAN_BUS_PRESET=CAN_BUS_SS4 と組で使う (generated_firmware/ss4_*)
+        make_mixed_can_host_profile(
+            ["SS", "SS", "SS", "SS"], key="xiao_ss4",
+            name="XIAO ESP32S3 SS (CAN Host) x4",
+            firmware_preset="CAN_BUS_SS4"),
+        # CAN_BUS_PRESET=CAN_BUS_MES_SS_SOKI と組で使う (generated_firmware/mes_ss_soki_*)
+        make_mixed_can_host_profile(
+            ["MES", "SS", "SOKI"], key="xiao_mes_ss_soki",
+            name="XIAO ESP32S3 MES (CAN Host) + SS + SOKI",
+            firmware_preset="CAN_BUS_MES_SS_SOKI"),
+        # CAN_BUS_PRESET=CAN_BUS_MES4 (MES x4) は既存の xiao_mes_can_host (4ノード x 5スロット) を使う
         make_robomas_profile(),
         make_cubemars_profile(),
         make_generic_raw_profile(),
@@ -761,6 +868,7 @@ def profile_to_dict(p: DeviceProfile) -> dict:
     return {
         "key": p.key, "name": p.name, "description": p.description,
         "node_count": p.node_count, "slots_per_node": p.slots_per_node,
+        "node_cmd_slots": list(p.node_cmd_slots), "node_fb_slots": list(p.node_fb_slots),
         "tx": [_channel_to_dict(c) for c in p.tx],
         "rx": [_channel_to_dict(c) for c in p.rx],
     }
@@ -772,6 +880,7 @@ def profile_from_dict(d: dict) -> DeviceProfile:
         tx=[_channel_from_dict(c) for c in d.get("tx", [])],
         rx=[_channel_from_dict(c) for c in d.get("rx", [])],
         node_count=d.get("node_count", 0), slots_per_node=d.get("slots_per_node", 0),
+        node_cmd_slots=list(d.get("node_cmd_slots", [])), node_fb_slots=list(d.get("node_fb_slots", [])),
         editable=True,
     )
 

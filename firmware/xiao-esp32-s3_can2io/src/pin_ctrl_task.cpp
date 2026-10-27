@@ -248,7 +248,9 @@ void IO_SW_Input() {
 
 #elif BOARD_VARIANT == BOARD_SS
 // サーボ5ch常時出力+ソレノイドバルブ4ch(デジタルON/OFF)。ENC/MD/SWは無い。
-// CanIoRxData: 0-4=SERVO1-5, 5-8=TR1-4(0以外でON)。CanIoTxData: 帰還なし(常に0)。
+// CanIoRxData: 0-4=SERVO1-5, 5=TR1-4をビットでまとめた値(bit0=TR1 ... bit3=TR4、1でON)。
+// CanIoTxData: 帰還なし(常に0)。
+// TRを1スロットにまとめているのは、SS 4台(6スロット x 4 = 24)を1本のバスに載せるため。
 
 void IO_MD_Output() {
     // BOARD_SSにMDポートは無い
@@ -272,10 +274,11 @@ void IO_Servo_Outout() {
 }
 
 void IO_TR_Output() {
-    digitalWrite(TR1, CanIoRxData[5] != 0 ? HIGH : LOW);
-    digitalWrite(TR2, CanIoRxData[6] != 0 ? HIGH : LOW);
-    digitalWrite(TR3, CanIoRxData[7] != 0 ? HIGH : LOW);
-    digitalWrite(TR4, CanIoRxData[8] != 0 ? HIGH : LOW);
+    const uint16_t tr_bits = (uint16_t)CanIoRxData[5];
+    digitalWrite(TR1, (tr_bits & 0x1) ? HIGH : LOW);
+    digitalWrite(TR2, (tr_bits & 0x2) ? HIGH : LOW);
+    digitalWrite(TR3, (tr_bits & 0x4) ? HIGH : LOW);
+    digitalWrite(TR4, (tr_bits & 0x8) ? HIGH : LOW);
 }
 
 void IO_ENC_Input() {
