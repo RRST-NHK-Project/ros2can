@@ -59,12 +59,73 @@ pio run
 - MODE_ROBOMAS/MODE_CUBEMARS と同一バスに同居させる都合でCANは1Mbps。ロボマス側ID帯(`0x1FE`, `0x200-0x208`)と衝突させないこと。
 - `resources/git_version.txt` は `setup.py` がビルド毎に生成する(gitignore済み)。手で編集・コミットしない。
 
+## 追加作業のチェックリスト
+
+PC側とファーム側で二重定義している箇所が多く、片方だけ直すとコンパイルは通るのに実機で
+スロットがずれる。下記の該当項目をすべて確認してから完了とする。
+
+### 新しい基板(BOARD_VARIANT)を追加する
+
+1. `config.hpp`: `#define BOARD_XXX <数値>` を1行で追加する(GUIは `_BOARD_TOKEN_RE` でこの行を
+   拾って選択肢にする)。`CAN_NODE_COUNT`/`CAN_SLOTS_PER_NODE` の `#if BOARD_VARIANT` 分岐に節を足し、
+   `CAN_NODE_COUNT * CAN_SLOTS_PER_NODE <= 24` を守る。
+2. `defs.hpp`: ピン定義の `#elif BOARD_VARIANT == BOARD_XXX` 節(無いと `#error "unknown board"`)。
+3. `pin_ctrl_init.cpp`/`pin_ctrl_task.cpp`: 初期化とスロット⇔ピンの対応。**出力ピンは起動時に安全側
+   (OFF/LOW、モータ停止)へ明示的に初期化する**(BOARD_SSのTR1-4と同様)。
+4. `frame_data.hpp`: `CanIoRxData`/`CanIoTxData` のスロット表コメント。`main.cpp`: MODE_IO非対応なら
+   既存の `#error` ガードに含める。
+5. `device_profiles.py`: `_append_xxx_node_channels()` と `make_xxx_host_profile()` を作り、
+   `_build_builtin_profiles()` に登録する(スロット順・スケールはファームと一致させる)。
+6. `firmware_dialog.py`: `_BOARD_LABELS` と、基板名を列挙しているヘルプ文。基板専用マクロを足すなら
+   `firmware_config.py` の `_SIMPLE_MACROS`・`FirmwareConfig`・ダイアログの入力欄・テストも追加する。
+7. 全バリアントで `pio run` が通ること、`python -m pytest test/` が通ることを確認する。
+8. `docs/index.md`(BOARD_VARIANT表)、`docs/internals.md`(3.2/3.5)、ファームREADME §3a を更新する。
+
+### 新しいモード(MODE_*)・機能を追加する
+
+- `config.hpp` に `// #define MODE_XXX` 形式で追加する(GUIは `_MODE_RE` で拾う)。
+  `main.cpp` のモード分岐と、「MODEがちょうど1つ」の `#error` チェック(`defined(...)` の合計)を両方更新する。
+- `firmware_dialog.py` の `_MODE_LABELS` と、必要なら `device_profiles.py` に専用プロファイルを追加する。
+- 新しいCAN IDを使うなら、ノード分配(`0x100`/`0x180`帯)とロボマス(`0x1FE`, `0x200-0x208`)の両方と
+  衝突しないことを確認する。
+
+### 新しいファーム(別MCU・別PlatformIOプロジェクト)を追加する
+
+- PCは「115200baudで開き、正しいフレームを受信できたらそのDEVICE_IDで識別する」
+  (`serial_link.probe_port()`)。**ファームは指令が無くても定期的に帰還フレームを送り続ける**必要がある。
+- フレーム形式・CAN ID・1Mbps・「全スロット0 = 安全な既定値」の規約を守る。
+- GUIのファーム生成は `TEMPLATE_RELATIVE_DIR`(xiaoテンプレート固定)前提。新ファームを生成対象にするなら
+  `firmware_config.py` の拡張が必要になる。対象外にするなら README にその旨を書く。
+
+## 過去の不具合から得た実装上の注意
+
+- **ROSコールバックの処理能力に上限がある**: GUIモードでは10msのQTimerから
+  `rclpy.spin_once(timeout_sec=0)` を呼んでおり、1回で処理するコールバックは1つだけ。2026-09-12の実測では
+  1デバイスあたり約31指令/s、指令の遅れは最大約190ms(serial_tx合計 約310msg/s)だった。
+  デバイス・高頻度トピックを増やす変更や「遅延っぽい」挙動の調査では、まずこれを疑う
+  (改善案: spin_onceのドレインループ化、QoS depth 1、不要な再発行の削減)。
+- **同じ指令トピックに複数の送信元があると、後から書いた方が勝つ**: 送信元が `topic_passthrough`/`direct_tx`
+  のように複数ある場合、コード上の排他はGUIのチェックボックスしかない。高頻度でゼロを送り続ける
+  送信元(ジョイスティックの無操作時など)が、別の送信元の指令を上書きして実質無効化した事例がある。
+  「送信しているのに効かない」ときは、より高頻度の上書きを疑う。所有権を明示的に決めること。
+- **GUIの数値入力は実機へ直結する**: 負のゲインが入力されて機構を破壊した事例がある(2026-09-10)。
+  ゲイン・速度/加速度上限・サーボ範囲などは (1)ウィジェット (2)ノード/パラメータ受付
+  (3)指令を組み立てる箇所 の3か所で検証する(yaml/launchの初期値は(2)を通らない)。
+  QValidator にテキストを書き換えさせない(日本語IMEと競合して `1`→`11` のように入力が重複した)。
+- **ドキュメント・ノートより実機設定が新しいことがある**: `generated_firmware/` やyamlの値がドキュメントと
+  食い違っても、ドキュメントに合わせて黙って直さない。食い違いを報告して確認する。
+- **回転方向の符号・原点はエンコーダの種類ごとに違う**: エンコーダの取得元を切り替えたら、
+  以前の符号設定を流用せず実機で再確認する。
+
 ## 安全
 
 このコードは実機のモータ・サーボ・ソレノイドを動かす。スロット割り当て・スケール・クランプ
-(`MD_PWM_MAX`、電流上限、サーボ角度範囲等)・フェイルセーフ(タイムアウト時の停止)に関わる変更は、
+(`MD_PWM_MAX`、電流上限、サーボ角度範囲等)・起動時の初期出力に関わる変更は、
 意図しない動作につながりうる点をユーザーに明示する。チューニング済みの値(ROBOMASのPIDゲイン、
 CubeMarsのMITレンジ、電流制限等)は依頼なしに変更しない。
+**ファームには通信タイムアウトによる自動停止は無く、最後の指令を保持し続ける**(`docs/internals.md` 6章)。
+停止はPC側のE-STOPか、ゼロ指令の明示的な送信で行う。タイムアウト停止を追加する場合は全モードで
+挙動が変わるため、ユーザーに確認する。
 
 ## コーディング規約
 
