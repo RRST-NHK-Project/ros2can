@@ -263,15 +263,15 @@ GUIスレッド側の `HardwareManager.service()`（10ms周期）が中心ルー
   | プリセット | 構成（101=ホスト） | 指令 / 帰還スロット | ros2canプロファイル | generated_firmware |
   |---|---|---|---|---|
   | `CAN_BUS_DEFAULT` | 基板に合わせた等幅（従来どおり） | SOKI/MES: `5x4` / `5x4`、SS: `9x2` / `9x2` | 各基板の CAN Host | 既存のもの |
-  | `CAN_BUS_MES2_SS2` | MES + MES + SS + SS | `{2,2,6,6}` / `{4,4,0,0}` | `xiao_mes_mes_ss_ss` | `mes2ss2_*` |
-  | `CAN_BUS_MES4` | MES x4 | `{5,5,5,5}` / `{5,5,5,5}`（DEFAULTのMESと同じ） | `xiao_mes_can_host` | `mes4_*` |
-  | `CAN_BUS_SS4` | SS x4 | `{6,6,6,6}` / `{0,0,0,0}`（24スロット使い切り） | `xiao_ss4` | `ss4_*` |
-  | `CAN_BUS_MES_SS_SOKI` | MES + SS + SOKI | `{2,6,5}` / `{4,0,5}` | `xiao_mes_ss_soki` | `mes_ss_soki_*` |
+  | `CAN_BUS_MES2_SS2` | MES + MES + SS + SS | `{2,2,6,6}` / `{4,4,0,0}` | `xiao_mes_mes_ss_ss` | `m2s2_*` |
+  | `CAN_BUS_MES4` | MES x4 | `{5,5,5,5}` / `{5,5,5,5}`（DEFAULTのMESと同じ） | `xiao_mes_can_host` | `m4_*` |
+  | `CAN_BUS_SS4` | SS x4 | `{6,6,6,6}` / `{0,0,0,0}`（24スロット使い切り） | `xiao_ss4` | `s4_*` |
+  | `CAN_BUS_MES_SS_SOKI` | MES + SS + SOKI | `{2,6,5}` / `{4,0,5}` | `xiao_mes_ss_soki` | `mss_*` |
   | `CAN_BUS_CUSTOM` | `CAN_BUS_CUSTOM_*` の表 | 任意 | `make_mixed_can_host_profile()` で作る | — |
 
   - CANフレームが運ぶのは「ノード内の何番目か」だけなので、全台で同じ表なら幅が違っても正しく届く。表が違うと値がずれる/届かない。
   - `BOARD_SS` の TR1-4 はビットで1スロットにまとめる（bit0=TR1 ... bit3=TR4、1でON）。SSは1台6スロット（SERVO1-5 + TR）。ros2canでは `bits_out` 種別（チェックボックス）で操作する。
-  - 指令/帰還の合計が24超、表の要素数が `CAN_NODE_COUNT` と違う、自分の `CAN_ID` が表に無い、自ノードの枠が基板に必要な数（`frame_data.hpp` の `CAN_IO_CMD_SLOTS_USED`/`CAN_IO_FB_SLOTS_USED`）より少ない、はいずれもコンパイルエラーになる（例: `mes2ss2` の103番枠にMES基板を書き込もうとした場合）。
+  - 指令/帰還の合計が24超、表の要素数が `CAN_NODE_COUNT` と違う、自分の `CAN_ID` が表に無い、自ノードの枠が基板に必要な数（`frame_data.hpp` の `CAN_IO_CMD_SLOTS_USED`/`CAN_IO_FB_SLOTS_USED`）より少ない、はいずれもコンパイルエラーになる（例: `m2s2` の103番枠にMES基板を書き込もうとした場合）。
   - **実機で確認された既知の障害モード**（config.hppコメントに明記）: ホストは `[0, CAN_NODE_COUNT)` の全ノードへ毎周期送信するため、**`CAN_NODE_COUNT` を実接続数より大きく設定すると、存在しないノード宛のACKエラーが蓄積し、実測で起動後約40msでBus-Offに陥る**。実接続数と必ず一致させる必要があります。
 - `CAN_HOST_DIAG_ENABLE`: 診断ログを `Serial.println` で直接出す設定。バイナリフレームと混ざり、PC側で「不正な同期バイトの破棄」が発生するため通常は無効(0)にします。
 

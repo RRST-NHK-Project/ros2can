@@ -797,17 +797,17 @@ def _build_builtin_profiles() -> "dict[str, DeviceProfile]":
         make_mes_host_profile(),
         make_ss_host_profile(),
         # ファームの config.hpp CAN_BUS_PRESET=CAN_BUS_MES2_SS2 と組で使う
-        # (generated_firmware/mes2ss2_*)
+        # (generated_firmware/m2s2_*)
         make_mixed_can_host_profile(
             ["MES", "MES", "SS", "SS"], key="xiao_mes_mes_ss_ss",
             name="XIAO ESP32S3 MES (CAN Host) + MES + SS + SS",
             firmware_preset="CAN_BUS_MES2_SS2"),
-        # CAN_BUS_PRESET=CAN_BUS_SS4 と組で使う (generated_firmware/ss4_*)
+        # CAN_BUS_PRESET=CAN_BUS_SS4 と組で使う (generated_firmware/s4_*)
         make_mixed_can_host_profile(
             ["SS", "SS", "SS", "SS"], key="xiao_ss4",
             name="XIAO ESP32S3 SS (CAN Host) x4",
             firmware_preset="CAN_BUS_SS4"),
-        # CAN_BUS_PRESET=CAN_BUS_MES_SS_SOKI と組で使う (generated_firmware/mes_ss_soki_*)
+        # CAN_BUS_PRESET=CAN_BUS_MES_SS_SOKI と組で使う (generated_firmware/mss_*)
         make_mixed_can_host_profile(
             ["MES", "SS", "SOKI"], key="xiao_mes_ss_soki",
             name="XIAO ESP32S3 MES (CAN Host) + SS + SOKI",
