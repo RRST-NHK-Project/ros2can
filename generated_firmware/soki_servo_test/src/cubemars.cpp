@@ -46,7 +46,8 @@ AK40-10等のAKシリーズはアクチュエータ内蔵のクローズドル�
                         4=under-voltage, 5=encoder fault, 6=MOSFET over-temp, 7=motor stall)
     20-23: 未使用
 
-Copyright (c) 2025 RRST-NHK-Project. All rights reserved.
+Copyright (c) 2025 RRST-NHK-Project
+SPDX-License-Identifier: MIT
 ====================================================================*/
 
 #include "cubemars.hpp"

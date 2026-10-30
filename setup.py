@@ -54,7 +54,7 @@ setup(
         'serial_bridge の後継として自前でシリアル通信を行い、'
         'CANノードを選択してアクチュエータへの指令値を直接送信し、センサ値を表示する。'
     ),
-    license='Apache-2.0',
+    license='MIT',
     tests_require=['pytest'],
     entry_points={
         'console_scripts': [

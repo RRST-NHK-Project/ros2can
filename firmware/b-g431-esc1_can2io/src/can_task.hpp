@@ -2,7 +2,8 @@
 <can_task.hpp>
 ・CANノード通信タスクAPI (STM32G4 FDCAN, xiao-esp32-s3_can2io ホスト互換)
 
-Copyright (c) 2026.
+Copyright (c) 2026 RRST-NHK-Project
+SPDX-License-Identifier: MIT
 ====================================================================*/
 
 #pragma once

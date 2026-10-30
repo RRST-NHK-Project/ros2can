@@ -5,7 +5,8 @@
 CANでホストからの指令フレームを受信するたびに短時間点灯し、
 一定時間フレームが来なければ自動的に消灯する。
 
-Copyright (c) 2026.
+Copyright (c) 2026 RRST-NHK-Project
+SPDX-License-Identifier: MIT
 ====================================================================*/
 
 #pragma once

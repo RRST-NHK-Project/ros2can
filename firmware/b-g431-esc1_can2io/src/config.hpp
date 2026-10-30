@@ -5,7 +5,8 @@
 このボードは xiao-esp32-s3_can2io (MODE_CAN_HOST) の配下にぶら下がる
 CANノードの1台として動作します。単体ではROSと直接通信しません。
 
-Copyright (c) 2026.
+Copyright (c) 2026 RRST-NHK-Project
+SPDX-License-Identifier: MIT
 ====================================================================*/
 
 #pragma once

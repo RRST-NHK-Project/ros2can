@@ -21,7 +21,8 @@ xiao-esp32-s3_can2io (MODE_CAN_HOST) と同じチャンク分割プロトコル�
   bitrate = 170MHz / (2 * (1+148+21)) = 170MHz / 340 = 500000 bps
   サンプルポイント = (1+148)/170 = 87.6%
 
-Copyright (c) 2026.
+Copyright (c) 2026 RRST-NHK-Project
+SPDX-License-Identifier: MIT
 ====================================================================*/
 
 #include "can_task.hpp"

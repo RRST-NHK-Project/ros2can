@@ -2,7 +2,8 @@
 <frame_data.cpp>
 ・CANノードのローカルスロットデータ定義ファイル
 
-Copyright (c) 2026.
+Copyright (c) 2026 RRST-NHK-Project
+SPDX-License-Identifier: MIT
 ====================================================================*/
 
 #include "frame_data.hpp"

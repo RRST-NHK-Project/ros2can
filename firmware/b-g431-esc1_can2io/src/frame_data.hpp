@@ -8,7 +8,8 @@ xiao-esp32-s3_can2io (CANホスト, MODE_CAN_HOST) との関係:
 - host -> node (指令) は Rx_16Data、node -> host (帰還) は Tx_16Data。
   (esp32_serial_bridge 系ファームと同じ命名に合わせている)
 
-Copyright (c) 2026.
+Copyright (c) 2026 RRST-NHK-Project
+SPDX-License-Identifier: MIT
 ====================================================================*/
 
 #pragma once

@@ -11,7 +11,7 @@
     アクチュエータへ直接指令値を送信したり、センサ値をリアルタイム表示する。
   </description>
   <maintainer email="tashikou1682@gmail.com">dev</maintainer>
-  <license>Apache-2.0</license>
+  <license>MIT</license>
   <url type="repository">https://github.com/RRST-NHK-Project/ros2can</url>
   <url type="bugtracker">https://github.com/RRST-NHK-Project/ros2can/issues</url>
 

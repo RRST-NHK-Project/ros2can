@@ -13,7 +13,8 @@ volatile(複数タスクからのアクセスを想定)は不要だが、呼び�
 インターフェースは合わせてある。
 
 オンボードLED(PC6, LED_BUILTIN)を使用する。
-Copyright (c) 2026.
+Copyright (c) 2026 RRST-NHK-Project
+SPDX-License-Identifier: MIT
 ====================================================================*/
 
 #include "status_led.hpp"
