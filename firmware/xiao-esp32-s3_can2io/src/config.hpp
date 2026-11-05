@@ -372,60 +372,39 @@ SPDX-License-Identifier: MIT
 #define CUBEMARS_MIT_KD_MAX 5.0f
 
 // ================= Damiao関連 (MODE_DAMIAOのみ有効) =================
-// MODE_DAMIAOはMODE_ROBOMAS/MODE_CUBEMARSと同様、ノード/スロット分配方式
-// とは別系統で、Damiao DM2325+DM3520(ESC)のCANプロトコル(VEL/POS_VELモード、
-// 達妙公式Python実装 github.com/cmjang/DM_Control_Python の DM_CAN.py を
-// 一次情報とした)を直接喋る独立デバイスとして動作する。CubeMars同様、
-// アクチュエータ内蔵のクローズドループにそのまま追従させるため、
-// ホスト側PIDは不要。CAN速度は他モードと同じ1Mbps固定(damiao.cpp)。
-//
-// スロット割り当て (frame_data.hppのTx_16Data/Rx_16Dataを使用、独立デバイス
-// として24スロットをそのまま使う。6スロット/モータ x 最大4台):
-//   Rx_16Data (PC -> 本機, 指令。モータnのオフセット = (n-1)*6):
-//     +0: mode_word (0=DISABLE, 1=VEL, 2=POS_VEL)。全ゼロ(E-STOP/未接続時の
-//         デフォルト)=DISABLEとなり安全(Damiaoは明示的なEnableコマンドを
-//         送るまでCAN指令を無視する仕様のため)。
-//     +1: target (0.001単位/LSB。VELならrad/s、POS_VELならrad)
-//     +2: vel_limit (0.001 rad/s/LSB。POS_VELモードでのみ使用)
-//   Tx_16Data (本機 -> PC, 帰還):
-//     +3: position [0.001 rad/LSB]
-//     +4: velocity [0.001 rad/s/LSB]
-//     +5: torque   [0.001 N・m/LSB]
+// Damiao DM3520(ESC)+DM2325(モータ) をCAN(1Mbps)で直接動かすモード。
+// 仕組み・使い方・モータの増やし方は damiao_ctrl/docs/開発ガイド.md を参照。
+// 処理の中身は damiao.cpp(このファイルの設定を読むだけで、普段は変えなくてよい)。
 
-#define DAMIAO_MOTOR_COUNT 1 // 接続台数(最大4、kMaxMotors=frame_data 24/6)
+// 【モータを増やす・減らす時に変える場所はここだけ】
+// 1行=1台。上から順に「モータ1」「モータ2」…(PCのトピック damiao/motor1, motor2 … に対応)。
+//   ESC_ID: そのESCが指令を受け取るCAN ID(ESCごとに別の番号)
+//   MST_ID: そのESCが返事(帰還)を送るCAN ID(ESCごとに別の番号)
+//   ※新しいESCは工場出荷時どれも ESC_ID=1, MST_ID=0x000。そのままだと2台目以降と
+//     ぶつかるので、つなぐ前に damiao_ctrl/scripts/dm_usbcan_param.py で書き換える。
+//   ※番号の決め方(推奨): ESC_ID=n, MST_ID=0x010+n(例: 3台目は 0x03 と 0x013)。
+//     モータ1は工場出荷のMST_ID=0x000のまま使っている(2026-10-14〜)。
+//   ※1枚のESP32で最大4台(PCとのデータ枠24個 ÷ 1台6個)。5台以上はESP32を増やす。
+//   ※PC側 damiao_ctrl/config/damiao_ctrl.yaml の motor_count も同じ台数にする。
+//                ESC_ID  MST_ID
+#define DAMIAO_MOTORS {                                                    \
+    {0x01, 0x000}, /* モータ1: 元からのESC(MST_IDは工場出荷のまま)     */ \
+    {0x02, 0x012}, /* モータ2: 2026-11-02に追加したESC                  */ \
+}
 
-// 各モータのCAN ID。工場出荷時は0x01のことが多いが、実機で要確認
-// (達妙デバッグツールが無い場合、firmware/esp32_damiao_bridgeの
-// scanTaskで探索した値をここに反映する)。
-#define DAMIAO_MOTOR_ID_1 0x01 // 実機確認済み(2026-10-14, レジスタ読み出しに応答)
-
-// 帰還(状態・レジスタ返信)が返ってくるCAN ID。モータIDとは別の設定値で、
-// 実機は0x000(2026-10-14、レジスタ読み出しの返信IDで確認)。
-#define DAMIAO_MASTER_ID 0x000
-
-// PCからの有効フレームがこの時間途絶えたらモータをDisableする[ms]。
-// DM3520のタイムアウト設定(RID9)は0=途絶しても止まらない、だったため必須。
-// ros2canの--noguiは20Hz(50ms)で送り直すので300msあれば誤停止しない。
-// GUIで「ダイレクト送信」OFFかつノードの指令が間欠的だと止まる点に注意。
+// PCからの指令がこの時間途絶えたら、全モータを脱力させる[ms]。
+// (ros2canが落ちた・USBが抜けた時用。ros2canは50msごとに送るので300msなら誤動作しない)
 #define DAMIAO_CMD_TIMEOUT_MS 300
-// DM3520自身の通信タイムアウト[ms]。最後のCANフレームからこの時間何も届かないと
-// モータが自分でDisableし、状態D(13=通信喪失)になる。ESP32が固まった・CAN線が
-// 抜けたときの最後の砦(上のDAMIAO_CMD_TIMEOUT_MSはPC側が止まったとき用)。
-// Enableのたびにレジスタ(RID9, 1あたり50us=2026-10-14実測)へ書き込む。
-// 書き込みはRAMのみで、モータの電源を切ると元の設定(0=無効)に戻る。
-// ESP32は5ms周期で指令を送るので100msあれば誤停止しない。状態Dからの復帰は
-// PCから一度0(DISABLE)を送り、改めてモードを指定する(ClearErrorはEnable時に送る)。
-#define DAMIAO_MOTOR_TIMEOUT_MS 100
-#define DAMIAO_MOTOR_ID_2 0x02
-#define DAMIAO_MOTOR_ID_3 0x03
-#define DAMIAO_MOTOR_ID_4 0x04
 
-// フィードバックのデコードに使うレンジ(位置±P_MAX[rad]、速度±V_MAX[rad/s]、
-// トルク±T_MAX[N・m])。VEL/POS_VELモードでの「制御」自体には影響しない
-// (生のfloat値をそのまま送るため)。影響するのは帰還スロットの数値の
-// 正しさのみ。値はDM3520のレジスタ(RID21/22/23)を読み出して確認済み
-// (2026-10-14、減速比RID20=25、位置・速度は出力軸基準)。
-// 注: 速度のスロットは0.01 rad/s単位(±327.67 rad/s)。最高速度は無負荷560rpm=58.6rad/s。
+// モータ自身の通信タイムアウト[ms]。ESP32からの指令がこの時間届かないと、モータが
+// 自分で止まって状態13(通信喪失)になる(ESP32が固まった・CAN線が抜けた時用)。
+// 有効化のたびにESCへ書き込む(電源を切ると元の0=無効に戻る)。止まった後は、
+// PCから一度0(脱力)を送ってから改めて指令すると復帰する。
+#define DAMIAO_MOTOR_TIMEOUT_MS 100
+
+// 返事の数値を戻すための範囲(位置±P_MAX[rad]、速度±V_MAX[rad/s]、トルク±T_MAX[N・m])。
+// ESCのレジスタ RID21/22/23 と同じ値にする(2026-10-14・11-02に2台とも読み出して確認済み)。
+// 違う値だと、返事の位置・速度・トルクの数値がずれる(制御そのものには影響しない)。
 #define DAMIAO_P_MAX 12.5f  // RID21
 #define DAMIAO_V_MAX 200.0f // RID22
 #define DAMIAO_T_MAX 10.0f  // RID23
