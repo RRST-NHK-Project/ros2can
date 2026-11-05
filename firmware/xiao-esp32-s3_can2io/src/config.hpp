@@ -15,7 +15,9 @@ SPDX-License-Identifier: MIT
 // MODE_DAMIAO/MODE_ROBSTRIDE(独立デバイス)は既存のCANホスト/ノード(101-104)と
 // 衝突しない番号を使うこと。Damiaoは201、RobStrideは202で使っている
 // (2026-10-22。Damiaoに戻すときはここを201、モードをMODE_DAMIAOにする)。
-#define DEVICE_ID 202
+// 2026-11-05: Damiao(2台)で使うため201+MODE_DAMIAOに切り替えた
+// (RobStrideに戻すときはここを202、モードをMODE_ROBSTRIDEにする)。
+#define DEVICE_ID 201
 
 // CAN_IDは3桁形式で指定します。
 // 1桁目はバス番号、末尾2桁はノード番号を表します。
@@ -30,8 +32,8 @@ SPDX-License-Identifier: MIT
 // #define MODE_CAN_MONITOR
 // #define MODE_ROBOMAS
 // #define MODE_CUBEMARS
-// #define MODE_DAMIAO
-#define MODE_ROBSTRIDE
+#define MODE_DAMIAO
+// #define MODE_ROBSTRIDE
 
 // ================= 基板バリアントの設定 =================
 // このマイコン(XIAO ESP32-S3)を搭載する基板ごとにピン配置が異なるため、
