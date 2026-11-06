@@ -36,7 +36,8 @@
 ■ PCとのデータ枠(1台6個。モータnは (n-1)*6 番から。PC側の
   damiao_ctrl/include/damiao_ctrl/slot_layout.hpp と必ず一致させること)
        PC → ESP32(指令)                    ESP32 → PC(返事)
-  +0   モード 0=脱力 1=速度 2=角度          状態 0=脱力 1=有効 それ以外=故障(13=通信喪失)
+  +0   モード 0=脱力 1=速度 2=角度          状態 0=脱力 1=有効 15=ESP32が止めている(ラッチ)
+                                            それ以外=モータの故障(13=通信喪失など)
   +1   目標 速度:0.01rad/s 角度:0.001rad   返事を受け取った回数(増えていれば通信OK)
   +2   角度制御の速さ上限 0.01rad/s         モータ内部の位置 0.1rad(不明なら-32768)
   +3   (未使用)                             位置 0.001rad(±12.5radで一周)
@@ -278,8 +279,8 @@ void stepInit(int m, uint32_t now_ms) {
 
 // PCからの有効フレームがDAMIAO_CMD_TIMEOUT_MS以上途絶えていればtrue。
 // DM3520自身の通信タイムアウト(RID9, 有効化シーケンスで設定)はESP32<->モータ間の
-// 途絶用なので、PC<->ESP32間の途絶はここで止める(CubeMars版の
-// CUBEMARS_CMD_TIMEOUT_MSと同じ考え方)。
+// 途絶用なので、PC<->ESP32間の途絶はここで止める(RobStrideの
+// ROBSTRIDE_CMD_TIMEOUT_MSと同じ考え方。ros2canのMODE_CUBEMARSには無い)。
 bool commandLinkLost() {
     const uint32_t last_ms = serialLastValidRxMs();
     if (last_ms == 0) {
