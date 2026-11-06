@@ -53,8 +53,9 @@ CANプロトコル (29bit拡張ID, 1Mbps, DLC=8):
   Tx_16Data (本機 -> PC, 帰還):
     +0: モータのモード (0=Reset(停止), 1=校正, 2=運転)
     +1: 故障ビット。下位6bit=モータの故障(上記)、
-        0x100=本機が止めた(有効化中にモータが運転モードを外れた・帰還が途絶えた。
-              PCが一度0(DISABLE)を送るまで再始動しない)、
+        0x100=本機が止めた(起動直後・PCからの指令が途絶えた・有効化中にモータが
+              運転モードを外れた・帰還が途絶えた。PCが一度0(DISABLE)を送るまで
+              再始動しない。通信が戻っただけでは外れない)、
         0x200=位置(mechPos)をまだ読めていない
     +2: 帰還フレームの受信回数(増え続けていればモータが応答している)
     +3,+4: position int32 (+3が上位16bit) [0.001 rad/LSB] 出力軸の多回転位置
@@ -63,6 +64,10 @@ CANプロトコル (29bit拡張ID, 1Mbps, DLC=8):
     +7: 温度     [0.1 degC/LSB]
   Tx_16Data[20-23] (診断): IDスキャンの結果。[20]=応答したモータの数、
                            [21-23]=応答したCAN ID(最大3個、無ければ-1)
+
+CAN送信の補助(ドライバの導入・Bus-Off復帰・送信停止対策)は twai_util.cpp
+(MODE_DAMIAOと共通)。送信失敗のログはシリアルに出さない(PCとのバイナリ
+フレームに文字が混ざるとPC側が読めなくなるため。2026-11-06 PRレビュー指摘)。
 ====================================================================*/
 
 #include "robstride.hpp"
@@ -70,6 +75,7 @@ CANプロトコル (29bit拡張ID, 1Mbps, DLC=8):
 #include "defs.hpp"
 #include "frame_data.hpp"
 #include "serial_task.hpp"
+#include "twai_util.hpp"
 #include <Arduino.h>
 #include <algorithm>
 #include <cmath>
@@ -170,100 +176,24 @@ MotorRuntime g_motor[ROBSTRIDE_MOTOR_COUNT];
 int16_t g_found_ids[DIAG_ID_SLOTS] = {-1, -1, -1};
 int16_t g_found_count = 0;
 
-void logTransmitFailure(const char *message);
-
-bool installTwaiDriver() {
-    twai_general_config_t g_config =
-        TWAI_GENERAL_CONFIG_DEFAULT((gpio_num_t)CAN_TX, (gpio_num_t)CAN_RX, TWAI_MODE_NORMAL);
-    // 受信キューを広めに取る(IDスキャンの応答・帰還がまとめて届くため)
-    g_config.rx_queue_len = 32;
-    twai_timing_config_t t_config = TWAI_TIMING_CONFIG_1MBITS(); // EL05の既定は1Mbps
-    twai_filter_config_t f_config = TWAI_FILTER_CONFIG_ACCEPT_ALL();
-
-    if (twai_driver_install(&g_config, &t_config, &f_config) != ESP_OK) {
-        return false;
-    }
-    if (twai_start() != ESP_OK) {
-        twai_driver_uninstall();
-        return false;
-    }
-    return true;
-}
-
-// Bus-Off からの復帰と、ESP-IDF TWAIのTXスタック(espressif/esp-idf#19068)対策。
-// damiao.cppと同じ処理(理由もそちらのコメント参照)。
-void recoverBusIfNeeded() {
-    constexpr uint32_t CHECK_PERIOD_MS = 100;
-    constexpr uint32_t STUCK_THRESHOLD_MS = 300;
-    static uint32_t last_check_ms = 0;
-    static uint32_t last_msgs_to_tx_change_ms = 0;
-    static uint32_t last_msgs_to_tx = 0;
-
-    const uint32_t now_ms = millis();
-    if (now_ms - last_check_ms < CHECK_PERIOD_MS) {
-        return;
-    }
-    last_check_ms = now_ms;
-
-    twai_status_info_t status{};
-    if (twai_get_status_info(&status) != ESP_OK) {
-        return;
-    }
-    if (status.state == TWAI_STATE_BUS_OFF) {
-        twai_initiate_recovery();
-        return;
-    }
-    if (status.state == TWAI_STATE_STOPPED) {
-        twai_start();
-        return;
-    }
-    if (status.msgs_to_tx != last_msgs_to_tx) {
-        last_msgs_to_tx = status.msgs_to_tx;
-        last_msgs_to_tx_change_ms = now_ms;
-        return;
-    }
-    if (status.msgs_to_tx > 0 && (now_ms - last_msgs_to_tx_change_ms) > STUCK_THRESHOLD_MS) {
-        logTransmitFailure("[ERR] robstride: TWAI TX stuck, reinstalling driver");
-        twai_stop();
-        twai_driver_uninstall();
-        installTwaiDriver();
-        last_msgs_to_tx = 0;
-        last_msgs_to_tx_change_ms = now_ms;
-    }
-}
-
-// twai_transmit失敗ログはserialTaskのバイナリフレームと同じUARTに出るため、
-// 頻発するとホスト側のフレーム同期を壊す。間隔を絞って出す。
-void logTransmitFailure(const char *message) {
-    constexpr uint32_t LOG_THROTTLE_MS = 500;
-    static uint32_t last_log_ms = 0;
-    const uint32_t now_ms = millis();
-    if (now_ms - last_log_ms < LOG_THROTTLE_MS) {
-        return;
-    }
-    last_log_ms = now_ms;
-    Serial.println(message);
-}
-
+// 1フレーム送る。送信キューが空かなければ最大 timeout_ms 待ち、入らなければ捨てる。
+// 失敗しても文字は出さない(PCとのシリアルにログが混ざるとフレームが壊れるため。
+// 2026-11-06 PRレビュー指摘)。失敗回数は twai_util が数えている。
 bool sendExtended(uint8_t comm_type, uint16_t data2, uint8_t dest, const uint8_t *data,
-                  TickType_t timeout, bool log_failure = true) {
+                  uint32_t timeout_ms) {
     twai_message_t tx{};
     tx.identifier = ((uint32_t)(comm_type & 0x1F) << 24) | ((uint32_t)data2 << 8) | dest;
     tx.extd = 1; // RobStride独自プロトコルは29bit拡張ID
     tx.rtr = 0;
     tx.data_length_code = 8;
     std::memcpy(tx.data, data, 8);
-    if (twai_transmit(&tx, timeout) != ESP_OK) {
-        if (log_failure) {
-            logTransmitFailure("[ERR] robstride: twai_transmit failed");
-        }
-        return false;
-    }
-    return true;
+    return twaiSend(tx, timeout_ms);
 }
 
 void sendToMotor(uint8_t comm_type, uint8_t motor_id, const uint8_t *data) {
-    sendExtended(comm_type, ROBSTRIDE_HOST_ID, motor_id, data, pdMS_TO_TICKS(20));
+    // 以前は20ms待っていたが、モータの電源が切れてACKが返らない時に制御ループが
+    // 長く止まるため短くした(1フレームの送信は約0.13ms)
+    sendExtended(comm_type, ROBSTRIDE_HOST_ID, motor_id, data, 2);
 }
 
 void sendEnable(uint8_t motor_id) {
@@ -407,7 +337,8 @@ void sendCommands() {
     for (int m = 0; m < ROBSTRIDE_MOTOR_COUNT; m++) {
         MotorRuntime &st = g_motor[m];
         const int off = m * SLOTS_PER_MOTOR;
-        const int16_t mode = link_lost ? MODE_DISABLED : rx[off + 0];
+        const int16_t pc_mode = rx[off + 0]; // PCが送ってきたモード(そのままの値)
+        const int16_t mode = link_lost ? MODE_DISABLED : pc_mode;
         const float target =
             (float)(slotsToInt32(rx[off + 1], rx[off + 2]) * TARGET_SCALE);
         const float vel_limit = (float)(rx[off + 3] * VEL_SCALE);
@@ -425,11 +356,21 @@ void sendCommands() {
             }
         }
 
+        // PCからの指令が途絶えたらラッチする。以前は途絶を「PCが0を送った」と同じ扱いに
+        // していたため、ラッチが勝手に外れ、通信が戻ると最後の指令で動き出していた
+        // (2026-11-06 PRレビュー指摘)。
+        if (link_lost) {
+            st.latched = true;
+        }
+
         const bool want_run = (mode == MODE_VEL) || (mode == MODE_POS && st.have_mech_pos &&
                                                      vel_limit > 0.0f);
         if (st.latched) {
-            if (mode == MODE_DISABLED) {
-                st.latched = false; // PCが停止を確認した -> 次の指令で有効化してよい
+            if (st.enabled) {
+                disableMotor(m); // 途絶でラッチした時は、まだ有効のことがある
+            }
+            if (!link_lost && pc_mode == MODE_DISABLED) {
+                st.latched = false; // PCが脱力を送った = 人が止まったことを確認した
             }
             continue;
         }
@@ -530,9 +471,8 @@ void scanIfNoFeedback() {
     }
     const uint8_t data[8] = {0};
     for (int i = 0; i < IDS_PER_CYCLE && next_id <= MAX_ID; i++, next_id++) {
-        // 相手が居ないとACKが返らず送信が詰まるので、待たずに捨てる。失敗のログも出さない
-        // (モータ未接続の間ずっと出続け、シリアルのバイナリフレームに混ざるため)。
-        sendExtended(COMM_GET_ID, ROBSTRIDE_HOST_ID, (uint8_t)next_id, data, 0, false);
+        // 相手が居ないとACKが返らず送信が詰まるので、待たずに捨てる
+        sendExtended(COMM_GET_ID, ROBSTRIDE_HOST_ID, (uint8_t)next_id, data, 0);
         delay(FRAME_GAP_MS);
     }
     if (next_id > MAX_ID) {
@@ -653,7 +593,11 @@ void publishFeedback() {
 } // namespace
 
 void robstrideInit() {
-    if (!installTwaiDriver()) {
+    for (int m = 0; m < ROBSTRIDE_MOTOR_COUNT; m++) {
+        g_motor[m].latched = true; // 起動直後はPCが0を送るまで動かさない
+    }
+    // 受信キューを広めに取る(IDスキャンの応答・帰還がまとめて届くため)
+    if (!twaiInstall(32)) {
         Serial.println("[ERR] robstride: TWAI install failed");
         while (1)
             ;
@@ -662,7 +606,7 @@ void robstrideInit() {
 
 void robstrideTask(void *pvParameters) {
     while (1) {
-        recoverBusIfNeeded();
+        twaiRecoverIfNeeded();
         receiveAll();
         sendCommands();
         pollWhileDisabled();

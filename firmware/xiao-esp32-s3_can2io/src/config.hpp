@@ -12,12 +12,13 @@ SPDX-License-Identifier: MIT
 // ================= 基本設定 =================
 
 // IDの設定，シリアルフレームのDEVICE_IDとして使用します。
+// このディレクトリはGUIの「ファーム生成」のテンプレートなので、既定はCANホスト(101)の
+// ままにする(2026-11-06 PRレビュー指摘: 既定をDamiaoにすると、設定を変えずにビルドした
+// 時に既存のCANホスト構成で動かなくなる)。実機ごとの設定は generated_firmware/<名前>/ に置く。
 // MODE_DAMIAO/MODE_ROBSTRIDE(独立デバイス)は既存のCANホスト/ノード(101-104)と
-// 衝突しない番号を使うこと。Damiaoは201、RobStrideは202で使っている
-// (2026-10-22。Damiaoに戻すときはここを201、モードをMODE_DAMIAOにする)。
-// 2026-11-05: Damiao(2台)で使うため201+MODE_DAMIAOに切り替えた
-// (RobStrideに戻すときはここを202、モードをMODE_ROBSTRIDEにする)。
-#define DEVICE_ID 201
+// 衝突しない番号を使うこと: Damiao=201(generated_firmware/soki_damiao_201)、
+// RobStride=202(generated_firmware/soki_robstride_202)。
+#define DEVICE_ID 101
 
 // CAN_IDは3桁形式で指定します。
 // 1桁目はバス番号、末尾2桁はノード番号を表します。
@@ -26,13 +27,13 @@ SPDX-License-Identifier: MIT
 
 // モードの設定，どれか一つをコメントアウト解除すること
 // #define MODE_CAN
-// #define MODE_CAN_HOST
+#define MODE_CAN_HOST
 // #define MODE_IO
 // #define MODE_DEBUG
 // #define MODE_CAN_MONITOR
 // #define MODE_ROBOMAS
 // #define MODE_CUBEMARS
-#define MODE_DAMIAO
+// #define MODE_DAMIAO
 // #define MODE_ROBSTRIDE
 
 // ================= 基板バリアントの設定 =================
@@ -375,6 +376,9 @@ SPDX-License-Identifier: MIT
 
 // ================= Damiao関連 (MODE_DAMIAOのみ有効) =================
 // Damiao DM3520(ESC)+DM2325(モータ) をCAN(1Mbps)で直接動かすモード。
+// 【CAN線はDamiao専用にすること】Damiaoの指令ID(0x100+ESC_ID, 0x200+ESC_ID)は、
+// ノード分配(0x100/0x180帯)やロボマス(0x1FE, 0x200-0x208)と重なるため、他のモードの
+// ESP32・ロボマスと同じCAN線に混ぜない。
 // 仕組み・使い方・モータの増やし方は damiao_ctrl/docs/開発ガイド.md を参照。
 // 処理の中身は damiao.cpp(このファイルの設定を読むだけで、普段は変えなくてよい)。
 
@@ -403,6 +407,11 @@ SPDX-License-Identifier: MIT
 // 有効化のたびにESCへ書き込む(電源を切ると元の0=無効に戻る)。止まった後は、
 // PCから一度0(脱力)を送ってから改めて指令すると復帰する。
 #define DAMIAO_MOTOR_TIMEOUT_MS 100
+
+// 速度の上限[rad/s]。速度制御の目標と、角度制御の速さの上限をこの範囲に丸める
+// (PCのdamiao_driver_nodeのmax_vel_radpsと同じ値。serial_txへ直接送られた場合もここで守る)。
+// 実機の最高速度は約48rad/s(ESCの最高速度の設定による、2026-10-15実測)で、その95%。
+#define DAMIAO_MAX_VEL_RADPS 45.6f
 
 // 返事の数値を戻すための範囲(位置±P_MAX[rad]、速度±V_MAX[rad/s]、トルク±T_MAX[N・m])。
 // ESCのレジスタ RID21/22/23 と同じ値にする(2026-10-14・11-02に2台とも読み出して確認済み)。

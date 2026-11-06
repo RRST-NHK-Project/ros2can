@@ -9,7 +9,25 @@
                          1台ずつ・1段ずつ進める(stepInit)
   3. requestFeedbackWhileDisabled()  脱力中のモータにも返事を出させる(位置を知るため)。
                          内部の位置(レジスタ80)もここで読む
-  4. recoverBusIfNeeded() CANの送信が止まったら復旧させる
+  4. twaiRecoverIfNeeded() CANの送信が止まったら復旧させる(twai_util.cpp、RobStrideと共通)
+
+■ 止める決まり(2026-11-06、PRレビュー指摘で整理)
+  次のどれかが起きたら、そのモータを脱力させて「ラッチ」する。ラッチ中は、PCが指令を
+  出し続けても再始動しない。PCが一度0(脱力)を送ると解除される(人が止まったことを
+  確認してから動かす、という順番にするため)。
+    ・PCからの指令が DAMIAO_CMD_TIMEOUT_MS 途絶えた(ros2canが落ちた・USBが抜けた)
+      ※以前は途絶を「PCが0を送った」と同じ扱いにしていたため、通信が戻ると最後の
+        指令で勝手に動き出し、故障も勝手に消していた
+    ・モータが故障を返した(状態が0/1以外。13=通信喪失など)
+    ・有効中のモータから FEEDBACK_LOST_MS 返事が来ない(ESCの電源断・CAN線抜けなど)
+  ラッチ中は、PCへ送る状態を 15(STATE_LATCHED)にする(モータ自身の故障コードがある時は
+  そちらを優先)。故障の解除(ClearError)も、PCが0を送ってラッチが外れてから行う。
+
+■ CAN IDの制約(Damiao専用のバスにすること)
+  Damiaoの指令は 0x100+ESC_ID(角度)・0x200+ESC_ID(速度)を使う。ESC_ID=1,2では
+  0x101,0x102,0x201,0x202 になり、ros2canのノード分配(0x100/0x180帯)やロボマス
+  (0x1FE, 0x200-0x208)と重なる。そのため、このESP32のCAN線にはDamiaoのESCだけを
+  つなぐこと(他のモードのESP32やロボマスと同じ線に混ぜない)。
 
 ■ よく変える場所(このファイルではなく config.hpp)
   ・モータの台数・ID       → DAMIAO_MOTORS(表の1行=1台)
@@ -18,7 +36,8 @@
 ■ PCとのデータ枠(1台6個。モータnは (n-1)*6 番から。PC側の
   damiao_ctrl/include/damiao_ctrl/slot_layout.hpp と必ず一致させること)
        PC → ESP32(指令)                    ESP32 → PC(返事)
-  +0   モード 0=脱力 1=速度 2=角度          状態 0=脱力 1=有効 それ以外=故障(13=通信喪失)
+  +0   モード 0=脱力 1=速度 2=角度          状態 0=脱力 1=有効 15=ESP32が止めている(ラッチ)
+                                            それ以外=モータの故障(13=通信喪失など)
   +1   目標 速度:0.01rad/s 角度:0.001rad   返事を受け取った回数(増えていれば通信OK)
   +2   角度制御の速さ上限 0.01rad/s         モータ内部の位置 0.1rad(不明なら-32768)
   +3   (未使用)                             位置 0.001rad(±12.5radで一周)
@@ -47,6 +66,7 @@
 #include "defs.hpp"
 #include "frame_data.hpp"
 #include "serial_task.hpp"
+#include "twai_util.hpp"
 #include <Arduino.h>
 #include <algorithm>
 #include <cmath>
@@ -100,6 +120,16 @@ constexpr double INTERNAL_POS_SCALE = 0.1;        // Tx+2スロットの単位[r
 constexpr int32_t CMODE_POS_VEL = 2;
 constexpr int32_t CMODE_VEL = 3; // 2026-10-14 実機確認済み(0x200+id, float32速度)
 
+// 有効中のモータから返事がこの時間来なければ、止めてラッチする[ms]。有効中は
+// 制御フレーム(5ms周期)ごとに返事が来るので、200msあれば誤検知しない
+// (RobStrideのFEEDBACK_LOST_MSと同じ値)。
+constexpr uint32_t FEEDBACK_LOST_MS = 200;
+// ラッチ中にPCへ送る状態の値(モータ自身の状態コード0〜14とは重ならない)。
+constexpr int16_t STATE_LATCHED = 15;
+// 送信キューが空かない時に待つ最大時間[ms]。ESCの電源が切れてACKが返らない時に、
+// 制御ループが長く止まらないよう短くする(以前は20msで、1台あたり何回も待っていた)。
+constexpr uint32_t SEND_TIMEOUT_MS = 2;
+
 // 各モータのCAN ID。config.hppの DAMIAO_MOTORS(表の1行=1台)から作る。
 struct MotorIds {
     uint16_t esc_id;    // 指令を受け取るCAN ID(ESC_ID)
@@ -141,97 +171,15 @@ float g_pm[kMotorCount] = {0};
 bool g_pm_valid[kMotorCount] = {false};
 float g_last_fb_pos[kMotorCount] = {0};
 bool g_have_fb_pos[kMotorCount] = {false};
+// ラッチ(上の「止める決まり」参照)。起動直後はPCからの指令がまだ無い=途絶扱いなので
+// ラッチから始まり、PCが0を送ると外れる。
+bool g_latched[kMotorCount];
+uint32_t g_last_fb_ms[kMotorCount] = {0}; // 最後に返事(状態フレーム)を受け取った時刻
+uint32_t g_enabled_at_ms[kMotorCount] = {0}; // 有効化が終わった時刻
 
 // POS_VELを有効にしてよいか(内部の位置が分かっていて、小さいこと)。
 bool posVelAllowed(int m) {
     return g_pm_valid[m] && std::fabs(g_pm[m]) <= POS_VEL_MAX_INTERNAL_RAD;
-}
-
-void logTransmitFailure(const char *message);
-
-bool installTwaiDriver() {
-    twai_general_config_t g_config =
-        TWAI_GENERAL_CONFIG_DEFAULT((gpio_num_t)CAN_TX, (gpio_num_t)CAN_RX, TWAI_MODE_NORMAL);
-    // 1Mbps固定(2026-10-14実機確認)。以前は #if CAN_BITRATE_1MBPS で切り替えて
-    // いたが、ros2can版のconfig.hppにはこのマクロが無く、未定義=0扱いで
-    // 500kbpsになってDM3520がACKを返さない不具合になっていた。
-    twai_timing_config_t t_config = TWAI_TIMING_CONFIG_1MBITS();
-    twai_filter_config_t f_config = TWAI_FILTER_CONFIG_ACCEPT_ALL();
-
-    if (twai_driver_install(&g_config, &t_config, &f_config) != ESP_OK) {
-        return false;
-    }
-    if (twai_start() != ESP_OK) {
-        twai_driver_uninstall();
-        return false;
-    }
-    return true;
-}
-
-// CAN未接続/ESC無応答が続くとBus-Offへ遷移するが、TWAIドライバは自動復帰
-// しない。ros2canのcan_task.cpp/cubemars.cppと同じ対策。
-//
-// さらに、既知のESP-IDF TWAIドライバのバグ(espressif/esp-idf#19068)への
-// 対策も兼ねる: TXパイプラインがレースコンディションで永久にスタックする
-// ことがあり、この場合エラーカウンタは0のまま・bus-offにもならず、
-// twai_transmit()がESP_ERR_TIMEOUTを返し続けるだけになる(=タスク側の
-// エラーカウンタ監視だけでは検知できない)。msgs_to_txが一定時間変化
-// しない状態が続いたら、詰まっていると判断してドライバを再インストール
-// する。
-void recoverBusIfNeeded() {
-    constexpr uint32_t CHECK_PERIOD_MS = 100;
-    constexpr uint32_t STUCK_THRESHOLD_MS = 300; // msgs_to_txが変化しないまま許容する時間
-    static uint32_t last_check_ms = 0;
-    static uint32_t last_msgs_to_tx_change_ms = 0;
-    static uint32_t last_msgs_to_tx = 0;
-
-    const uint32_t now_ms = millis();
-    if (now_ms - last_check_ms < CHECK_PERIOD_MS) {
-        return;
-    }
-    last_check_ms = now_ms;
-
-    twai_status_info_t status{};
-    if (twai_get_status_info(&status) != ESP_OK) {
-        return;
-    }
-    if (status.state == TWAI_STATE_BUS_OFF) {
-        twai_initiate_recovery();
-        return;
-    }
-    if (status.state == TWAI_STATE_STOPPED) {
-        twai_start();
-        return;
-    }
-
-    if (status.msgs_to_tx != last_msgs_to_tx) {
-        last_msgs_to_tx = status.msgs_to_tx;
-        last_msgs_to_tx_change_ms = now_ms;
-        return;
-    }
-    if (status.msgs_to_tx > 0 && (now_ms - last_msgs_to_tx_change_ms) > STUCK_THRESHOLD_MS) {
-        // 送信キューに滞留したまま進まない = TXパイプラインのスタック。
-        // ドライバを再インストールして復旧する(滞留していたフレームは失われる)。
-        logTransmitFailure("[ERR] damiao: TWAI TX stuck, reinstalling driver");
-        twai_stop();
-        twai_driver_uninstall();
-        installTwaiDriver();
-        last_msgs_to_tx = 0;
-        last_msgs_to_tx_change_ms = now_ms;
-    }
-}
-
-// twai_transmit失敗ログはserialTaskのバイナリフレームと同じUARTに出るため、
-// 頻発すると混入してホスト側のフレーム同期を壊す。間隔を絞って出す。
-void logTransmitFailure(const char *message) {
-    constexpr uint32_t LOG_THROTTLE_MS = 500;
-    static uint32_t last_log_ms = 0;
-    const uint32_t now_ms = millis();
-    if (now_ms - last_log_ms < LOG_THROTTLE_MS) {
-        return;
-    }
-    last_log_ms = now_ms;
-    Serial.println(message);
 }
 
 void sendStandard(uint32_t can_id, const uint8_t *data, uint8_t len) {
@@ -243,9 +191,9 @@ void sendStandard(uint32_t can_id, const uint8_t *data, uint8_t len) {
     for (uint8_t i = 0; i < len; i++) {
         tx.data[i] = data[i];
     }
-    if (twai_transmit(&tx, pdMS_TO_TICKS(20)) != ESP_OK) {
-        logTransmitFailure("[ERR] damiao: twai_transmit failed");
-    }
+    // 失敗しても文字は出さない(PCとのシリアルにログが混ざるとフレームが壊れるため)。
+    // 失敗回数は twai_util が数えている。
+    twaiSend(tx, SEND_TIMEOUT_MS);
 }
 
 void sendControlCmd(uint16_t motor_can_id, uint8_t cmd) {
@@ -316,6 +264,7 @@ void stepInit(int m, uint32_t now_ms) {
         break;
     case INIT_WAIT_ENABLED:
         g_enabled[m] = true;
+        g_enabled_at_ms[m] = now_ms;
         g_init_step[m] = INIT_IDLE;
         return;
     default:
@@ -330,8 +279,8 @@ void stepInit(int m, uint32_t now_ms) {
 
 // PCからの有効フレームがDAMIAO_CMD_TIMEOUT_MS以上途絶えていればtrue。
 // DM3520自身の通信タイムアウト(RID9, 有効化シーケンスで設定)はESP32<->モータ間の
-// 途絶用なので、PC<->ESP32間の途絶はここで止める(CubeMars版の
-// CUBEMARS_CMD_TIMEOUT_MSと同じ考え方)。
+// 途絶用なので、PC<->ESP32間の途絶はここで止める(RobStrideの
+// ROBSTRIDE_CMD_TIMEOUT_MSと同じ考え方。ros2canのMODE_CUBEMARSには無い)。
 bool commandLinkLost() {
     const uint32_t last_ms = serialLastValidRxMs();
     if (last_ms == 0) {
@@ -349,8 +298,28 @@ void sendCommands() {
     const uint32_t now_ms = millis();
     for (int m = 0; m < kMotorCount; m++) {
         const int off = m * SLOTS_PER_MOTOR;
-        // 指令途絶中はPCの最後の指令に関わらずDisable扱いにする。
-        int16_t mode = link_lost ? MODE_DISABLED : rx[off + 0];
+        const int16_t pc_mode = rx[off + 0]; // PCが送ってきたモード(そのままの値)
+
+        // ---- ラッチ(先頭コメントの「止める決まり」) ----
+        // 有効中に返事が来なくなった(ESCの電源断・CAN線抜けなど)
+        if (g_enabled[m]) {
+            const uint32_t since = std::max(g_last_fb_ms[m], g_enabled_at_ms[m]);
+            if (now_ms - since > FEEDBACK_LOST_MS) {
+                g_latched[m] = true;
+            }
+        }
+        // モータが故障を返している
+        if (g_last_state[m] != 0 && g_last_state[m] != 1) {
+            g_latched[m] = true;
+        }
+        // PCからの指令が途絶えた。途絶は「PCが0を送った」とは扱わない
+        if (link_lost) {
+            g_latched[m] = true;
+        } else if (pc_mode == MODE_DISABLED) {
+            g_latched[m] = false; // PCが脱力を送った = 人が止まったことを確認した
+        }
+
+        int16_t mode = g_latched[m] ? MODE_DISABLED : pc_mode;
         // 内部の位置が大きい/不明なモータはPOS_VELにしない(上の RID_P_M の説明参照)。
         // 動作中に±P_MAXを超えた場合も止める。
         if (mode == MODE_POS_VEL) {
@@ -361,8 +330,22 @@ void sendCommands() {
                 mode = MODE_DISABLED;
             }
         }
-        const float target = (float)(rx[off + 1] * (mode == MODE_VEL ? VEL_SCALE : POS_SCALE));
-        const float vel_limit = (float)(rx[off + 2] * VEL_SCALE);
+
+        // ---- 指令値の範囲チェック(serial_tx_201へ直接送られた場合も守る) ----
+        // 速度は±DAMIAO_MAX_VEL_RADPSに丸める。角度制御の速さ上限が0以下なら有効にしない
+        // (0だとESCの動きが決まらないため。RobStrideと同じ扱い)。角度は±12radに丸める
+        // (内部の位置の上限POS_VEL_MAX_INTERNAL_RADの外へは行かせない)。
+        float target = (float)(rx[off + 1] * (mode == MODE_VEL ? VEL_SCALE : POS_SCALE));
+        float vel_limit = (float)(rx[off + 2] * VEL_SCALE);
+        if (mode == MODE_VEL) {
+            target = std::min(std::max(target, -DAMIAO_MAX_VEL_RADPS), DAMIAO_MAX_VEL_RADPS);
+        } else if (mode == MODE_POS_VEL) {
+            if (vel_limit <= 0.0f) {
+                mode = MODE_DISABLED;
+            }
+            vel_limit = std::min(vel_limit, DAMIAO_MAX_VEL_RADPS);
+            target = std::min(std::max(target, -POS_VEL_MAX_INTERNAL_RAD), POS_VEL_MAX_INTERNAL_RAD);
+        }
         const uint16_t motor_can_id = kMotors[m].esc_id;
 
         if (mode != MODE_VEL && mode != MODE_POS_VEL) {
@@ -423,12 +406,11 @@ void requestFeedbackWhileDisabled() {
         if (tick % 10 == 0) { // 0.2秒ごとに内部の位置(レジスタ80)を読む
             readRegister(kMotors[m].esc_id, RID_P_M);
         }
-        // 故障(通信喪失Dなど)はClearErrorを送るまでモータ側に残り続けるため、
-        // Disable中に限りClearErrorで消す(ClearErrorも状態フレームを返し、
-        // Enableはしない)。Enable中に起きた故障は、PCが0(DISABLE)を送って
-        // ここに来るまで消さない(勝手に再始動させないため)。
+        // 故障(通信喪失13など)はClearErrorを送るまでモータ側に残り続ける。消すのは、
+        // PCが0を送ってラッチが外れてから(ClearErrorも状態フレームを返し、Enableはしない)。
+        // ラッチ中はDisableを送り、故障のコードをPCから見えるままにする。
         const bool fault = (g_last_state[m] != 0 && g_last_state[m] != 1);
-        sendControlCmd(kMotors[m].esc_id, fault ? CMD_CLEAR_ERROR : CMD_DISABLE);
+        sendControlCmd(kMotors[m].esc_id, (fault && !g_latched[m]) ? CMD_CLEAR_ERROR : CMD_DISABLE);
     }
 }
 
@@ -448,9 +430,17 @@ int motorIndexForFeedback(uint32_t can_id, const uint8_t *d) {
 }
 
 // レジスタ読み書きの返信 {id_lo, id_hi, 0x33/0x55, RID, value...} を、
-// 位置などの状態帰還と取り違えないための判定。
+// 位置などの状態帰還と取り違えないための判定。どちらもMST_IDで届くので、CAN IDでは
+// 区別できない。以前は byte0-2 だけで判定していたため、脱力中のモータが約-12.48rad
+// (位置の下位バイトが0x33/0x55)で止まっていると、通常の帰還を返信と誤認していた
+// (2026-11-06 PRレビュー指摘)。このファイルが使うRID(9,10,80)のときだけ返信とみなす。
+// 通常の帰還でbyte3がこれらの値になるのは速度が-75rad/s以下の時だけで、このモータの
+// 最高速度(48rad/s)ではありえない。
 bool isRegisterReply(const uint8_t *d) {
     if (d[2] != 0x33 && d[2] != 0x55) {
+        return false;
+    }
+    if (d[3] != RID_TIMEOUT && d[3] != RID_CMODE && d[3] != RID_P_M) {
         return false;
     }
     for (int m = 0; m < kMotorCount; m++) {
@@ -528,10 +518,14 @@ void receiveFeedback() {
         // Tx側の+0〜+2は指令(Rx側)用のスロットで帰還では未使用だったため流用する。
         // 1台分の6スロットはロックしてまとめて書く(PCへ途中の値が混ざって出ないように)。
         g_last_state[m] = d[0] >> 4;
+        g_last_fb_ms[m] = millis();
         static int16_t fb_counter[kMotorCount] = {0};
         fb_counter[m]++;
+        // ラッチ中は15を送る(モータ自身の故障コードがある時はそちらを優先)
+        const bool motor_ok = g_last_state[m] == 0 || g_last_state[m] == 1;
+        const int16_t state_to_pc = (g_latched[m] && motor_ok) ? STATE_LATCHED : (int16_t)g_last_state[m];
         const int16_t slots[SLOTS_PER_MOTOR] = {
-            (int16_t)g_last_state[m], // 状態: 0=Disable 1=Enable それ以外=故障
+            state_to_pc,              // 状態: 0=Disable 1=Enable 15=ESP32が止めている それ以外=故障
             fb_counter[m],            // 帰還の受信回数
             g_pm_valid[m] ? physicalToSlot(g_pm[m], INTERNAL_POS_SCALE) : (int16_t)INT16_MIN, // 内部の位置
             physicalToSlot(position, POS_SCALE),
@@ -547,8 +541,10 @@ void receiveFeedback() {
 void damiaoInit() {
     for (int m = 0; m < kMotorCount; m++) {
         g_init_step[m] = INIT_IDLE;
+        g_latched[m] = true; // PCが0を送るまで動かさない
     }
-    if (!installTwaiDriver()) {
+    // 受信キューは返事が数台分まとめて届いても溢れないよう少し長めにする
+    if (!twaiInstall(16)) {
         Serial.println("[ERR] damiao: TWAI install failed");
         while (1)
             ;
@@ -557,7 +553,7 @@ void damiaoInit() {
 
 void damiaoTask(void *pvParameters) {
     while (1) {
-        recoverBusIfNeeded();
+        twaiRecoverIfNeeded();
         receiveFeedback();
         sendCommands();
         requestFeedbackWhileDisabled();

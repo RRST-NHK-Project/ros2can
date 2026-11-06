@@ -178,6 +178,8 @@ GUIスレッド側の `HardwareManager.service()`（10ms周期）が中心ルー
 | `xiao_ss_can_host` | BOARD_SS用。9スロット/ノード（SERVO1-5+TR1-4）、ノード数既定2 |
 | `robomas_driver` | MODE_ROBOMAS、独立デバイス、DJI RoboMaster x4 |
 | `cubemars_ak_driver` | MODE_CUBEMARS、独立デバイス、CubeMars AKシリーズ x4 |
+| `damiao_driver` | MODE_DAMIAO、独立デバイス、Damiao DM3520 x4（6スロット/台） |
+| `robstride_driver` | MODE_ROBSTRIDE、独立デバイス、RobStride EL05 x2（8スロット/台、20-23診断） |
 | `generic_raw` | 24スロットの生編集のみ |
 
 カスタムプロファイルは `~/.config/ros2can/profiles/*.json` に保存され（Git管理外）、`all_profiles()` はビルトインにカスタムを `dict.update()` でマージします（同キーはカスタムが優先）。
@@ -239,15 +241,17 @@ GUIスレッド側の `HardwareManager.service()`（10ms周期）が中心ルー
 
 | タスク | スタック | 優先度 | 生成条件（モード） | 実装ファイル |
 |:---|---:|---:|:---|:---|
-| `serialTask` | 2048 | 10 | CAN_HOST / IO / DEBUG / ROBOMAS / CUBEMARS | serial_task.cpp |
+| `serialTask` | 2048 | 10 | CAN_HOST / IO / DEBUG / ROBOMAS / CUBEMARS / DAMIAO / ROBSTRIDE | serial_task.cpp |
 | `canTask` | 4096 | 10 | CAN / CAN_HOST / CAN_MONITOR | can_task.cpp |
 | `IO_Task` | 2048 | 11 | IO / CAN / CAN_HOST | pin_ctrl_task.cpp |
 | `robomasTask` | 4096 | 11 | ROBOMAS | robomas.cpp |
 | `cubemarsTask` | 4096 | 11 | CUBEMARS | cubemars.cpp |
+| `damiaoTask` | 4096 | 11 | DAMIAO | damiao.cpp（CAN補助は twai_util.cpp） |
+| `robstrideTask` | 4096 | 11 | ROBSTRIDE | robstride.cpp（CAN補助は twai_util.cpp） |
 
 **重要な設計上のポイント**: `MODE_ROBOMAS`/`MODE_CUBEMARS` は `canTask`（ノード分配ロジック）を使いません。代わりに `serialTask`（PCとの24スロット送受信）と `robomasTask`/`cubemarsTask`（独自のCAN送受信）が **`Tx_16Data`/`Rx_16Data` をロック無しで直接共有**することで、PC⇔モータの橋渡しを行います。`MODE_CAN_HOST`/`MODE_CAN` のような「ノード/スロット分配」の概念はこの2モードには存在せず、24スロットのうち先頭から詰めてモータ4台分の指令・帰還が並びます。
 
-`loop()` 自体は `vTaskDelay(1000ms)` するだけで、全処理はFreeRTOSタスクに委譲されています。7モードのうち定義数の合計が1でなければコンパイルエラー(`#error`)になるチェックが入っています。
+`loop()` 自体は `vTaskDelay(1000ms)` するだけで、全処理はFreeRTOSタスクに委譲されています。9モードのうち定義数の合計が1でなければコンパイルエラー(`#error`)になるチェックが入っています。
 
 ### 3.2 `config.hpp` のコンパイル時設定とピン共有
 
@@ -459,7 +463,7 @@ rxUpdated シグナル → DevicePanel.refresh_from_rx()（Monitor/Rawタブ更�
 
 ## 6. 安全機構・フェイルセーフの全体まとめ
 
-`ros2can` システム全体を通して、**能動的なウォッチドッグ／タイムアウトベースのフェイルセーフはファームウェア側には実装されていません**。安全性は次の受動的な設計原則とPC側GUIの操作に委ねられています。
+`ros2can` システム全体を通して、**能動的なウォッチドッグ／タイムアウトベースのフェイルセーフはファームウェア側には実装されていません**（例外: `MODE_DAMIAO` / `MODE_ROBSTRIDE`。下の7項）。安全性は次の受動的な設計原則とPC側GUIの操作に委ねられています。
 
 1. **「全ゼロ = 安全なデフォルト値」という規約**: `Rx_16Data` は初期値0で保持され、CubeMars/RoboMasterの `control_mode` は全ゼロ時に「速度ループ・target=0」を意味するようスロット番号が設計されている（電源投入直後や通信未確立時に位置ジャンプが起きない）。
 2. **通信途絶時、ファームウェアは最後の指令値を保持し続ける**（UART・CANいずれも、タイムアウトによる自動ゼロ化は無い）。これは `b-g431-esc1_can2io`・`MODE_ROBOMAS`・`MODE_CUBEMARS` いずれにも共通する仕様であり、外部ノードを書く際は終了時に明示的にゼロ指令を送る責務がある（[7.4節 サンプルパッケージ](index.md#74-サンプルパッケージ-ros2can_examplec-ビルド実行可能)の `send_zero_and_stop()` 参照）。
@@ -467,6 +471,19 @@ rxUpdated シグナル → DevicePanel.refresh_from_rx()（Monitor/Rawタブ更�
 4. **CAN Bus-Off自動復帰**は通信健全性の維持機構であり、モータ出力を安全側に倒すものではない。
 5. `CAN_NODE_COUNT` の過大設定によるBus-Off（3.2節）は設定ミスへの安全機構ではなく単なる既知の障害モード。
 6. BOARD_SS（ソレノイドバルブ）の `TR1-4` は起動時に明示的に `LOW`（OFF）へ初期化される。
+7. **`MODE_DAMIAO` / `MODE_ROBSTRIDE` は止めてラッチする**（2026-11-06 PRレビュー指摘で整理）。
+
+   | 止める原因 | Damiao | RobStride |
+   |:---|:---|:---|
+   | 起動直後 | ラッチ | ラッチ |
+   | PCからの指令の途絶 | `DAMIAO_CMD_TIMEOUT_MS`（300ms） | `ROBSTRIDE_CMD_TIMEOUT_MS`（300ms） |
+   | モータの故障・運転モード外れ | 状態が0/1以外 | モード≠運転 または 故障ビット |
+   | 有効中に帰還が来ない | 200ms（`FEEDBACK_LOST_MS`） | 200ms（`FEEDBACK_LOST_MS`） |
+   | ESP32⇔モータ間の途絶 | モータ自身が停止（レジスタ9、`DAMIAO_MOTOR_TIMEOUT_MS`） | モータ自身が停止（0x7028、`ROBSTRIDE_MOTOR_TIMEOUT_MS`） |
+   | PCへの印 | 状態 = 15 | flags の 0x100 |
+
+   **解除はPCが実際に0（脱力）を送った時だけ**。途絶は「0を受け取った」とは扱わない（以前はそう扱っていたため、通信が戻ると最後の指令で動き出し、Damiaoでは故障も自動で消していた）。Damiaoの故障の解除（ClearError）も解除後にだけ行う。また指令値の範囲もファーム側で守る（Damiao: 速度±`DAMIAO_MAX_VEL_RADPS`、角度±12rad、速さ上限0以下は無効。RobStride: 速度±`ROBSTRIDE_V_MAX_RADPS`、速度上限0以下は無効）。
+   CAN送信の補助（Bus-Off復帰、ESP-IDFの送信停止 esp-idf#19068 対策）は両モード共通の `src/twai_util.cpp`。送信失敗の文字ログはシリアルに出さない（PCとのバイナリフレームが壊れるため）。
 
 ---
 

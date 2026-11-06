@@ -33,6 +33,7 @@ title: ros2can マニュアル
 - [8. プロファイル](#8-プロファイル)
 - [9. CubeMars AKシリーズ（MODE_CUBEMARS）](#9-cubemars-akシリーズmode_cubemars)
 - [10. DJIロボマス（MODE_ROBOMAS）](#10-djiロボマスmode_robomas)
+- [10a. Damiao・RobStride（MODE_DAMIAO / MODE_ROBSTRIDE）](#10a-damiaorobstridemode_damiao--mode_robstride)
 - [11. ファームウェア生成・書き込み](#11-ファームウェア生成書き込み)
 - [12. 設定](#12-設定)
 - [13. エンコーダ初期化](#13-エンコーダ初期化)
@@ -73,6 +74,8 @@ CANバスに直接ぶら下がる独立デバイスとしていくつかのモ�
 | `MODE_CAN` | ホスト配下の汎用IOノード（通常の子マイコン） | （CAN Host側のプロファイルに内包） |
 | `MODE_ROBOMAS` | DJIロボマス最大4台を直接駆動する独立デバイス | [xiao-esp32-s3_can2io (MODE_ROBOMAS, DJIロボマス x4)](#10-djiロボマスmode_robomas) |
 | `MODE_CUBEMARS` | CubeMars AKシリーズ最大4台を直接駆動する独立デバイス | [xiao-esp32-s3_can2io (MODE_CUBEMARS, CubeMars AKシリーズ x4)](#9-cubemars-akシリーズmode_cubemars) |
+| `MODE_DAMIAO` | Damiao DM3520(ESC)+DM2325 最大4台を直接駆動する独立デバイス（**専用CAN線**） | [xiao-esp32-s3_can2io (MODE_DAMIAO, Damiao DM3520 x4)](#10a-damiaorobstridemode_damiao--mode_robstride) |
+| `MODE_ROBSTRIDE` | RobStride EduLite05 最大2台を直接駆動する独立デバイス（**専用CAN線**） | [xiao-esp32-s3_can2io (MODE_ROBSTRIDE, RobStride EL05 x2)](#10a-damiaorobstridemode_damiao--mode_robstride) |
 | `MODE_IO` | CAN無し、IOのみのスタンドアロン動作 | 汎用 Raw 等 |
 | `MODE_CAN_MONITOR` | 生CANフレームをシリアル出力するだけの診断用モード | （ros2canのデバイス一覧には出ない。「CANモニター…」参照） |
 | `MODE_DEBUG` | デバッグ用 | - |
@@ -419,6 +422,8 @@ ros2 topic pub --once /zero_channel_request std_msgs/msg/Int32MultiArray \
 | `xiao_ss_can_host` | XIAO ESP32S3 SS (CAN Host) | BOARD_SS用。SERVO1-5+TR1-4(ソレノイドバルブ)の9指令チャンネルのため1ノード9スロットに拡張、24スロットの制約でノード数は既定2まで |
 | `robomas_driver` | xiao-esp32-s3_can2io (MODE_ROBOMAS, DJIロボマス x4) | ノード分配なし。独立デバイスとしてDJIロボマス最大4台を直接制御。詳細は[10章](#10-djiロボマスmode_robomas) |
 | `cubemars_ak_driver` | xiao-esp32-s3_can2io (MODE_CUBEMARS, CubeMars AKシリーズ x4) | ノード分配なし。独立デバイスとしてCubeMars AKシリーズ最大4台を直接制御。詳細は[9章](#9-cubemars-akシリーズmode_cubemars) |
+| `damiao_driver` | xiao-esp32-s3_can2io (MODE_DAMIAO, Damiao DM3520 x4) | ノード分配なし。1台6スロットで最大4台。詳細は[10a章](#10a-damiaorobstridemode_damiao--mode_robstride) |
+| `robstride_driver` | xiao-esp32-s3_can2io (MODE_ROBSTRIDE, RobStride EL05 x2) | ノード分配なし。1台8スロットで最大2台(20-23は診断)。詳細は[10a章](#10a-damiaorobstridemode_damiao--mode_robstride) |
 | `generic_raw` | 汎用 Raw (24スロット、CAN分配なし) | ホストのUARTフレーム24スロットをそのまま直接編集/表示する |
 
 ファームウェア側の `config.hpp` で `CAN_NODE_COUNT` / `CAN_SLOTS_PER_NODE`
@@ -656,6 +661,43 @@ ESC/GM6020はCANで生の電流指令しか受け付けないため、位置PD�
   `robomas.cpp`）。台数を増やす場合はバス帯域の余裕を
   `firmware/xiao-esp32-s3_can2io/README.md` で確認してください。
 
+## 10a. Damiao・RobStride（MODE_DAMIAO / MODE_ROBSTRIDE）
+
+Damiao DM3520(ESC)+DM2325 と RobStride EduLite05 を、それぞれ専用のESP32から直接動かすモードです
+（2026-11-06 PRレビュー指摘を反映）。通常はGUIではなく、PC側の専用パッケージ
+`damiao_ctrl` / `robstride_ctrl`（`serial_tx_<ID>` / `serial_rx_<ID>` を使うドライバノード）から操作します。
+GUIのプロファイル `damiao_driver` / `robstride_driver` は、スロットの中身を確認する用途に使えます。
+
+| | MODE_DAMIAO | MODE_ROBSTRIDE |
+|:---|:---|:---|
+| 書き込むプロジェクト | `generated_firmware/soki_damiao_201`（DEVICE_ID 201） | `generated_firmware/soki_robstride_202`（DEVICE_ID 202） |
+| 台数 / スロット | 最大4台 / 1台6スロット | 最大2台 / 1台8スロット（20-23は診断） |
+| 指令のモード（+0） | 0=脱力 1=速度 2=角度 | 0=脱力 1=速度 2=位置(CSP) |
+| ESP32が止めている印 | 状態（帰還+0）が **15** | flags（帰還+1）の **0x100** |
+
+### 止まる条件と、再び動かす方法
+
+次のどれかが起きると、ESP32がモータを脱力させて**止めたままにします（ラッチ）**。
+
+- 起動直後（まだPCが一度も0を送っていない）
+- PCからの指令が300ms途絶えた（ros2canが落ちた・USBが抜けた）
+- モータが故障を返した／運転モードを外れた
+- 有効中のモータから返事が200ms来ない（ESCの電源断・CAN線抜け）
+
+**再び動かすには、PCから一度0（脱力）を送ります。** 通信が戻っただけでは動き出しません
+（以前は通信が戻ると最後の指令で勝手に動き出す不具合がありました）。PS4テレオペでは
+R1（イネーブル）を一度離せば0が送られます。Damiaoの故障の解除（ClearError）も、この0を受け取ってから行います。
+
+### CAN線は専用にすること
+
+- Damiaoの指令ID（`0x101`, `0x102`, `0x201`, `0x202` など）は、ノード分配（`0x100`/`0x180`帯）や
+  ロボマス（`0x1FE`, `0x200-0x208`）と重なります。
+- RobStrideは29bit拡張IDですが、ノード側の受信処理が拡張IDを区別していないため、混ぜると誤動作の恐れがあります。
+- DamiaoとRobStrideを同時に使う場合も、**ESP32を2台・CAN線を2本**に分けてください。
+
+詳細（スロット表・CANプロトコル）はファームREADMEの §11 / §11a と、
+`src/damiao.cpp` / `src/robstride.cpp` 先頭のコメントを参照してください。
+
 ## 11. ファームウェア生成・書き込み
 
 ツールバーの「ファームウェア生成・書き込み…」から、`xiao-esp32-s3_can2io` を
@@ -672,7 +714,7 @@ ESC/GM6020はCANで生の電流指令しか受け付けないため、位置PD�
 | 生成先の名前 | `generated_firmware/<名前>/` としてプロジェクト一式をコピーする際のフォルダ名 |
 | DEVICE_ID | serial_bridge互換フレームの `serial_tx_[ID]`/`serial_rx_[ID]` に対応するID |
 | CAN_ID（下2桁=ノード番号） | ノードのCAN ID。101〜104のように下2桁がノード番号になるよう設定 |
-| MODE | `CAN`(通常のCANノード) / `CAN_HOST`(CANホスト) / `IO`(CAN無し) / `DEBUG` / `CAN_MONITOR` / `ROBOMAS`(DJI RoboMaster) / `CUBEMARS`(CubeMars AK) |
+| MODE | `CAN`(通常のCANノード) / `CAN_HOST`(CANホスト) / `IO`(CAN無し) / `DEBUG` / `CAN_MONITOR` / `ROBOMAS`(DJI RoboMaster) / `CUBEMARS`(CubeMars AK) / `DAMIAO`(Damiao DM、専用CAN線) / `ROBSTRIDE`(RobStride EL05、専用CAN線) |
 | BOARD_VARIANT | 書き込み先の物理基板。`BOARD_SOKI`(既存のピン配置) / `BOARD_MES`(ENC1/ENC2/MD1/MD2+SW1) / `BOARD_SS`(SERVO1-5+TR1-4) |
 | MULTI1〜3 | ピン共有の入出力切替（0=スイッチ入力 / 1=サーボ出力）。BOARD_SOKI系のみ意味を持つ |
 | ENC1_MD / ENC2_MD | ピン共有の入出力切替（0=エンコーダ / 1=MD(PWM+DIR)出力） |
@@ -761,7 +803,9 @@ PlatformIO CLI（`pio` コマンド）が必要です。見つからない場合
 - ツールバーの「全デバイス E-STOP」は、接続中の全デバイスへゼロ指令を送信し
   ダイレクト送信を無効化します。緊急時はこれを押してください。
 - 外部ノードから接続する場合、ファームウェア側にCAN/シリアル途絶時の
-  フェイルセーフは無く、最後に受信した指令を保持し続けます。ノード終了時に
+  フェイルセーフは無く、最後に受信した指令を保持し続けます
+  （例外: `MODE_DAMIAO` / `MODE_ROBSTRIDE` は途絶で止まり、PCが0を送るまで再始動しません。
+  [10a章](#10a-damiaorobstridemode_damiao--mode_robstride)参照）。ノード終了時に
   ゼロ指令を送る後始末は各ノードの責務です（[7.4節](#74-サンプルパッケージ-ros2can_examplec-ビルド実行可能)
   の `send_zero_and_stop()` を参照）。
 
