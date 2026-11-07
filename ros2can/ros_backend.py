@@ -1,8 +1,7 @@
 """rclpy と PyQt5 をつなぐバックエンド。
 
-GUI は単一スレッドで動作させる。QTimer から `rclpy.spin_once(timeout_sec=0)` を
-高頻度に呼び出すことで ROS のコールバック(サブスクライバ受信)を GUI スレッド上で
-直接処理し、スレッド間排他を持ち込まずに Qt シグナルを発行できるようにしている。
+GUI は単一スレッドで動作させる。QTimer から `spin_once()` を高頻度に呼び出すことで
+ROS のコールバック(サブスクライバ受信)を GUI スレッド上で直接処理し、スレッド間排他を持ち込まずに Qt シグナルを発行できるようにしている。
 
 デバイスは2つのモードのどちらかで管理される。
 
@@ -33,6 +32,7 @@ from dataclasses import dataclass, field
 from typing import Dict, List, Optional
 
 import rclpy
+from rclpy.executors import ShutdownException, SingleThreadedExecutor, TimeoutException
 from rclpy.node import Node
 from std_msgs.msg import Int16MultiArray, Int32MultiArray
 
@@ -53,6 +53,14 @@ STALE_TIMEOUT_SEC = 1.5
 # ENC以外のスロット(SW/SERVO/速度指令等)にも一律適用するが、それらは通常
 # この半分(16384)を大きく下回る範囲でしか変化しないため無害。
 _COUNTS_PER_WRAP = 32768
+
+# 1回の spin_once() で処理するコールバック数の上限。GUIスレッドを長く止めないため。
+# 通常は数個で空になる(10ms周期に対して 50Hz x 3デバイス + 原点セット要求程度)。
+SPIN_MAX_CALLBACKS_PER_TICK = 64
+
+# serial_tx_[ID] の購読キュー深さ。実機へ送る意味があるのは最新の指令だけで、溜まった
+# 古い指令を順に書くと遅れになる(AGENTS.mdの2026-09-12の実測: 遅れ最大約190ms)。
+TX_COMMAND_QOS_DEPTH = 1
 
 MODE_HARDWARE = "hardware"
 MODE_TOPIC_CLIENT = "topic_client"
@@ -133,6 +141,10 @@ class RosBackend(QObject):
                  hardware_config: Optional[HardwareConfig] = None):
         super().__init__()
         self.node: Node = rclpy.create_node(node_name)
+        # rclpy.spin_once(node) はグローバルexecutorへ毎回 add_node/remove_node するうえ
+        # コールバックを1つしか処理しない。専用のexecutorを持って spin_once() で空にする。
+        self._executor = SingleThreadedExecutor()
+        self._executor.add_node(self.node)
         self.devices: Dict[int, DeviceChannel] = {}
         self.device_profile_map: Dict[int, str] = self._load_device_profile_map_from_params()
 
@@ -258,7 +270,8 @@ class RosBackend(QObject):
             Int32MultiArray, f"serial_rx_{device_id}_zeroed", 10)
         ch.subscription = self.node.create_subscription(
             Int16MultiArray, f"serial_tx_{device_id}",
-            lambda msg, did=device_id: self._on_hardware_tx_command(did, msg), 10)
+            lambda msg, did=device_id: self._on_hardware_tx_command(did, msg),
+            TX_COMMAND_QOS_DEPTH)
 
     def _on_hardware_claimed(self, device_id: int, port: str) -> None:
         ch = self.devices.get(device_id)
@@ -372,7 +385,8 @@ class RosBackend(QObject):
             Int32MultiArray, f"serial_rx_{device_id}_zeroed", 10)
         ch.subscription = self.node.create_subscription(
             Int16MultiArray, f"serial_tx_{device_id}",
-            lambda msg, did=device_id: self._on_simulator_tx_command(did, msg), 10)
+            lambda msg, did=device_id: self._on_simulator_tx_command(did, msg),
+            TX_COMMAND_QOS_DEPTH)
         self.devices[device_id] = ch
         self.deviceListChanged.emit()
         self.logMessage.emit(f"[SIM] id={device_id} をデバッグ(仮想)デバイスとして追加しました")
@@ -595,10 +609,18 @@ class RosBackend(QObject):
     # ---------------- lifecycle ----------------
 
     def spin_once(self) -> None:
-        rclpy.spin_once(self.node, timeout_sec=0)
+        """受信済みのROSコールバックをまとめて処理する。"""
+        for _ in range(SPIN_MAX_CALLBACKS_PER_TICK):
+            try:
+                handler, _entity, _node = self._executor.wait_for_ready_callbacks(timeout_sec=0)
+            except (TimeoutException, ShutdownException):
+                break
+            handler()
+            handler.result()  # コールバック内の例外を握りつぶさない
 
     def shutdown(self) -> None:
         self.hardware.stop()
         for device_id in list(self.devices.keys()):
             self.remove_device(device_id)
+        self._executor.shutdown()
         self.node.destroy_node()

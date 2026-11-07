@@ -81,7 +81,7 @@ title: ros2can 技術マニュアル（内部実装編）
 
 | タイマー | 周期 | 呼び出し先 | 役割 |
 |:---|---:|:---|:---|
-| spin_timer | 10ms | `rclpy.spin_once(node, timeout_sec=0)` | ROSコールバック（サブスクライバ等）をGUIスレッド上で実行 |
+| spin_timer | 10ms | `RosBackend.spin_once()` | 受信済みのROSコールバックをGUIスレッド上でまとめて処理（1回最大64個） |
 | hardware_timer | 10ms | `HardwareManager.service()` | シリアルリンクの読み書きサービス |
 | simulator_timer | 50ms (20Hz) | `RosBackend.service_simulators()` | 仮想デバイスのTX→RXループバック |
 | publish_timer | 50ms (20Hz) | `RosBackend.publish_all_direct()` | ダイレクト送信ONのデバイスへの周期送信 |
@@ -159,6 +159,13 @@ GUIスレッド側の `HardwareManager.service()`（10ms周期）が中心ルー
 **受信フレーム処理**: `_on_hardware_frame()` が `rx_data` を更新→`serial_rx_[ID]` をPublish→`_publish_unwrapped()`（unwrap値・zeroed値の配信、2.7節）→`rxUpdated` シグナル発行、という順で処理します。unwrap計算は `HardwareManager.service()` の10ms周期の中で行われるため、サンプル密度が高く保たれます。
 
 **`zero_channel_request` トピック**: `Int32MultiArray`、`data=[device_id, channel_index]`。`channel_index<0` で全24チャンネル一括原点セット。専用サービス型ではなくトピックにしている理由は、カスタムサービス型を定義するには `rosidl` 生成が必要で、`ament_python` 単体パッケージの構成では定義できないためです。応答は同期的には返らず、ログ（通信ログダイアログ）にのみ記録されます。
+
+**処理能力**: `rclpy.spin_once()` は1回に1コールバックしか処理しないため、以前は全デバイス合計で毎秒60〜100指令が上限でした。今は専用の `SingleThreadedExecutor` で受信済みの分をまとめて処理し、`serial_tx_[ID]` の購読キューの深さも1にして最新の指令だけを送ります。GUIと `--nogui` は同じ経路です。pty上の模擬ファームを相手にした `--nogui` の計測（実機ではない）は次のとおりです。
+
+| 構成 | 変更前 | 変更後 |
+|:---|---:|---:|
+| 50Hz x 2デバイス（帰還200Hz x 3デバイス） | 33指令/s、遅れp50 184ms | 50指令/s、遅れ最大4ms |
+| 50Hz x 3デバイス（同上） | 25指令/s、遅れp50 181ms | 50指令/s、遅れ最大5ms |
 
 **E-STOP (`emergency_stop_all()`)**: 全デバイスの `direct_tx` と `topic_passthrough` を**両方**OFFにしてから `tx_data` をゼロ埋めして送信します。`topic_passthrough` もOFFにしないと、外部ノードが指令を送り続けている場合に `_on_hardware_tx_command()` が即座に非ゼロ値を書き戻してしまい、E-STOPが無効化されてしまうためです。
 
