@@ -199,6 +199,8 @@ GUIスレッド側の `HardwareManager.service()`（10ms周期）が中心ルー
 
 `serial_rx_[ID]_unwrapped`（`Int32MultiArray`）として配信され、さらに `zeroed = unwrapped - zero_offset` が `serial_rx_[ID]_zeroed` として配信されます。**この処理は `MODE_HARDWARE`/`MODE_SIMULATOR` のみで行われ、`MODE_TOPIC_CLIENT` では行われません**（生の `rx_data` をそのまま原点セットの基準にする設計）。
 
+**折り返し幅は全スロット共通で32768です。** `MODE_DAMIAO` の位置は幅25000で折り返すので、折り返すたびに7768カウント（約7.77rad）ずれます。位置はノード側で `serial_rx_[ID]` から展開します（利用者向けマニュアル10a章）。
+
 ### 2.8 GUI構造 (`main_window.py` / `device_panel.py` / `widgets.py`)
 
 - `main_window.py`: 左に検出デバイス一覧、右に `DevicePanel` を積んだスタック。`UI_REFRESH_MS=200` で現在表示中パネルの再描画、`TOPIC_RESCAN_MS=1000` でトピック自動検出。`closeEvent` は `emergency_stop_all()` を呼んでから閉じる（安全側）。
@@ -346,7 +348,7 @@ uint16_t floatToUint(float x, float x_min, float x_max, uint8_t bits) {
 - 電流指令: C610/C620は一括フレーム `0x200`（4モータ分の `int16`をビッグエンディアンで格納）。GM6020は別ID `0x1FE`。モータ種別ごとに最大電流と正規化スケールが異なる(`M3508: ±20A/16384`, `M2006: ±10A/10000`, `GM6020: ±3A/16384`)。
 - 帰還フレーム: C610/C620は `0x201-0x204`、GM6020は `0x205-0x208`。8バイトのうち `encoder_count/rpm/current_raw`(各int16)を使用。
 - **エンコーダの多回転展開**は `HALF_ENCODER=4096`（`ENCODER_MAX=8192`の半分）を跨ぐジャンプを検出する典型的なラップアラウンド処理で、ギア比で除して出力軸角度・rpmに変換します。
-- **速度モード（既定）**: `PIDController`（`PID.hpp`）による速度PID。台形積分・積分クランプ・**測定値の微分（D on measurement）**を実装。出力は電流換算ゲインを掛けて指令電流にします。
+- **速度モード（既定）**: `PIDController`（`PID.hpp`）による速度PID。台形積分・積分クランプ・**測定値の微分（D on measurement）**を実装。出力は電流換算ゲインを掛けて指令電流にします。ゲインと電流上限はスロット8〜23から毎周期読みます（全部0なら出力は0）。`config.hpp` の `ROBOMAS_KP_VEL` 等は初期値で、毎周期上書きされます。
 - **MIT(位置PD)モード**: CubeMarsのMITと対称的な機能ですが実装方式は異なります。RoboMaster側のESC/GM6020はCANで生の電流指令しか受け付けないため、**位置PD制御ループそのものをマイコン側で計算**します：
 
   ```

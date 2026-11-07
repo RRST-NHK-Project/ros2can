@@ -196,10 +196,10 @@ Select the motor model at compile time in `src/config.hpp`:
 Two control modes are implemented, selectable **per motor, every cycle** via the
 `control_mode` slot below:
 
-- **Velocity (mode 0, default)** — unchanged from before. Velocity PID gains
-  (`ROBOMAS_KP_VEL` / `ROBOMAS_KI_VEL` / `ROBOMAS_KD_VEL`) are fixed compile-time
-  constants in `config.hpp`; they cannot be changed from `ros2can`/the PC side at
-  runtime — tune them in firmware and reflash.
+- **Velocity (mode 0, default)** — velocity PID gains and the current limit are sent
+  from the PC every cycle in slots 8-23 (`ROBOMAS_VEL_*_LSB` in `config.hpp`). If they
+  are all zero, the output current is zero even with a non-zero target.
+  `ROBOMAS_KP_VEL` / `ROBOMAS_KI_VEL` / `ROBOMAS_KD_VEL` are only initial values.
 - **MIT (mode 1)** — a position PD control loop, symmetric in spirit to CubeMars'
   MIT (Force Control) mode (§10 below), but implemented very differently: DJI's
   C610/C620 ESCs and the GM6020 only ever accept a raw current command over CAN —
@@ -211,7 +211,7 @@ Two control modes are implemented, selectable **per motor, every cycle** via the
   actuators, there's no way for this board to see an external encoder, so any
   backlash/elasticity in an external belt/pulley transmission is *not* corrected
   for. `mit_kp`/`mit_kd`/`mit_current_ff` are sent fresh from the PC every cycle
-  (unlike the velocity mode's fixed gains) — see `config.hpp`'s `ROBOMAS_MIT_*`
+  — see `config.hpp`'s `ROBOMAS_MIT_*`
   scale constants.
 
 All-zero (the default when nothing is connected / E-STOP) still means mode 0

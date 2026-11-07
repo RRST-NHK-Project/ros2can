@@ -282,6 +282,9 @@ CAN分配を介さず、生の24 x int16スロットを直接編集/確認でき
 |:---|:---|:---|
 | `zero_channel_request` | `std_msgs/msg/Int32MultiArray` | `data: [device_id, channel_index]` を送ると、指定デバイス・チャンネルの現在値を原点（0）としてソフトウェアオフセットを設定する。`channel_index<0` で全24チャンネル一括原点セット。成否は通信ログ（ツールバーの「通信ログ…」）に記録される（同期応答は無い） |
 
+> ⚠ `_unwrapped` / `_zeroed` はスロットの折り返し幅を32768として扱います。`MODE_DAMIAO` の位置は
+> 幅が違うので使えません（[10a章](#10a-damiaorobstridemode_damiao--mode_robstride)参照）。
+
 `serial_tx_[ID]`/`serial_rx_[ID]` は `serial_bridge` と同一の型・命名規則のため、
 既存の `serial_bridge` 向けノードをほぼそのまま流用できます。
 
@@ -624,15 +627,27 @@ ros2canやこのファームウェアの設定ではなく、**AKシリーズ共
 |:---|:---|:---|
 | `M{n} target` | 数値 | `control_mode` が速度ループのとき出力軸rpm（ギア比込み、生値スケール無し）。MITのとき目標位置、1deg/LSB、出力軸角度（レンジ±32767=約±91回転） |
 | `M{n} control_mode` | 選択式 | `0`=速度ループ（既定） / `1`=MIT(位置PD)。全ゼロ（未接続・E-STOP時の既定）で速度ループ・target=0となり、安全にその場停止する |
-| `M{n} mit_velocity_ff` | 数値 | MITモード用の目標速度フィードフォワード（`control_mode=1`のときのみ参照）。1rpm/LSB |
-| `M{n} mit_kp` | 数値 | MITモード用の比例ゲイン（`control_mode=1`のときのみ参照）。0.001(A/deg)/LSB |
-| `M{n} mit_kd` | 数値 | MITモード用の微分ゲイン（`control_mode=1`のときのみ参照）。0.0001(A/rpm)/LSB |
-| `M{n} mit_current_ff` | 数値 | MITモード用の電流フィードフォワード（`control_mode=1`のときのみ参照）。0.001A/LSB |
+| `M{n} mit_velocity_ff` | 数値 | MITモード用の目標速度フィードフォワード（`control_mode=1`のとき）。1rpm/LSB |
+| `M{n} mit_kp` | 数値 | MITモード用の比例ゲイン（`control_mode=1`のとき）。0.001(A/deg)/LSB |
+| `M{n} mit_kd` | 数値 | MITモード用の微分ゲイン（`control_mode=1`のとき）。0.0001(A/rpm)/LSB |
+| `M{n} mit_current_ff` | 数値 | MITモード用の電流フィードフォワード（`control_mode=1`のとき）。0.001A/LSB |
 
-速度ループの速度PIDゲインはCAN経由では変更できず、ファームウェア側
-`config.hpp`（`ROBOMAS_KP_VEL` 等）のコンパイル時定数で固定されています。
-一方、MITモードの `mit_kp`/`mit_kd`/`mit_current_ff` はCAN経由で毎周期
-変更可能な可変値です。
+速度ループでは、同じスロット8〜23を次の意味で読みます。GUIの表示名は `mit_*` のままです。
+
+| スロット | GUIの表示名 | 速度ループでの意味 | スケール |
+|:---|:---|:---|:---|
+| 8-11 | `mit_velocity_ff` | 速度PIDの比例ゲイン | 0.001/LSB |
+| 12-15 | `mit_kp` | 速度PIDの積分ゲイン | 0.001/LSB |
+| 16-19 | `mit_kd` | 速度PIDの微分ゲイン | 0.0000005/LSB |
+| 20-23 | `mit_current_ff` | 電流上限 | 0.001A/LSB |
+
+- **ゲインと電流上限は毎周期送ってください。** 全部0だと、`target` が非ゼロでも電流は0で回りません。
+- `config.hpp` の `ROBOMAS_KP_VEL` 等は初期値で、毎周期この値で上書きされます。
+- ⚠ 速度ループでは負の値を入れないでください。GUIの `mit_velocity_ff` と `mit_current_ff` は
+  負の値も入力できますが、ゲインや電流上限の検証はありません。
+- スケールは `config.hpp` の `ROBOMAS_VEL_*_LSB` と一致させてください。
+
+MITモードの `mit_kp`/`mit_kd`/`mit_current_ff` も、同じく毎周期送る値です。
 
 CubeMarsのMITと対称的な機能ですが、実装の考え方は異なります。ロボマス側の
 ESC/GM6020はCANで生の電流指令しか受け付けないため、位置PD制御ループ自体を
@@ -687,6 +702,13 @@ GUIのプロファイル `damiao_driver` / `robstride_driver` は、スロット
 **再び動かすには、PCから一度0（脱力）を送ります。** 通信が戻っただけでは動き出しません
 （以前は通信が戻ると最後の指令で勝手に動き出す不具合がありました）。PS4テレオペでは
 R1（イネーブル）を一度離せば0が送られます。Damiaoの故障の解除（ClearError）も、この0を受け取ってから行います。
+
+### Damiaoの位置は `serial_rx_[ID]` から取ること
+
+Damiaoの位置（帰還+3）は±12.5rad、つまり幅25000で折り返します。`serial_rx_[ID]_unwrapped` と
+`_zeroed` は幅32768として展開するので、折り返すたびに約7.77radずれます。
+位置は `serial_rx_[ID]` から取り、受け取るノードで幅25000として展開してください。
+`zero_channel_request` の原点セットも同じ値を基準にするので、原点はノード側で持ってください。
 
 ### CAN線は専用にすること
 
