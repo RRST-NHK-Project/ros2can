@@ -34,6 +34,8 @@ from typing import Dict, List, Optional
 
 import rclpy
 from rclpy.node import Node
+from rclpy.exceptions import ParameterUninitializedException
+from rclpy.parameter import Parameter
 from std_msgs.msg import Int16MultiArray, Int32MultiArray
 
 from PyQt5.QtCore import QObject, pyqtSignal
@@ -147,15 +149,31 @@ class RosBackend(QObject):
 
         self._create_zero_channel_subscription()
 
+    def _declare_string_array_parameter(self, name: str, default: List) -> List[str]:
+        """文字列配列のパラメータを宣言して値を返す。未設定なら default を返す。
+
+        既定値をそのまま declare_parameter に渡すと launch が起動しなかった:
+        - yaml(--params-file)の `[]` は「未設定」として渡され、get_parameter が例外になる
+        - 既定値が `[]` だと型がBYTE_ARRAYと推定され、文字列の配列を渡すと型エラーになる
+        そのため型だけを宣言し、値が渡されなかった場合は既定値へ戻す。
+        """
+        self.node.declare_parameter(name, Parameter.Type.STRING_ARRAY)
+        try:
+            return list(self.node.get_parameter(name).value)
+        except ParameterUninitializedException:
+            values = [str(v) for v in default]
+            # 未設定のままだと ros2 param get で実際の値を確認できない
+            self.node.set_parameters([Parameter(name, Parameter.Type.STRING_ARRAY, values)])
+            return values
+
     def _load_device_profile_map_from_params(self) -> Dict[int, str]:
         """device_id とプロファイルキーの対応表 (settings_store.py の
         device_profile_map、config/ros2can.yaml や ~/.config/ros2can/settings.yaml、
         あるいは launch から渡されるROS 2パラメータで上書き可能) を読み込む。
         新規デバイス検出時の初期プロファイル選択 (_initial_profile_key) に使う。"""
         defaults = load_settings()
-        self.node.declare_parameter(
-            "device_profile_map", [str(v) for v in defaults["device_profile_map"]])
-        raw = self.node.get_parameter("device_profile_map").value or []
+        raw = self._declare_string_array_parameter(
+            "device_profile_map", defaults["device_profile_map"])
         return parse_device_profile_map(raw)
 
     def _initial_profile_key(self, device_id: int) -> str:
@@ -170,7 +188,8 @@ class RosBackend(QObject):
         明示的に値が渡された場合は、通常のROSパラメータの優先順位どおり
         そちらが勝つ。"""
         defaults = load_settings()
-        self.node.declare_parameter("excluded_ports", list(defaults["excluded_ports"]))
+        excluded = set(self._declare_string_array_parameter(
+            "excluded_ports", defaults["excluded_ports"]))
         self.node.declare_parameter("rx_timeout_sec", float(defaults["rx_timeout_sec"]))
         self.node.declare_parameter(
             "reconnect_interval_sec", float(defaults["reconnect_interval_sec"]))
@@ -178,7 +197,6 @@ class RosBackend(QObject):
         self.node.declare_parameter("probe_timeout_sec", float(defaults["probe_timeout_sec"]))
         self.node.declare_parameter("probe_settle_sec", float(defaults["probe_settle_sec"]))
 
-        excluded = set(self.node.get_parameter("excluded_ports").value or [])
         return HardwareConfig(
             excluded_ports=excluded,
             scan_interval_sec=self.node.get_parameter("scan_interval_ms").value / 1000.0,
