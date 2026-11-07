@@ -12,6 +12,12 @@ SPDX-License-Identifier: MIT
 // ================= 基本設定 =================
 
 // IDの設定，シリアルフレームのDEVICE_IDとして使用します。
+// このディレクトリはGUIの「ファーム生成」のテンプレートなので、既定はCANホスト(101)の
+// ままにする(2026-11-06 PRレビュー指摘: 既定をDamiaoにすると、設定を変えずにビルドした
+// 時に既存のCANホスト構成で動かなくなる)。実機ごとの設定は generated_firmware/<名前>/ に置く。
+// MODE_DAMIAO/MODE_ROBSTRIDE(独立デバイス)は既存のCANホスト/ノード(101-104)と
+// 衝突しない番号を使うこと: Damiao=201(generated_firmware/soki_damiao_201)、
+// RobStride=202(generated_firmware/soki_robstride_202)。
 #define DEVICE_ID 101
 
 // CAN_IDは3桁形式で指定します。
@@ -27,6 +33,8 @@ SPDX-License-Identifier: MIT
 // #define MODE_CAN_MONITOR
 // #define MODE_ROBOMAS
 // #define MODE_CUBEMARS
+// #define MODE_DAMIAO
+// #define MODE_ROBSTRIDE
 
 // ================= 基板バリアントの設定 =================
 // このマイコン(XIAO ESP32-S3)を搭載する基板ごとにピン配置が異なるため、
@@ -365,3 +373,88 @@ SPDX-License-Identifier: MIT
 #define CUBEMARS_MIT_KP_MAX 500.0f
 #define CUBEMARS_MIT_KD_MIN 0.0f
 #define CUBEMARS_MIT_KD_MAX 5.0f
+
+// ================= Damiao関連 (MODE_DAMIAOのみ有効) =================
+// Damiao DM3520(ESC)+DM2325(モータ) をCAN(1Mbps)で直接動かすモード。
+// 【CAN線はDamiao専用にすること】Damiaoの指令ID(0x100+ESC_ID, 0x200+ESC_ID)は、
+// ノード分配(0x100/0x180帯)やロボマス(0x1FE, 0x200-0x208)と重なるため、他のモードの
+// ESP32・ロボマスと同じCAN線に混ぜない。
+// 仕組み・使い方・モータの増やし方は damiao_ctrl/docs/開発ガイド.md を参照。
+// 処理の中身は damiao.cpp(このファイルの設定を読むだけで、普段は変えなくてよい)。
+
+// 【モータを増やす・減らす時に変える場所はここだけ】
+// 1行=1台。上から順に「モータ1」「モータ2」…(PCのトピック damiao/motor1, motor2 … に対応)。
+//   ESC_ID: そのESCが指令を受け取るCAN ID(ESCごとに別の番号)
+//   MST_ID: そのESCが返事(帰還)を送るCAN ID(ESCごとに別の番号)
+//   ※新しいESCは工場出荷時どれも ESC_ID=1, MST_ID=0x000。そのままだと2台目以降と
+//     ぶつかるので、つなぐ前に damiao_ctrl/scripts/dm_usbcan_param.py で書き換える。
+//   ※番号の決め方(推奨): ESC_ID=n, MST_ID=0x010+n(例: 3台目は 0x03 と 0x013)。
+//     モータ1は工場出荷のMST_ID=0x000のまま使っている(2026-10-14〜)。
+//   ※1枚のESP32で最大4台(PCとのデータ枠24個 ÷ 1台6個)。5台以上はESP32を増やす。
+//   ※PC側 damiao_ctrl/config/damiao_ctrl.yaml の motor_count も同じ台数にする。
+//                ESC_ID  MST_ID
+#define DAMIAO_MOTORS {                                                    \
+    {0x01, 0x000}, /* モータ1: 元からのESC(MST_IDは工場出荷のまま)     */ \
+    {0x02, 0x012}, /* モータ2: 2026-11-02に追加したESC                  */ \
+}
+
+// PCからの指令がこの時間途絶えたら、全モータを脱力させる[ms]。
+// (ros2canが落ちた・USBが抜けた時用。ros2canは50msごとに送るので300msなら誤動作しない)
+#define DAMIAO_CMD_TIMEOUT_MS 300
+
+// モータ自身の通信タイムアウト[ms]。ESP32からの指令がこの時間届かないと、モータが
+// 自分で止まって状態13(通信喪失)になる(ESP32が固まった・CAN線が抜けた時用)。
+// 有効化のたびにESCへ書き込む(電源を切ると元の0=無効に戻る)。止まった後は、
+// PCから一度0(脱力)を送ってから改めて指令すると復帰する。
+#define DAMIAO_MOTOR_TIMEOUT_MS 100
+
+// 速度の上限[rad/s]。速度制御の目標と、角度制御の速さの上限をこの範囲に丸める
+// (PCのdamiao_driver_nodeのmax_vel_radpsと同じ値。serial_txへ直接送られた場合もここで守る)。
+// 実機の最高速度は約48rad/s(ESCの最高速度の設定による、2026-10-15実測)で、その95%。
+#define DAMIAO_MAX_VEL_RADPS 45.6f
+
+// 返事の数値を戻すための範囲(位置±P_MAX[rad]、速度±V_MAX[rad/s]、トルク±T_MAX[N・m])。
+// ESCのレジスタ RID21/22/23 と同じ値にする(2026-10-14・11-02に2台とも読み出して確認済み)。
+// 違う値だと、返事の位置・速度・トルクの数値がずれる(制御そのものには影響しない)。
+#define DAMIAO_P_MAX 12.5f  // RID21
+#define DAMIAO_V_MAX 200.0f // RID22
+#define DAMIAO_T_MAX 10.0f  // RID23
+
+// ================= RobStride関連 (MODE_ROBSTRIDEのみ有効) =================
+// MODE_ROBSTRIDEはMODE_DAMIAOと同様、ノード/スロット分配方式とは別系統で、
+// RobStride EduLite 05(EL05)の独自(私有)プロトコル(29bit拡張ID, 1Mbps)を
+// 直接喋る独立デバイスとして動作する。速度モード(run_mode=2)と位置モード
+// CSP(run_mode=5)を使い、モータ内蔵のループにそのまま追従させる(ホスト側PID不要)。
+// スロット割り当ては robstride.cpp の先頭コメント参照(8スロット/モータ、最大2台)。
+// モータはMotorStudio等でMITプロトコル/CANopenに切り替えていないこと(工場出荷は独自プロトコル)。
+
+#define ROBSTRIDE_MOTOR_COUNT 1 // 接続台数(最大2)
+
+// 各モータのCAN ID(0-127)。説明書では工場出荷は1だが、実機は127(0x7F)だった例がある。
+// 起動時のIDスキャン結果(帰還スロット20-23)で確認してここへ反映すること。
+#define ROBSTRIDE_MOTOR_ID_1 127
+#define ROBSTRIDE_MOTOR_ID_2 2
+
+// 本機(ホスト)のCAN ID。説明書・公式ツールの例と同じ0xFD。
+#define ROBSTRIDE_HOST_ID 0xFD
+
+// PCからの有効フレームがこの時間途絶えたらモータを停止する[ms](MODE_DAMIAOと同じ考え方)。
+#define ROBSTRIDE_CMD_TIMEOUT_MS 300
+
+// EL05自身のCANタイムアウト[ms]。この時間CANフレームが届かないとモータが自分で停止
+// (Resetモード)する。ESP32が固まった・CAN線が抜けたときの最後の砦。有効化のたびに
+// パラメータ0x7028(1あたり50us)へ書く(RAMのみ。電源を入れ直すと工場値に戻る)。
+// ESP32は約5ms周期で指令を送るので100msあれば誤停止しない。
+#define ROBSTRIDE_MOTOR_TIMEOUT_MS 100
+
+// 速度・位置モードの電流上限[A](パラメータ0x7018 limit_cur。工場値11A)。
+// 初回の動作確認用に3Aへ下げてある(参考資料の実機試験で、3Aでも無負荷20rad/sまで追従)。
+// 機構に組み込んでトルクが足りないときに上げること(上限11)。
+#define ROBSTRIDE_LIMIT_CUR_A 3.0f
+
+// 速度モードの加速度[rad/s^2](パラメータ0x7022 acc_rad)。実機の工場値10と同じ。
+#define ROBSTRIDE_VEL_ACC_RADPS2 10.0f
+
+// 速度指令・位置モードの速度上限をこの値で切る[rad/s](プロトコルの上限±50)。
+// 実際の最高速度は電源電圧で決まる(24Vで約23.5rad/s、48Vで約45rad/s)。
+#define ROBSTRIDE_V_MAX_RADPS 50.0f

@@ -54,6 +54,10 @@ _MODE_LABELS = {
     "CAN_MONITOR": "CANモニター",
     "ROBOMAS": "ロボマス(DJI RoboMaster)",
     "CUBEMARS": "CubeMars AK",
+    # 2026-11-06 追加(PRレビュー指摘)。どちらもCAN線をそのモータ専用にすること
+    # (ノード配信やロボマスとCAN IDが重なるため。firmware/xiao-esp32-s3_can2io/README.md参照)
+    "DAMIAO": "Damiao DM(専用CAN線)",
+    "ROBSTRIDE": "RobStride EL05(専用CAN線)",
 }
 
 _BOARD_LABELS = {

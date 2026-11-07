@@ -1,7 +1,7 @@
 """ros2can エントリポイント。
 
 Qt のイベントループをメインループとし、QTimer から高頻度に
-`rclpy.spin_once(timeout_sec=0)` を呼び出すことで ROS のコールバックを
+`RosBackend.spin_once()` を呼び出すことで ROS のコールバックを
 GUI スレッド上でシリアルに処理する。これによりスレッド間排他を持ち込まずに
 Qt シグナルを安全に発行できる。
 

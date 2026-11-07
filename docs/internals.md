@@ -81,7 +81,7 @@ title: ros2can 技術マニュアル（内部実装編）
 
 | タイマー | 周期 | 呼び出し先 | 役割 |
 |:---|---:|:---|:---|
-| spin_timer | 10ms | `rclpy.spin_once(node, timeout_sec=0)` | ROSコールバック（サブスクライバ等）をGUIスレッド上で実行 |
+| spin_timer | 10ms | `RosBackend.spin_once()` | 受信済みのROSコールバックをGUIスレッド上でまとめて処理（1回最大64個）し、続けて `serial_tx_[ID]` の途絶を判定 |
 | hardware_timer | 10ms | `HardwareManager.service()` | シリアルリンクの読み書きサービス |
 | simulator_timer | 50ms (20Hz) | `RosBackend.service_simulators()` | 仮想デバイスのTX→RXループバック |
 | publish_timer | 50ms (20Hz) | `RosBackend.publish_all_direct()` | ダイレクト送信ONのデバイスへの周期送信 |
@@ -160,6 +160,15 @@ GUIスレッド側の `HardwareManager.service()`（10ms周期）が中心ルー
 
 **`zero_channel_request` トピック**: `Int32MultiArray`、`data=[device_id, channel_index]`。`channel_index<0` で全24チャンネル一括原点セット。専用サービス型ではなくトピックにしている理由は、カスタムサービス型を定義するには `rosidl` 生成が必要で、`ament_python` 単体パッケージの構成では定義できないためです。応答は同期的には返らず、ログ（通信ログダイアログ）にのみ記録されます。
 
+**処理能力**: `rclpy.spin_once()` は1回に1コールバックしか処理しないため、以前は全デバイス合計で毎秒60〜100指令が上限でした。今は専用の `SingleThreadedExecutor` で受信済みの分をまとめて処理し、`serial_tx_[ID]` の購読キューの深さも1にして最新の指令だけを送ります。GUIと `--nogui` は同じ経路です。pty上の模擬ファームを相手にした `--nogui` の計測（実機ではない）は次のとおりです。
+
+| 構成 | 変更前 | 変更後 |
+|:---|---:|---:|
+| 50Hz x 2デバイス（帰還200Hz x 3デバイス） | 33指令/s、遅れp50 184ms | 50指令/s、遅れ最大4ms |
+| 50Hz x 3デバイス（同上） | 25指令/s、遅れp50 181ms | 50指令/s、遅れ最大5ms |
+
+**途絶監視 (`tx_watchdog.py`, `tx_watchdog_sec`)**: `serial_tx_[ID]` が設定時間途絶えると、`zero_and_send()` で全スロット0を送ります。既定は無効です。判定を `spin_once()` の受信処理の後に行うのは、イベントループが詰まっただけのときに、届いている指令を見ずに0を送らないためです。上限の64個で受信待ちが残った回は判定しません。`--nogui` では `direct_tx` が0を送り続けます。GUIで `direct_tx` がOFFのときは0を1回だけ送ります。
+
 **E-STOP (`emergency_stop_all()`)**: 全デバイスの `direct_tx` と `topic_passthrough` を**両方**OFFにしてから `tx_data` をゼロ埋めして送信します。`topic_passthrough` もOFFにしないと、外部ノードが指令を送り続けている場合に `_on_hardware_tx_command()` が即座に非ゼロ値を書き戻してしまい、E-STOPが無効化されてしまうためです。
 
 **シミュレータのループバック** (`service_simulators()`, 20Hz): `MODE_SIMULATOR` デバイスについて、`sim_rx_override` に含まれないスロットは `tx_data` をそのまま `rx_data` にコピーします（TX→RXの自動ループバック）。スイッチ・カウンタ・故障コードなど「実機では指令と無関係な独立したセンサ入力」に相当するスロットは、GUIから手動設定するとこの自動ループバックの対象から外れ、値が保持され続けます。
@@ -178,6 +187,8 @@ GUIスレッド側の `HardwareManager.service()`（10ms周期）が中心ルー
 | `xiao_ss_can_host` | BOARD_SS用。9スロット/ノード（SERVO1-5+TR1-4）、ノード数既定2 |
 | `robomas_driver` | MODE_ROBOMAS、独立デバイス、DJI RoboMaster x4 |
 | `cubemars_ak_driver` | MODE_CUBEMARS、独立デバイス、CubeMars AKシリーズ x4 |
+| `damiao_driver` | MODE_DAMIAO、独立デバイス、Damiao DM3520 x4（6スロット/台） |
+| `robstride_driver` | MODE_ROBSTRIDE、独立デバイス、RobStride EL05 x2（8スロット/台、20-23診断） |
 | `generic_raw` | 24スロットの生編集のみ |
 
 カスタムプロファイルは `~/.config/ros2can/profiles/*.json` に保存され（Git管理外）、`all_profiles()` はビルトインにカスタムを `dict.update()` でマージします（同キーはカスタムが優先）。
@@ -196,6 +207,8 @@ GUIスレッド側の `HardwareManager.service()`（10ms周期）が中心ルー
 6. `_unwrapped += delta`。`abs(delta) >= trend_noise_floor`（既定4）なら `trend_sign` を更新。
 
 `serial_rx_[ID]_unwrapped`（`Int32MultiArray`）として配信され、さらに `zeroed = unwrapped - zero_offset` が `serial_rx_[ID]_zeroed` として配信されます。**この処理は `MODE_HARDWARE`/`MODE_SIMULATOR` のみで行われ、`MODE_TOPIC_CLIENT` では行われません**（生の `rx_data` をそのまま原点セットの基準にする設計）。
+
+**折り返し幅は全スロット共通で32768です。** `MODE_DAMIAO` の位置は幅25000で折り返すので、折り返すたびに7768カウント（約7.77rad）ずれます。位置はノード側で `serial_rx_[ID]` から展開します（利用者向けマニュアル10a章）。
 
 ### 2.8 GUI構造 (`main_window.py` / `device_panel.py` / `widgets.py`)
 
@@ -239,15 +252,17 @@ GUIスレッド側の `HardwareManager.service()`（10ms周期）が中心ルー
 
 | タスク | スタック | 優先度 | 生成条件（モード） | 実装ファイル |
 |:---|---:|---:|:---|:---|
-| `serialTask` | 2048 | 10 | CAN_HOST / IO / DEBUG / ROBOMAS / CUBEMARS | serial_task.cpp |
+| `serialTask` | 2048 | 10 | CAN_HOST / IO / DEBUG / ROBOMAS / CUBEMARS / DAMIAO / ROBSTRIDE | serial_task.cpp |
 | `canTask` | 4096 | 10 | CAN / CAN_HOST / CAN_MONITOR | can_task.cpp |
 | `IO_Task` | 2048 | 11 | IO / CAN / CAN_HOST | pin_ctrl_task.cpp |
 | `robomasTask` | 4096 | 11 | ROBOMAS | robomas.cpp |
 | `cubemarsTask` | 4096 | 11 | CUBEMARS | cubemars.cpp |
+| `damiaoTask` | 4096 | 11 | DAMIAO | damiao.cpp（CAN補助は twai_util.cpp） |
+| `robstrideTask` | 4096 | 11 | ROBSTRIDE | robstride.cpp（CAN補助は twai_util.cpp） |
 
 **重要な設計上のポイント**: `MODE_ROBOMAS`/`MODE_CUBEMARS` は `canTask`（ノード分配ロジック）を使いません。代わりに `serialTask`（PCとの24スロット送受信）と `robomasTask`/`cubemarsTask`（独自のCAN送受信）が **`Tx_16Data`/`Rx_16Data` をロック無しで直接共有**することで、PC⇔モータの橋渡しを行います。`MODE_CAN_HOST`/`MODE_CAN` のような「ノード/スロット分配」の概念はこの2モードには存在せず、24スロットのうち先頭から詰めてモータ4台分の指令・帰還が並びます。
 
-`loop()` 自体は `vTaskDelay(1000ms)` するだけで、全処理はFreeRTOSタスクに委譲されています。7モードのうち定義数の合計が1でなければコンパイルエラー(`#error`)になるチェックが入っています。
+`loop()` 自体は `vTaskDelay(1000ms)` するだけで、全処理はFreeRTOSタスクに委譲されています。9モードのうち定義数の合計が1でなければコンパイルエラー(`#error`)になるチェックが入っています。
 
 ### 3.2 `config.hpp` のコンパイル時設定とピン共有
 
@@ -342,7 +357,7 @@ uint16_t floatToUint(float x, float x_min, float x_max, uint8_t bits) {
 - 電流指令: C610/C620は一括フレーム `0x200`（4モータ分の `int16`をビッグエンディアンで格納）。GM6020は別ID `0x1FE`。モータ種別ごとに最大電流と正規化スケールが異なる(`M3508: ±20A/16384`, `M2006: ±10A/10000`, `GM6020: ±3A/16384`)。
 - 帰還フレーム: C610/C620は `0x201-0x204`、GM6020は `0x205-0x208`。8バイトのうち `encoder_count/rpm/current_raw`(各int16)を使用。
 - **エンコーダの多回転展開**は `HALF_ENCODER=4096`（`ENCODER_MAX=8192`の半分）を跨ぐジャンプを検出する典型的なラップアラウンド処理で、ギア比で除して出力軸角度・rpmに変換します。
-- **速度モード（既定）**: `PIDController`（`PID.hpp`）による速度PID。台形積分・積分クランプ・**測定値の微分（D on measurement）**を実装。出力は電流換算ゲインを掛けて指令電流にします。
+- **速度モード（既定）**: `PIDController`（`PID.hpp`）による速度PID。台形積分・積分クランプ・**測定値の微分（D on measurement）**を実装。出力は電流換算ゲインを掛けて指令電流にします。ゲインと電流上限はスロット8〜23から毎周期読みます（全部0なら出力は0）。`config.hpp` の `ROBOMAS_KP_VEL` 等は初期値で、毎周期上書きされます。
 - **MIT(位置PD)モード**: CubeMarsのMITと対称的な機能ですが実装方式は異なります。RoboMaster側のESC/GM6020はCANで生の電流指令しか受け付けないため、**位置PD制御ループそのものをマイコン側で計算**します：
 
   ```
@@ -459,7 +474,7 @@ rxUpdated シグナル → DevicePanel.refresh_from_rx()（Monitor/Rawタブ更�
 
 ## 6. 安全機構・フェイルセーフの全体まとめ
 
-`ros2can` システム全体を通して、**能動的なウォッチドッグ／タイムアウトベースのフェイルセーフはファームウェア側には実装されていません**。安全性は次の受動的な設計原則とPC側GUIの操作に委ねられています。
+`ros2can` システム全体を通して、**能動的なウォッチドッグ／タイムアウトベースのフェイルセーフはファームウェア側には実装されていません**（例外: `MODE_DAMIAO` / `MODE_ROBSTRIDE`。下の7項）。安全性は次の受動的な設計原則とPC側GUIの操作に委ねられています。
 
 1. **「全ゼロ = 安全なデフォルト値」という規約**: `Rx_16Data` は初期値0で保持され、CubeMars/RoboMasterの `control_mode` は全ゼロ時に「速度ループ・target=0」を意味するようスロット番号が設計されている（電源投入直後や通信未確立時に位置ジャンプが起きない）。
 2. **通信途絶時、ファームウェアは最後の指令値を保持し続ける**（UART・CANいずれも、タイムアウトによる自動ゼロ化は無い）。これは `b-g431-esc1_can2io`・`MODE_ROBOMAS`・`MODE_CUBEMARS` いずれにも共通する仕様であり、外部ノードを書く際は終了時に明示的にゼロ指令を送る責務がある（[7.4節 サンプルパッケージ](index.md#74-サンプルパッケージ-ros2can_examplec-ビルド実行可能)の `send_zero_and_stop()` 参照）。
@@ -467,6 +482,20 @@ rxUpdated シグナル → DevicePanel.refresh_from_rx()（Monitor/Rawタブ更�
 4. **CAN Bus-Off自動復帰**は通信健全性の維持機構であり、モータ出力を安全側に倒すものではない。
 5. `CAN_NODE_COUNT` の過大設定によるBus-Off（3.2節）は設定ミスへの安全機構ではなく単なる既知の障害モード。
 6. BOARD_SS（ソレノイドバルブ）の `TR1-4` は起動時に明示的に `LOW`（OFF）へ初期化される。
+7. **`MODE_DAMIAO` / `MODE_ROBSTRIDE` は止めてラッチする**（2026-11-06 PRレビュー指摘で整理）。
+
+   | 止める原因 | Damiao | RobStride |
+   |:---|:---|:---|
+   | 起動直後 | ラッチ | ラッチ |
+   | PCからの指令の途絶 | `DAMIAO_CMD_TIMEOUT_MS`（300ms） | `ROBSTRIDE_CMD_TIMEOUT_MS`（300ms） |
+   | モータの故障・運転モード外れ | 状態が0/1以外 | モード≠運転 または 故障ビット |
+   | 有効中に帰還が来ない | 200ms（`FEEDBACK_LOST_MS`） | 200ms（`FEEDBACK_LOST_MS`） |
+   | ESP32⇔モータ間の途絶 | モータ自身が停止（レジスタ9、`DAMIAO_MOTOR_TIMEOUT_MS`） | モータ自身が停止（0x7028、`ROBSTRIDE_MOTOR_TIMEOUT_MS`） |
+   | PCへの印 | 状態 = 15 | flags の 0x100 |
+
+   **解除はPCが実際に0（脱力）を送った時だけ**。途絶は「0を受け取った」とは扱わない（以前はそう扱っていたため、通信が戻ると最後の指令で動き出し、Damiaoでは故障も自動で消していた）。Damiaoの故障の解除（ClearError）も解除後にだけ行う。また指令値の範囲もファーム側で守る（Damiao: 速度±`DAMIAO_MAX_VEL_RADPS`、角度±12rad、速さ上限0以下は無効。RobStride: 速度±`ROBSTRIDE_V_MAX_RADPS`、速度上限0以下は無効）。
+   CAN送信の補助（Bus-Off復帰、ESP-IDFの送信停止 esp-idf#19068 対策）は両モード共通の `src/twai_util.cpp`。送信失敗の文字ログはシリアルに出さない（PCとのバイナリフレームが壊れるため）。
+8. **PC側の `tx_watchdog_sec`（既定は無効）**: 外部ノードからの `serial_tx_[ID]` が途絶えると0を送る（2.5節）。外部ノードが落ちた場合だけを防ぐ機能で、`ros2can` やPCが落ちた場合・USBが抜けた場合は防げない。この0は実際に送るので、7のラッチも解除する。
 
 ---
 

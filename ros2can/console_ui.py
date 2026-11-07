@@ -81,6 +81,8 @@ def _panel_line(content: str, content_color: str = _FG_TEXT, border_color: str =
 def _device_color(ch: DeviceChannel) -> str:
     if not ch.connected:
         return _FG_BAD
+    if ch.tx_watchdog.tripped:
+        return _FG_WARN
     if ch.mode == MODE_TOPIC_CLIENT:
         return _FG_ACCENT
     if ch.rx_hz < 1.0:
@@ -93,7 +95,8 @@ def _device_line(ch: DeviceChannel) -> str:
     mode = _MODE_LABEL.get(ch.mode, ch.mode)
     port = ch.port or "-"
     return (f"[{status}] id={ch.device_id:<3} mode={mode:<5} port={port:<14} "
-            f"RX {ch.rx_hz:5.1f}Hz  rxN={ch.rx_frame_count:<8} txN={ch.tx_frame_count}")
+            f"RX {ch.rx_hz:5.1f}Hz  rxN={ch.rx_frame_count:<8} txN={ch.tx_frame_count}"
+            f"{'  TX-LOST' if ch.tx_watchdog.tripped else ''}")
 
 
 class ConsoleUi:

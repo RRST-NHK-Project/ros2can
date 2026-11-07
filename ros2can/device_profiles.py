@@ -479,15 +479,15 @@ def make_robomas_profile(
     [firmware/xiao-esp32-s3_can2io/src/robomas.cpp のスロット割当と一致させること]
 
     モータ機種(M3508/M2006/GM6020のいずれか)はファーム側config.hppの
-    ROBOMAS_MOTOR_TYPEでコンパイル時固定。速度PIDゲインもCAN経由では変更できず
-    ファーム側固定(config.hppのROBOMAS_KP_VEL等)。1バスには単一機種のみ、最大4台。
+    ROBOMAS_MOTOR_TYPEでコンパイル時固定。1バスには単一機種のみ、最大4台。
+    速度ループのゲインと電流上限はスロット8-23で毎周期送る(robomas.cpp先頭コメント参照)。
 
     control_mode (0=速度ループ/1=MIT)で毎周期モータごとに制御方式を切り替えられる。
     MIT(位置PD制御)はCubeMarsのMITモードと対称的だが、ロボマス側ESC/GM6020は
     CANで生の電流指令しか受け付けないため、位置PD制御ループ自体はマイコン側
     (robomas.cpp)で計算する。位置フィードバックはロボマス内蔵ロータエンコーダを使う
     (外付けエンコーダのバックラッシュ補正等は行わない)。mit_kp/mit_kd/mit_current_ff
-    はCAN経由で毎周期送る可変値(速度PIDと異なりファーム側固定ではない)。
+    もCAN経由で毎周期送る可変値。
     スケール値はconfig.hppのROBOMAS_MIT_*と必ず一致させること。
     """
     tx: List[ChannelDef] = []
@@ -510,21 +510,24 @@ def make_robomas_profile(
                                    "mit_velocity_ff/mit_kp/mit_kd/mit_current_ffも参照される"))
         tx.append(ChannelDef(8 + i, f"M{m} mit_velocity_ff", MOTOR, group=group_cmd,
                               min=-32768, max=32767, unit="rpm",
-                              note="MITモード用の目標速度フィードフォワード(control_mode=MITの"
-                                   "ときのみ参照)。1rpm/LSB、出力軸rpm(M{m} velocity帰還と同スケール)"))
+                              note="MITモード用の目標速度フィードフォワード。1rpm/LSB、出力軸rpm"
+                                   "(M{m} velocity帰還と同スケール)。速度ループでは速度PIDの比例ゲイン"
+                                   "(0.001/LSB)。負の値を入れないこと"))
         tx.append(ChannelDef(12 + i, f"M{m} mit_kp", MOTOR, group=group_cmd,
                               min=0, max=32767, scale=0.001, unit="A/deg", decimals=3,
-                              note="MITモード用の比例ゲイン(control_mode=MITのときのみ参照)。"
-                                   "0.001(A/deg)/LSB(config.hppのROBOMAS_MIT_KP_LSBと一致させること)"))
+                              note="MITモード用の比例ゲイン。"
+                                   "0.001(A/deg)/LSB(config.hppのROBOMAS_MIT_KP_LSBと一致させること)。"
+                                   "速度ループでは速度PIDの積分ゲイン(0.001/LSB)"))
         tx.append(ChannelDef(16 + i, f"M{m} mit_kd", MOTOR, group=group_cmd,
                               min=0, max=32767, scale=0.0001, unit="A/rpm", decimals=4,
-                              note="MITモード用の微分ゲイン(control_mode=MITのときのみ参照)。"
-                                   "0.0001(A/rpm)/LSB(config.hppのROBOMAS_MIT_KD_LSBと一致させること)"))
+                              note="MITモード用の微分ゲイン。"
+                                   "0.0001(A/rpm)/LSB(config.hppのROBOMAS_MIT_KD_LSBと一致させること)。"
+                                   "速度ループでは速度PIDの微分ゲイン(0.0000005/LSB)"))
         tx.append(ChannelDef(20 + i, f"M{m} mit_current_ff", MOTOR, group=group_cmd,
                               min=-32768, max=32767, scale=0.001, unit="A", decimals=3,
-                              note="MITモード用の電流フィードフォワード(control_mode=MITのときのみ"
-                                   "参照)。0.001A/LSB(config.hppのROBOMAS_MIT_CURRENT_FF_LSB_Aと"
-                                   "一致させること)"))
+                              note="MITモード用の電流フィードフォワード。0.001A/LSB"
+                                   "(config.hppのROBOMAS_MIT_CURRENT_FF_LSB_Aと一致させること)。"
+                                   "速度ループでは電流上限(0.001A/LSB)。負の値を入れないこと"))
 
     for i in range(4):
         m = i + 1
@@ -545,9 +548,9 @@ def make_robomas_profile(
         description=(
             "MODE_ROBOMAS用。ノード/スロット分配は行わず、独立デバイスとしてロボマス"
             "(M3508/M2006/GM6020のいずれか、config.hppのROBOMAS_MOTOR_TYPEで固定)を"
-            "最大4台まで制御する。control_modeで速度ループ(既定、速度PIDゲインはCAN経由"
-            "では変更できずファーム側config.hppのコンパイル時固定)とMIT(位置PD制御、"
-            "Kp/Kd/current_ffはCAN経由で毎周期変更可能)をモータごとに切替できる。MITは"
+            "最大4台まで制御する。control_modeで速度ループ(既定、スロット8-23でゲインと"
+            "電流上限を毎周期送る。全部0だと回らない)とMIT(位置PD制御、"
+            "Kp/Kd/current_ffもCAN経由で毎周期送る)をモータごとに切替できる。MITは"
             "ロボマス内蔵ロータエンコーダを位置フィードバックに使い、位置PD制御ループ"
             "自体をマイコン側(robomas.cpp)で計算する(CubeMarsのMITと異なりモータへの"
             "専用CANフレームは無い)。ノード/スロット分配側(MODE_CAN等)も1Mbpsに"
@@ -700,6 +703,161 @@ def make_cubemars_profile(
     )
 
 
+# Damiao(DM3520)の状態コード。firmware/xiao-esp32-s3_can2io/src/damiao.cpp と
+# damiao_ctrl/include/damiao_ctrl/slot_layout.hpp(motor_state_name)と一致させること。
+DAMIAO_STATE_CODES: List[Tuple[int, str]] = [
+    (0, "脱力(Disable)"),
+    (1, "有効(Enable)"),
+    (5, "センサ読み取りエラー"),
+    (6, "パラメータ読み取りエラー"),
+    (8, "過電圧"),
+    (9, "低電圧"),
+    (10, "過電流"),
+    (11, "MOS過熱"),
+    (12, "コイル過熱"),
+    (13, "通信喪失"),
+    (14, "過負荷"),
+    (15, "ESP32が停止中(一度0(脱力)を送ると解除)"),
+]
+
+
+def make_damiao_profile(
+    key: str = "damiao_driver",
+    name: str = "xiao-esp32-s3_can2io (MODE_DAMIAO, Damiao DM3520 x4)",
+) -> DeviceProfile:
+    """MODE_DAMIAO (xiao-esp32-s3_can2io) 用プロファイル(2026-11-06 PRレビュー指摘で追加)。
+
+    1台6スロット、モータnは (n-1)*6 番から(最大4台。実際の台数はconfig.hppの
+    DAMIAO_MOTORSの行数)。
+    [firmware/xiao-esp32-s3_can2io/src/damiao.cpp 先頭の表と
+     damiao_ctrl/include/damiao_ctrl/slot_layout.hpp と一致させること]
+    """
+    tx: List[ChannelDef] = []
+    rx: List[ChannelDef] = []
+
+    for i in range(4):
+        m = i + 1
+        base = i * 6
+        group_cmd = f"M{m} 指令"
+        tx.append(ChannelDef(base + 0, f"M{m} mode", ENUM_OUT, group=group_cmd,
+                              options=[(0, "脱力"), (1, "速度"), (2, "角度")],
+                              note="全ゼロ=脱力(安全側)。ESP32が止めた後(状態15)は、一度0を"
+                                   "送るまで1/2を送っても動かない"))
+        tx.append(ChannelDef(base + 1, f"M{m} target", MOTOR, group=group_cmd,
+                              note="速度のとき0.01rad/s/LSB(±45.6rad/sに丸める)、"
+                                   "角度のとき0.001rad/LSB(±12radに丸める)。GUI上はスケール無しの生値"))
+        tx.append(ChannelDef(base + 2, f"M{m} vel_limit", MOTOR, group=group_cmd,
+                              min=0, max=4560, scale=0.01, unit="rad/s", decimals=2,
+                              note="角度制御の速さ上限。0以下だと角度制御は有効にならない"))
+
+        group_fb = f"M{m} 帰還"
+        rx.append(ChannelDef(base + 0, f"M{m} state", ENUM_IN, group=group_fb,
+                              options=list(DAMIAO_STATE_CODES)))
+        rx.append(ChannelDef(base + 1, f"M{m} counter", READOUT, group=group_fb,
+                              note="返事を受け取った回数。増えていればモータと通信できている"))
+        rx.append(ChannelDef(base + 2, f"M{m} internal_pos", READOUT, group=group_fb,
+                              scale=0.1, unit="rad", decimals=1,
+                              note="モータ内部の多回転位置(レジスタ80)。-32768=不明。"
+                                   "±12radを超えると角度制御は拒否される(電源の入れ直しで0に戻る)"))
+        rx.append(ChannelDef(base + 3, f"M{m} position", READOUT, group=group_fb,
+                              scale=0.001, unit="rad", decimals=3, note="±12.5radで一周して折り返す"))
+        rx.append(ChannelDef(base + 4, f"M{m} velocity", READOUT, group=group_fb,
+                              scale=0.01, unit="rad/s", decimals=2))
+        rx.append(ChannelDef(base + 5, f"M{m} torque", READOUT, group=group_fb,
+                              scale=0.001, unit="N・m", decimals=3))
+
+    tx = _fill_remaining(tx, _raw_out)
+    rx = _fill_remaining(rx, _raw_in)
+
+    return DeviceProfile(
+        key=key,
+        name=name,
+        description=(
+            "MODE_DAMIAO用。ノード/スロット分配は行わず、独立デバイスとしてDamiao "
+            "DM3520(ESC)+DM2325を最大4台まで速度/角度制御する。PCからの指令が途絶えた・"
+            "モータが故障を返した・有効中に返事が来なくなった時はESP32が脱力させて止め"
+            "(状態15)、PCが一度0(脱力)を送るまで再始動しない。CAN IDが0x101/0x102/"
+            "0x201/0x202等になりノード分配やロボマスと重なるため、CAN線はDamiao専用に"
+            "すること(firmware/xiao-esp32-s3_can2io/README.md参照)。"
+        ),
+        tx=tx,
+        rx=rx,
+    )
+
+
+def make_robstride_profile(
+    key: str = "robstride_driver",
+    name: str = "xiao-esp32-s3_can2io (MODE_ROBSTRIDE, RobStride EL05 x2)",
+) -> DeviceProfile:
+    """MODE_ROBSTRIDE (xiao-esp32-s3_can2io) 用プロファイル(2026-11-06 PRレビュー指摘で追加)。
+
+    1台8スロット、モータnは (n-1)*8 番から(最大2台)。20-23は診断(IDスキャン結果)。
+    目標と位置はint32を2スロット(上位/下位16bit)に分けて送るため、GUI上は生値で表示する。
+    [firmware/xiao-esp32-s3_can2io/src/robstride.cpp 先頭の表と
+     robstride_ctrl/include/robstride_ctrl/slot_layout.hpp と一致させること]
+    """
+    tx: List[ChannelDef] = []
+    rx: List[ChannelDef] = []
+
+    for i in range(2):
+        m = i + 1
+        base = i * 8
+        group_cmd = f"M{m} 指令"
+        tx.append(ChannelDef(base + 0, f"M{m} mode", ENUM_OUT, group=group_cmd,
+                              options=[(0, "脱力"), (1, "速度"), (2, "位置(CSP)")],
+                              note="全ゼロ=脱力(安全側)。ESP32が止めた後(flagsの0x100)は、"
+                                   "一度0を送るまで1/2を送っても動かない"))
+        tx.append(ChannelDef(base + 1, f"M{m} target_hi", RAW_OUT, group=group_cmd,
+                              note="目標int32の上位16bit(0.001rad/s または 0.001rad)"))
+        tx.append(ChannelDef(base + 2, f"M{m} target_lo", RAW_OUT, group=group_cmd,
+                              note="目標int32の下位16bit"))
+        tx.append(ChannelDef(base + 3, f"M{m} vel_limit", MOTOR, group=group_cmd,
+                              min=0, max=5000, scale=0.01, unit="rad/s", decimals=2,
+                              note="位置モードの速度上限。0以下だと位置モードは有効にならない"))
+
+        group_fb = f"M{m} 帰還"
+        rx.append(ChannelDef(base + 0, f"M{m} motor_mode", ENUM_IN, group=group_fb,
+                              options=[(0, "Reset(停止)"), (1, "校正"), (2, "運転")]))
+        rx.append(ChannelDef(base + 1, f"M{m} flags", RAW_IN, group=group_fb,
+                              note="下位6bit=モータの故障、0x100=ESP32が停止中(一度0を送ると解除)、"
+                                   "0x200=位置をまだ読めていない"))
+        rx.append(ChannelDef(base + 2, f"M{m} counter", READOUT, group=group_fb,
+                              note="帰還を受け取った回数。増えていればモータと通信できている"))
+        rx.append(ChannelDef(base + 3, f"M{m} position_hi", RAW_IN, group=group_fb,
+                              note="多回転位置int32の上位16bit(0.001rad)"))
+        rx.append(ChannelDef(base + 4, f"M{m} position_lo", RAW_IN, group=group_fb,
+                              note="多回転位置int32の下位16bit"))
+        rx.append(ChannelDef(base + 5, f"M{m} velocity", READOUT, group=group_fb,
+                              scale=0.01, unit="rad/s", decimals=2))
+        rx.append(ChannelDef(base + 6, f"M{m} torque", READOUT, group=group_fb,
+                              scale=0.001, unit="N・m", decimals=3))
+        rx.append(ChannelDef(base + 7, f"M{m} temperature", READOUT, group=group_fb,
+                              scale=0.1, unit="degC", decimals=1))
+
+    rx.append(ChannelDef(20, "応答したモータ数", READOUT, group="診断(IDスキャン)"))
+    for k in range(3):
+        rx.append(ChannelDef(21 + k, f"応答したCAN ID {k + 1}", READOUT, group="診断(IDスキャン)",
+                              note="-1=無し"))
+
+    tx = _fill_remaining(tx, _raw_out)
+    rx = _fill_remaining(rx, _raw_in)
+
+    return DeviceProfile(
+        key=key,
+        name=name,
+        description=(
+            "MODE_ROBSTRIDE用。ノード/スロット分配は行わず、独立デバイスとしてRobStride "
+            "EduLite05を最大2台まで速度/位置(CSP)制御する。PCからの指令が途絶えた・"
+            "モータが運転モードを外れた・帰還が途絶えた時はESP32が止め(flagsの0x100)、"
+            "PCが一度0(脱力)を送るまで再始動しない。29bit拡張IDを使うが、ノード側の"
+            "受信処理が拡張IDを区別していないため、CAN線はRobStride専用にすること"
+            "(firmware/xiao-esp32-s3_can2io/README.md参照)。"
+        ),
+        tx=tx,
+        rx=rx,
+    )
+
+
 def _build_builtin_profiles() -> "dict[str, DeviceProfile]":
     profiles: List[DeviceProfile] = [
         make_can_host_profile(),
@@ -708,6 +866,8 @@ def _build_builtin_profiles() -> "dict[str, DeviceProfile]":
         make_ss_host_profile(),
         make_robomas_profile(),
         make_cubemars_profile(),
+        make_damiao_profile(),
+        make_robstride_profile(),
         make_generic_raw_profile(),
     ]
     return {p.key: p for p in profiles}

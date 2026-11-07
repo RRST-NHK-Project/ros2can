@@ -9,7 +9,9 @@ This firmware targets a XIAO ESP32-S3 based board (with an MCP2561 CAN transceiv
 - the **host** that bridges a PC serial link to up to 3 other CAN nodes while also acting as node 0 itself (`MODE_CAN_HOST`), or
 - a **read-only CAN sniffer** for bring-up/debugging (`MODE_CAN_MONITOR`), or
 - a **dedicated DJI RoboMaster (M3508/M2006/GM6020) driver** for up to 4 motors on its own CAN bus (`MODE_ROBOMAS`, see section 9), or
-- a **dedicated CubeMars AK-series (e.g. AK40-10) driver** for up to 4 actuators on its own CAN bus, using the Servo(CAN) and MIT (Force Control) protocols (`MODE_CUBEMARS`, see section 10).
+- a **dedicated CubeMars AK-series (e.g. AK40-10) driver** for up to 4 actuators on its own CAN bus, using the Servo(CAN) and MIT (Force Control) protocols (`MODE_CUBEMARS`, see section 10), or
+- a **dedicated Damiao DM3520 (ESC) + DM2325 driver** for up to 4 motors on a Damiao-only CAN bus (`MODE_DAMIAO`, see section 11), or
+- a **dedicated RobStride EduLite 05 driver** for up to 2 motors on a RobStride-only CAN bus (`MODE_ROBSTRIDE`, see section 11a).
 
 Each board exposes the same local I/O set:
 
@@ -31,8 +33,14 @@ Select exactly one mode in `src/config.hpp`:
 - `MODE_DEBUG`: development/debug mode (PID task).
 - `MODE_ROBOMAS`: dedicated DJI RoboMaster driver. Does **not** use `canInit()`/`canTask()` or the node/slot protocol at all — it runs its own CAN bus at 1Mbps speaking DJI's native protocol directly. See section 9.
 - `MODE_CUBEMARS`: dedicated CubeMars AK-series driver. Also does **not** use `canInit()`/`canTask()` or the node/slot protocol — it runs its own CAN bus at 1Mbps speaking CubeMars's Servo(CAN) and MIT (Force Control) protocols directly. See section 10.
+- `MODE_DAMIAO`: Damiao DM3520専用ドライバ(速度/角度)。ノード/スロット方式は使わない。**CAN線はDamiao専用にすること**(CAN IDがノード分配・ロボマスと重なる)。See section 11.
+- `MODE_ROBSTRIDE`: RobStride EduLite 05専用ドライバ(速度/位置CSP)。ノード/スロット方式は使わない。**CAN線はRobStride専用にすること**。See section 11a.
 
-`main.cpp` enforces that exactly one of `MODE_IO`, `MODE_CAN`, `MODE_CAN_HOST`, `MODE_DEBUG`, `MODE_CAN_MONITOR`, `MODE_ROBOMAS`, `MODE_CUBEMARS` is defined; the build fails otherwise.
+`main.cpp` enforces that exactly one of `MODE_IO`, `MODE_CAN`, `MODE_CAN_HOST`, `MODE_DEBUG`, `MODE_CAN_MONITOR`, `MODE_ROBOMAS`, `MODE_CUBEMARS`, `MODE_DAMIAO`, `MODE_ROBSTRIDE` is defined; the build fails otherwise.
+
+> テンプレート(この `src/config.hpp`)の既定は `MODE_CAN_HOST` / `DEVICE_ID 101` のままにしておくこと。
+> 実機ごとの設定(例: Damiao用 `DEVICE_ID 201`)は、GUIの「ファーム生成」で `generated_firmware/<名前>/` に作り、そちらを書き込む
+> (Damiao: `generated_firmware/soki_damiao_201`、RobStride: `generated_firmware/soki_robstride_202`)。
 
 ---
 
@@ -137,7 +145,7 @@ Each 5-slot block is transmitted as two CAN frames (`identifier = 0x100 + node_i
 2. Set `BOARD_VARIANT` (`BOARD_SOKI`/`BOARD_MES`/`BOARD_SS`, see §3a) to match the physical board being flashed.
 3. Set `DEVICE_ID` (serial frame ID, must match the PC-side config for this board).
 4. Set `CAN_ID` (3-digit: bus digit + node number, e.g. `101`..`104`). This also determines `CAN_NODE_INDEX`.
-5. Choose exactly one mode macro (`MODE_IO`, `MODE_CAN`, `MODE_CAN_HOST`, `MODE_CAN_MONITOR`, or `MODE_DEBUG`). `MODE_IO` is `BOARD_SOKI`-only.
+5. Choose exactly one mode macro (`MODE_IO`, `MODE_CAN`, `MODE_CAN_HOST`, `MODE_CAN_MONITOR`, `MODE_DEBUG`, `MODE_ROBOMAS`, `MODE_CUBEMARS`, `MODE_DAMIAO`, or `MODE_ROBSTRIDE`). `MODE_IO` is `BOARD_SOKI`-only. テンプレートを直接書き換えず、GUIの「ファーム生成」で `generated_firmware/` に作ったコピーで選ぶこと(§2の注記参照)。
 6. `BOARD_SOKI` only: set `MULTI1`/`MULTI2`/`MULTI3` (`0` = switch input, `1` = servo output) to match the wiring.
 7. `BOARD_SOKI` only: set `ENC1_MD`/`ENC2_MD` (`0` = encoder input, `1` = MD PWM+DIR output) to match the wiring. `ENCn_A` becomes the MD PWM pin and `ENCn_B` becomes the MD DIR pin when switched to MD. `BOARD_MES` only: set `ENC2_SW` (`0` = ENC2 encoder, `1` = SW2/SW3 switches) to match the wiring.
 8. Adjust PWM, servo range, MD PWM frequency/resolution, and pin settings if required.
@@ -188,10 +196,10 @@ Select the motor model at compile time in `src/config.hpp`:
 Two control modes are implemented, selectable **per motor, every cycle** via the
 `control_mode` slot below:
 
-- **Velocity (mode 0, default)** — unchanged from before. Velocity PID gains
-  (`ROBOMAS_KP_VEL` / `ROBOMAS_KI_VEL` / `ROBOMAS_KD_VEL`) are fixed compile-time
-  constants in `config.hpp`; they cannot be changed from `ros2can`/the PC side at
-  runtime — tune them in firmware and reflash.
+- **Velocity (mode 0, default)** — velocity PID gains and the current limit are sent
+  from the PC every cycle in slots 8-23 (`ROBOMAS_VEL_*_LSB` in `config.hpp`). If they
+  are all zero, the output current is zero even with a non-zero target.
+  `ROBOMAS_KP_VEL` / `ROBOMAS_KI_VEL` / `ROBOMAS_KD_VEL` are only initial values.
 - **MIT (mode 1)** — a position PD control loop, symmetric in spirit to CubeMars'
   MIT (Force Control) mode (§10 below), but implemented very differently: DJI's
   C610/C620 ESCs and the GM6020 only ever accept a raw current command over CAN —
@@ -203,7 +211,7 @@ Two control modes are implemented, selectable **per motor, every cycle** via the
   actuators, there's no way for this board to see an external encoder, so any
   backlash/elasticity in an external belt/pulley transmission is *not* corrected
   for. `mit_kp`/`mit_kd`/`mit_current_ff` are sent fresh from the PC every cycle
-  (unlike the velocity mode's fixed gains) — see `config.hpp`'s `ROBOMAS_MIT_*`
+  — see `config.hpp`'s `ROBOMAS_MIT_*`
   scale constants.
 
 All-zero (the default when nothing is connected / E-STOP) still means mode 0
@@ -378,11 +386,56 @@ motor disable) from the manual are not used by this firmware.
 
 ---
 
+## 11. Damiao DM3520 Driver Mode (`MODE_DAMIAO`)
+
+Damiao DM3520(ESC)+DM2325(モータ)を、Damiaoのプロトコル(標準11bit ID、1Mbps)で直接動かす独立デバイスモード。
+PC側は `damiao_ctrl` パッケージ(`damiao_driver_node` 等)を使う。実装とスロット割り当ては `src/damiao.cpp` 先頭コメント参照。
+
+- 速度モード(VEL、CMODE=3)と角度モード(POS_VEL、CMODE=2)。
+- 6スロット/モータ(最大4台。台数・IDは `config.hpp` の `DAMIAO_MOTORS` の表で決める。1行=1台 `{ESC_ID, MST_ID}`)。
+- 指令の範囲チェック(ファーム側): 速度は ±`DAMIAO_MAX_VEL_RADPS`(既定45.6rad/s)に丸める。角度は±12radに丸め、速さ上限が0以下なら有効にしない。
+- 角度モードは、モータ内部の多回転位置(レジスタ80)が±12radを超えていると拒否する(速度モードで回した後など。電源を入れ直すと0に戻る)。
+
+### 止まる条件(ラッチ)
+
+次のどれかで、そのモータを脱力させて**ラッチ**する。ラッチ中はPCが1/2を送り続けても動かない。
+**PCが一度0(脱力)を送ると解除**される(通信が戻っただけでは動き出さない)。
+
+| 原因 | 時間 |
+|:---|:---|
+| 起動直後(まだPCが0を送っていない) | — |
+| PCからの指令が途絶えた | `DAMIAO_CMD_TIMEOUT_MS`(既定300ms) |
+| モータが故障を返した(状態が0/1以外。13=通信喪失など) | すぐ |
+| 有効中のモータから返事が来ない(ESCの電源断・CAN線抜け) | 200ms(`FEEDBACK_LOST_MS`) |
+
+ラッチ中はPCへ送る状態(+0)を **15** にする(モータ自身の故障コードがある時はそちらを優先)。
+故障の解除(ClearError)も、PCが0を送ってラッチが外れてから行う。
+これとは別に、ESP32とモータの間が途絶えた時はモータ自身が止まる(`DAMIAO_MOTOR_TIMEOUT_MS`、レジスタ9)。
+
+### CAN IDの制約(Damiao専用のバスにすること)
+
+Damiaoの指令は `0x100+ESC_ID`(角度)・`0x200+ESC_ID`(速度)を使う。ESC_ID=1,2 では `0x101, 0x102, 0x201, 0x202` になり、
+ノード分配(`0x100`/`0x180` 帯)やロボマス(`0x1FE`, `0x200-0x208`)と重なる。
+**このESP32のCAN線にはDamiaoのESCだけをつなぐこと。** 他のモードと同時に使う時は、ESP32とCAN線を分ける。
+
+## 11a. RobStride EduLite 05 Driver Mode (`MODE_ROBSTRIDE`)
+
+RobStride EduLite 05 (EL05) を、RobStride独自(私有)プロトコル(29bit拡張ID、1Mbps)で直接動かす独立デバイスモード(2026-10-22追加)。
+PC側は `robstride_ctrl` パッケージ(`robstride_driver_node` 等)を使う。実装とスロット割り当ては `src/robstride.cpp` 先頭コメント参照。
+
+- 速度モード(run_mode=2, `spd_ref`)と位置モードCSP(run_mode=5, `loc_ref`/`limit_spd`)。
+- 8スロット/モータ(最大2台)。目標と位置はint32(2スロット、0.001単位)。帰還の位置は±4πで折り返す角度ではなく、多回転の `mechPos`(0x7019)を100Hzで読んで返す。
+- 停止中は通信タイプ4(停止)を50Hzで送り、その応答で状態を読む。
+- 安全: 起動直後・PC途絶(`ROBSTRIDE_CMD_TIMEOUT_MS`)・運転中にモータが運転モードを外れた・帰還が途絶えた、のどれかで停止をラッチ(帰還+1の `0x100`)。**PCが一度0を送るまで再始動しない**(2026-11-06以前は、PC途絶を「PCが0を送った」と同じ扱いにしていたため、通信が戻るとラッチが外れて最後の指令で動き出していた。PRレビュー指摘で修正)。モータ側CANタイムアウト(`ROBSTRIDE_MOTOR_TIMEOUT_MS`、0x7028)は有効化のたびに設定。
+- **CAN線はRobStride専用にすること。** 29bit拡張IDなのでIDの数字は他と重ならないが、ノード側の受信処理(`can_task.cpp`)が拡張IDかどうかを見ておらず、ノード番号の計算で別ノード宛てと誤解する恐れがあるため。
+- モータのCAN IDが分からない場合: 帰還が無い間、全ID(0-127)へ通信タイプ0を送ってスキャンし、結果を `Tx_16Data[20-23]` に出す。
+
 ## 12. Bus Bandwidth When Mixing Modes on One CAN Bus
 
 `MODE_ROBOMAS`, `MODE_CUBEMARS`, and the node/slot protocol (`MODE_IO`/`MODE_CAN`/
 `MODE_CAN_HOST`) can now share one physical 1Mbps CAN bus without CAN ID collisions
-(see sections 9/10 above). ID collisions aren't the binding constraint, though —
+(see sections 9/10 above). **`MODE_DAMIAO` と `MODE_ROBSTRIDE` は混ぜられない**(それぞれ専用の
+CAN線にすること。§11/§11a参照)。 ID collisions aren't the binding constraint, though —
 bus bandwidth is. Ballpark bit cost per 8-byte data frame at 1Mbps, including typical
 bit-stuffing overhead:
 
