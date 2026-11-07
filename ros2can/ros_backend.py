@@ -42,6 +42,7 @@ from .counter_unwrapper import CounterUnwrapper
 from .device_profiles import DEFAULT_PROFILE_KEY, SLOT_COUNT
 from .hardware_manager import HardwareConfig, HardwareManager
 from .settings_store import load_settings, parse_device_profile_map
+from .tx_watchdog import TxWatchdog, validate_timeout_sec
 
 TOPIC_RE = re.compile(r"^/?(serial_tx|serial_rx)_(\d+)$")
 
@@ -107,6 +108,8 @@ class DeviceChannel:
     zero_offset: List[int] = field(default_factory=lambda: [0] * SLOT_COUNT)
     # serial_rx_[ID]_zeroed (Int32MultiArray) 用。unwrapped_publisherと同じ条件でのみ作る。
     zeroed_publisher = None
+    # serial_tx_[ID] の途絶監視(MODE_HARDWARE/MODE_SIMULATORのみ、tx_watchdog.py参照)。
+    tx_watchdog: TxWatchdog = field(default_factory=TxWatchdog)
 
     @property
     def connected(self) -> bool:
@@ -151,6 +154,8 @@ class RosBackend(QObject):
         if hardware_config is None:
             hardware_config = self._load_hardware_config_from_params()
 
+        self.tx_watchdog_sec: float = self._load_tx_watchdog_sec_from_params()
+
         self.hardware = HardwareManager(hardware_config)
         self.hardware.deviceClaimed.connect(self._on_hardware_claimed)
         self.hardware.frameReceived.connect(self._on_hardware_frame)
@@ -169,6 +174,17 @@ class RosBackend(QObject):
             "device_profile_map", [str(v) for v in defaults["device_profile_map"]])
         raw = self.node.get_parameter("device_profile_map").value or []
         return parse_device_profile_map(raw)
+
+    def _load_tx_watchdog_sec_from_params(self) -> float:
+        """serial_tx_[ID] の途絶タイムアウト[s]。0で無効(既定)。
+
+        既定を無効にしているのは、0を送ることが安全とは限らないため: MODE_CAN_HOSTの
+        サーボは「0度へ動く」指令になり、変化時だけ指令を送るノードは誤検出で止まる。
+        連続して指令を送る構成(BRの足回り等)でだけ、yaml/launchから有効にする。
+        """
+        defaults = load_settings()
+        self.node.declare_parameter("tx_watchdog_sec", float(defaults["tx_watchdog_sec"]))
+        return validate_timeout_sec(self.node.get_parameter("tx_watchdog_sec").value)
 
     def _initial_profile_key(self, device_id: int) -> str:
         return self.device_profile_map.get(device_id, DEFAULT_PROFILE_KEY)
@@ -323,6 +339,7 @@ class RosBackend(QObject):
         if len(data) < SLOT_COUNT:
             data += [0] * (SLOT_COUNT - len(data))
         ch.tx_data = data
+        self._note_tx_command(device_id, ch)
         self.hardware.write(device_id, ch.tx_data)
         ch.tx_frame_count += 1
 
@@ -408,6 +425,7 @@ class RosBackend(QObject):
         if len(data) < SLOT_COUNT:
             data += [0] * (SLOT_COUNT - len(data))
         ch.tx_data = data
+        self._note_tx_command(device_id, ch)
 
     def service_simulators(self) -> None:
         """全シミュレータデバイスの TX->RX ループバックを1ステップ進める。
@@ -606,10 +624,37 @@ class RosBackend(QObject):
             ch.tx_data = [0] * SLOT_COUNT
             self.publish_tx(device_id)
 
+    # ---------------- serial_tx_[ID] の途絶監視 (tx_watchdog.py参照) ----------------
+
+    def _note_tx_command(self, device_id: int, ch: DeviceChannel) -> None:
+        if ch.tx_watchdog.note_command(time.monotonic()):
+            self._log_tx_watchdog(f"id={device_id} の serial_tx 指令が再開しました")
+
+    def _log_tx_watchdog(self, message: str) -> None:
+        # logMessage はGUIの通信ログにしか出ない。--nogui でも原因を追えるよう
+        # ROSログ(/rosout, ~/.ros/log)にも残す。
+        self.logMessage.emit(f"[TX-WD] {message}")
+        self.node.get_logger().warning(message)
+
+    def _service_tx_watchdogs(self) -> None:
+        now = time.monotonic()
+        for device_id, ch in self.devices.items():
+            if ch.mode == MODE_TOPIC_CLIENT:
+                continue  # 実機へ書くのは相乗り先のブリッジなので、ここでは見張らない
+            if not ch.topic_passthrough:
+                # GUIのダイレクト送信へ切り替えた後は人が操作しているので0で上書きしない。
+                ch.tx_watchdog.disarm()
+                continue
+            if ch.tx_watchdog.poll(now, self.tx_watchdog_sec):
+                self._log_tx_watchdog(
+                    f"id={device_id} の serial_tx が{self.tx_watchdog_sec:.3f}秒途絶えたため"
+                    "ゼロ指令を送信しました")
+                self.zero_and_send(device_id)
+
     # ---------------- lifecycle ----------------
 
     def spin_once(self) -> None:
-        """受信済みのROSコールバックをまとめて処理する。"""
+        """受信済みのROSコールバックを処理し、そのあとで途絶を判定する。"""
         for _ in range(SPIN_MAX_CALLBACKS_PER_TICK):
             try:
                 handler, _entity, _node = self._executor.wait_for_ready_callbacks(timeout_sec=0)
@@ -617,6 +662,11 @@ class RosBackend(QObject):
                 break
             handler()
             handler.result()  # コールバック内の例外を握りつぶさない
+        else:
+            # まだ受信待ちが残っている。この状態で途絶を判定すると、イベントループが
+            # 詰まっただけなのに届いている指令を見ずに0を送ってしまう。
+            return
+        self._service_tx_watchdogs()
 
     def shutdown(self) -> None:
         self.hardware.stop()

@@ -81,7 +81,7 @@ title: ros2can 技術マニュアル（内部実装編）
 
 | タイマー | 周期 | 呼び出し先 | 役割 |
 |:---|---:|:---|:---|
-| spin_timer | 10ms | `RosBackend.spin_once()` | 受信済みのROSコールバックをGUIスレッド上でまとめて処理（1回最大64個） |
+| spin_timer | 10ms | `RosBackend.spin_once()` | 受信済みのROSコールバックをGUIスレッド上でまとめて処理（1回最大64個）し、続けて `serial_tx_[ID]` の途絶を判定 |
 | hardware_timer | 10ms | `HardwareManager.service()` | シリアルリンクの読み書きサービス |
 | simulator_timer | 50ms (20Hz) | `RosBackend.service_simulators()` | 仮想デバイスのTX→RXループバック |
 | publish_timer | 50ms (20Hz) | `RosBackend.publish_all_direct()` | ダイレクト送信ONのデバイスへの周期送信 |
@@ -166,6 +166,8 @@ GUIスレッド側の `HardwareManager.service()`（10ms周期）が中心ルー
 |:---|---:|---:|
 | 50Hz x 2デバイス（帰還200Hz x 3デバイス） | 33指令/s、遅れp50 184ms | 50指令/s、遅れ最大4ms |
 | 50Hz x 3デバイス（同上） | 25指令/s、遅れp50 181ms | 50指令/s、遅れ最大5ms |
+
+**途絶監視 (`tx_watchdog.py`, `tx_watchdog_sec`)**: `serial_tx_[ID]` が設定時間途絶えると、`zero_and_send()` で全スロット0を送ります。既定は無効です。判定を `spin_once()` の受信処理の後に行うのは、イベントループが詰まっただけのときに、届いている指令を見ずに0を送らないためです。上限の64個で受信待ちが残った回は判定しません。`--nogui` では `direct_tx` が0を送り続けます。GUIで `direct_tx` がOFFのときは0を1回だけ送ります。
 
 **E-STOP (`emergency_stop_all()`)**: 全デバイスの `direct_tx` と `topic_passthrough` を**両方**OFFにしてから `tx_data` をゼロ埋めして送信します。`topic_passthrough` もOFFにしないと、外部ノードが指令を送り続けている場合に `_on_hardware_tx_command()` が即座に非ゼロ値を書き戻してしまい、E-STOPが無効化されてしまうためです。
 
@@ -491,6 +493,7 @@ rxUpdated シグナル → DevicePanel.refresh_from_rx()（Monitor/Rawタブ更�
 
    **解除はPCが実際に0（脱力）を送った時だけ**。途絶は「0を受け取った」とは扱わない（以前はそう扱っていたため、通信が戻ると最後の指令で動き出し、Damiaoでは故障も自動で消していた）。Damiaoの故障の解除（ClearError）も解除後にだけ行う。また指令値の範囲もファーム側で守る（Damiao: 速度±`DAMIAO_MAX_VEL_RADPS`、角度±12rad、速さ上限0以下は無効。RobStride: 速度±`ROBSTRIDE_V_MAX_RADPS`、速度上限0以下は無効）。
    CAN送信の補助（Bus-Off復帰、ESP-IDFの送信停止 esp-idf#19068 対策）は両モード共通の `src/twai_util.cpp`。送信失敗の文字ログはシリアルに出さない（PCとのバイナリフレームが壊れるため）。
+8. **PC側の `tx_watchdog_sec`（既定は無効）**: 外部ノードからの `serial_tx_[ID]` が途絶えると0を送る（2.5節）。外部ノードが落ちた場合だけを防ぐ機能で、`ros2can` やPCが落ちた場合・USBが抜けた場合は防げない。この0は実際に送るので、7のラッチも解除する。
 
 ---
 

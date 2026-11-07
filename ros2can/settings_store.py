@@ -31,6 +31,8 @@ DEFAULT_SETTINGS: Dict[str, Any] = {
     "scan_interval_ms": 5000,
     "probe_timeout_sec": 2.0,
     "probe_settle_sec": 0.5,
+    # serial_tx_[ID] の途絶タイムアウト[s]。0で無効(ros_backend.py参照)。
+    "tx_watchdog_sec": 0.0,
     # device_id とプロファイルキーの対応表。"device_id:profile_key" 形式の文字列の
     # リスト (ROS 2 パラメータは辞書型を直接扱えないため文字列配列で表現する)。
     # 新規デバイス検出時、ここに載っているdevice_idはそのプロファイルを初期選択する。
