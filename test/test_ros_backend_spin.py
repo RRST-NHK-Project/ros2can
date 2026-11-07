@@ -1,7 +1,7 @@
 """RosBackend.spin_once() のテスト(rclpy/PyQt5が必要。無い環境ではスキップ)。
 
-実際にトピックを流して、1回の呼び出しで受信済みの指令をすべて処理できることを
-確かめる。仮想デバイス(MODE_SIMULATOR)を使い、実機は不要。
+実際にトピックを流して、1回の呼び出しで受信済みの指令をすべて処理できること、
+途絶時に0を送ることを確かめる。仮想デバイス(MODE_SIMULATOR)を使い、実機は不要。
 """
 
 import os
@@ -31,11 +31,24 @@ def rig(tmp_path, monkeypatch):
     rclpy.shutdown()
 
 
-def _make_backend() -> RosBackend:
+def _make_backend(watchdog_sec: float = 0.0) -> RosBackend:
     backend = RosBackend(hardware_config=HardwareConfig())
+    backend.tx_watchdog_sec = watchdog_sec
     for device_id in DEVICE_IDS:
         backend.add_simulated_device(device_id)
     return backend
+
+
+def _publish_until(backend, publishers, payload, condition, timeout=5.0):
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        for pub in publishers:
+            pub.publish(payload)
+        time.sleep(0.02)
+        backend.spin_once()
+        if condition():
+            return True
+    return False
 
 
 def test_one_spin_processes_all_pending_devices(rig):
@@ -59,6 +72,53 @@ def test_one_spin_processes_all_pending_devices(rig):
             if all(backend.devices[i].tx_data[0] == attempt for i in DEVICE_IDS):
                 return
         pytest.fail("1回の spin_once() で全デバイスの指令を処理できなかった")
+    finally:
+        node.destroy_node()
+        backend.shutdown()
+
+
+def test_watchdog_zeroes_after_commands_stop_and_resumes(rig):
+    backend = _make_backend(watchdog_sec=0.1)
+    node = rclpy.create_node("spin_test_pub")
+    target = DEVICE_IDS[0]
+    pub = node.create_publisher(Int16MultiArray, f"serial_tx_{target}", 10)
+    msg = Int16MultiArray()
+    msg.data = [100] * 24
+    ch = backend.devices[target]
+    try:
+        assert _publish_until(backend, [pub], msg, lambda: ch.tx_data[0] == 100)
+
+        deadline = time.monotonic() + 2.0
+        while time.monotonic() < deadline and not ch.tx_watchdog.tripped:
+            time.sleep(0.01)
+            backend.spin_once()
+        assert ch.tx_watchdog.tripped
+        assert ch.tx_data == [0] * 24
+        # 指令を受けていないデバイスには作用しない
+        assert not backend.devices[DEVICE_IDS[1]].tx_watchdog.tripped
+
+        assert _publish_until(backend, [pub], msg, lambda: ch.tx_data[0] == 100)
+        assert not ch.tx_watchdog.tripped
+    finally:
+        node.destroy_node()
+        backend.shutdown()
+
+
+def test_watchdog_leaves_values_alone_when_disabled(rig):
+    backend = _make_backend(watchdog_sec=0.0)
+    node = rclpy.create_node("spin_test_pub")
+    target = DEVICE_IDS[0]
+    pub = node.create_publisher(Int16MultiArray, f"serial_tx_{target}", 10)
+    msg = Int16MultiArray()
+    msg.data = [100] * 24
+    ch = backend.devices[target]
+    try:
+        assert _publish_until(backend, [pub], msg, lambda: ch.tx_data[0] == 100)
+        end = time.monotonic() + 0.3
+        while time.monotonic() < end:
+            time.sleep(0.01)
+            backend.spin_once()
+        assert ch.tx_data[0] == 100
     finally:
         node.destroy_node()
         backend.shutdown()

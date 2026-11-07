@@ -135,6 +135,8 @@ CubeMarsのMITレンジ、電流制限等)は依頼なしに変更しない。
 **ノード分配系のモード(MODE_IO/CAN/CAN_HOST等)には通信タイムアウトによる自動停止は無く、
 最後の指令を保持し続ける**(`docs/internals.md` 6章)。停止はPC側のE-STOPか、ゼロ指令の明示的な送信で行う。
 タイムアウト停止を追加する場合は全モードで挙動が変わるため、ユーザーに確認する。
+PC側には `tx_watchdog_sec` (既定は無効、`tx_watchdog.py`)があるが、外部ノードが落ちた場合しか防げない。
+既定を有効に変えると、サーボが0度へ動くなど既存の構成の挙動が変わるので、変える場合はユーザーに確認する。
 例外として **MODE_DAMIAO / MODE_ROBSTRIDE はPC途絶で止まる**
 (`DAMIAO_CMD_TIMEOUT_MS` / `ROBSTRIDE_CMD_TIMEOUT_MS`。MODE_ROBOMAS / MODE_CUBEMARS には無い)。
 さらに止めた後は**ラッチし、PCが一度0(脱力)を送るまで再始動しない**
