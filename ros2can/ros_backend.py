@@ -1,8 +1,7 @@
 """rclpy と PyQt5 をつなぐバックエンド。
 
-GUI は単一スレッドで動作させる。QTimer から `rclpy.spin_once(timeout_sec=0)` を
-高頻度に呼び出すことで ROS のコールバック(サブスクライバ受信)を GUI スレッド上で
-直接処理し、スレッド間排他を持ち込まずに Qt シグナルを発行できるようにしている。
+GUI は単一スレッドで動作させる。QTimer から `spin_once()` を高頻度に呼び出すことで
+ROS のコールバック(サブスクライバ受信)を GUI スレッド上で直接処理し、スレッド間排他を持ち込まずに Qt シグナルを発行できるようにしている。
 
 デバイスは2つのモードのどちらかで管理される。
 
@@ -33,7 +32,10 @@ from dataclasses import dataclass, field
 from typing import Dict, List, Optional
 
 import rclpy
+from rclpy.executors import ShutdownException, SingleThreadedExecutor, TimeoutException
 from rclpy.node import Node
+from rclpy.exceptions import ParameterUninitializedException
+from rclpy.parameter import Parameter
 from std_msgs.msg import Int16MultiArray, Int32MultiArray
 
 from PyQt5.QtCore import QObject, pyqtSignal
@@ -42,6 +44,7 @@ from .counter_unwrapper import CounterUnwrapper
 from .device_profiles import DEFAULT_PROFILE_KEY, SLOT_COUNT
 from .hardware_manager import HardwareConfig, HardwareManager
 from .settings_store import load_settings, parse_device_profile_map
+from .tx_watchdog import TxWatchdog, validate_timeout_sec
 
 TOPIC_RE = re.compile(r"^/?(serial_tx|serial_rx)_(\d+)$")
 
@@ -53,6 +56,14 @@ STALE_TIMEOUT_SEC = 1.5
 # ENC以外のスロット(SW/SERVO/速度指令等)にも一律適用するが、それらは通常
 # この半分(16384)を大きく下回る範囲でしか変化しないため無害。
 _COUNTS_PER_WRAP = 32768
+
+# 1回の spin_once() で処理するコールバック数の上限。GUIスレッドを長く止めないため。
+# 通常は数個で空になる(10ms周期に対して 50Hz x 3デバイス + 原点セット要求程度)。
+SPIN_MAX_CALLBACKS_PER_TICK = 64
+
+# serial_tx_[ID] の購読キュー深さ。実機へ送る意味があるのは最新の指令だけで、溜まった
+# 古い指令を順に書くと遅れになる(AGENTS.mdの2026-09-12の実測: 遅れ最大約190ms)。
+TX_COMMAND_QOS_DEPTH = 1
 
 MODE_HARDWARE = "hardware"
 MODE_TOPIC_CLIENT = "topic_client"
@@ -99,6 +110,8 @@ class DeviceChannel:
     zero_offset: List[int] = field(default_factory=lambda: [0] * SLOT_COUNT)
     # serial_rx_[ID]_zeroed (Int32MultiArray) 用。unwrapped_publisherと同じ条件でのみ作る。
     zeroed_publisher = None
+    # serial_tx_[ID] の途絶監視(MODE_HARDWARE/MODE_SIMULATORのみ、tx_watchdog.py参照)。
+    tx_watchdog: TxWatchdog = field(default_factory=TxWatchdog)
 
     @property
     def connected(self) -> bool:
@@ -133,11 +146,17 @@ class RosBackend(QObject):
                  hardware_config: Optional[HardwareConfig] = None):
         super().__init__()
         self.node: Node = rclpy.create_node(node_name)
+        # rclpy.spin_once(node) はグローバルexecutorへ毎回 add_node/remove_node するうえ
+        # コールバックを1つしか処理しない。専用のexecutorを持って spin_once() で空にする。
+        self._executor = SingleThreadedExecutor()
+        self._executor.add_node(self.node)
         self.devices: Dict[int, DeviceChannel] = {}
         self.device_profile_map: Dict[int, str] = self._load_device_profile_map_from_params()
 
         if hardware_config is None:
             hardware_config = self._load_hardware_config_from_params()
+
+        self.tx_watchdog_sec: float = self._load_tx_watchdog_sec_from_params()
 
         self.hardware = HardwareManager(hardware_config)
         self.hardware.deviceClaimed.connect(self._on_hardware_claimed)
@@ -147,16 +166,43 @@ class RosBackend(QObject):
 
         self._create_zero_channel_subscription()
 
+    def _declare_string_array_parameter(self, name: str, default: List) -> List[str]:
+        """文字列配列のパラメータを宣言して値を返す。未設定なら default を返す。
+
+        既定値をそのまま declare_parameter に渡すと launch が起動しなかった:
+        - yaml(--params-file)の `[]` は「未設定」として渡され、get_parameter が例外になる
+        - 既定値が `[]` だと型がBYTE_ARRAYと推定され、文字列の配列を渡すと型エラーになる
+        そのため型だけを宣言し、値が渡されなかった場合は既定値へ戻す。
+        """
+        self.node.declare_parameter(name, Parameter.Type.STRING_ARRAY)
+        try:
+            return list(self.node.get_parameter(name).value)
+        except ParameterUninitializedException:
+            values = [str(v) for v in default]
+            # 未設定のままだと ros2 param get で実際の値を確認できない
+            self.node.set_parameters([Parameter(name, Parameter.Type.STRING_ARRAY, values)])
+            return values
+
     def _load_device_profile_map_from_params(self) -> Dict[int, str]:
         """device_id とプロファイルキーの対応表 (settings_store.py の
         device_profile_map、config/ros2can.yaml や ~/.config/ros2can/settings.yaml、
         あるいは launch から渡されるROS 2パラメータで上書き可能) を読み込む。
         新規デバイス検出時の初期プロファイル選択 (_initial_profile_key) に使う。"""
         defaults = load_settings()
-        self.node.declare_parameter(
-            "device_profile_map", [str(v) for v in defaults["device_profile_map"]])
-        raw = self.node.get_parameter("device_profile_map").value or []
+        raw = self._declare_string_array_parameter(
+            "device_profile_map", defaults["device_profile_map"])
         return parse_device_profile_map(raw)
+
+    def _load_tx_watchdog_sec_from_params(self) -> float:
+        """serial_tx_[ID] の途絶タイムアウト[s]。0で無効(既定)。
+
+        既定を無効にしているのは、0を送ることが安全とは限らないため: MODE_CAN_HOSTの
+        サーボは「0度へ動く」指令になり、変化時だけ指令を送るノードは誤検出で止まる。
+        連続して指令を送る構成(BRの足回り等)でだけ、yaml/launchから有効にする。
+        """
+        defaults = load_settings()
+        self.node.declare_parameter("tx_watchdog_sec", float(defaults["tx_watchdog_sec"]))
+        return validate_timeout_sec(self.node.get_parameter("tx_watchdog_sec").value)
 
     def _initial_profile_key(self, device_id: int) -> str:
         return self.device_profile_map.get(device_id, DEFAULT_PROFILE_KEY)
@@ -170,7 +216,8 @@ class RosBackend(QObject):
         明示的に値が渡された場合は、通常のROSパラメータの優先順位どおり
         そちらが勝つ。"""
         defaults = load_settings()
-        self.node.declare_parameter("excluded_ports", list(defaults["excluded_ports"]))
+        excluded = set(self._declare_string_array_parameter(
+            "excluded_ports", defaults["excluded_ports"]))
         self.node.declare_parameter("rx_timeout_sec", float(defaults["rx_timeout_sec"]))
         self.node.declare_parameter(
             "reconnect_interval_sec", float(defaults["reconnect_interval_sec"]))
@@ -178,7 +225,6 @@ class RosBackend(QObject):
         self.node.declare_parameter("probe_timeout_sec", float(defaults["probe_timeout_sec"]))
         self.node.declare_parameter("probe_settle_sec", float(defaults["probe_settle_sec"]))
 
-        excluded = set(self.node.get_parameter("excluded_ports").value or [])
         return HardwareConfig(
             excluded_ports=excluded,
             scan_interval_sec=self.node.get_parameter("scan_interval_ms").value / 1000.0,
@@ -258,7 +304,8 @@ class RosBackend(QObject):
             Int32MultiArray, f"serial_rx_{device_id}_zeroed", 10)
         ch.subscription = self.node.create_subscription(
             Int16MultiArray, f"serial_tx_{device_id}",
-            lambda msg, did=device_id: self._on_hardware_tx_command(did, msg), 10)
+            lambda msg, did=device_id: self._on_hardware_tx_command(did, msg),
+            TX_COMMAND_QOS_DEPTH)
 
     def _on_hardware_claimed(self, device_id: int, port: str) -> None:
         ch = self.devices.get(device_id)
@@ -310,6 +357,7 @@ class RosBackend(QObject):
         if len(data) < SLOT_COUNT:
             data += [0] * (SLOT_COUNT - len(data))
         ch.tx_data = data
+        self._note_tx_command(device_id, ch)
         self.hardware.write(device_id, ch.tx_data)
         ch.tx_frame_count += 1
 
@@ -372,7 +420,8 @@ class RosBackend(QObject):
             Int32MultiArray, f"serial_rx_{device_id}_zeroed", 10)
         ch.subscription = self.node.create_subscription(
             Int16MultiArray, f"serial_tx_{device_id}",
-            lambda msg, did=device_id: self._on_simulator_tx_command(did, msg), 10)
+            lambda msg, did=device_id: self._on_simulator_tx_command(did, msg),
+            TX_COMMAND_QOS_DEPTH)
         self.devices[device_id] = ch
         self.deviceListChanged.emit()
         self.logMessage.emit(f"[SIM] id={device_id} をデバッグ(仮想)デバイスとして追加しました")
@@ -394,6 +443,7 @@ class RosBackend(QObject):
         if len(data) < SLOT_COUNT:
             data += [0] * (SLOT_COUNT - len(data))
         ch.tx_data = data
+        self._note_tx_command(device_id, ch)
 
     def service_simulators(self) -> None:
         """全シミュレータデバイスの TX->RX ループバックを1ステップ進める。
@@ -592,13 +642,53 @@ class RosBackend(QObject):
             ch.tx_data = [0] * SLOT_COUNT
             self.publish_tx(device_id)
 
+    # ---------------- serial_tx_[ID] の途絶監視 (tx_watchdog.py参照) ----------------
+
+    def _note_tx_command(self, device_id: int, ch: DeviceChannel) -> None:
+        if ch.tx_watchdog.note_command(time.monotonic()):
+            self._log_tx_watchdog(f"id={device_id} の serial_tx 指令が再開しました")
+
+    def _log_tx_watchdog(self, message: str) -> None:
+        # logMessage はGUIの通信ログにしか出ない。--nogui でも原因を追えるよう
+        # ROSログ(/rosout, ~/.ros/log)にも残す。
+        self.logMessage.emit(f"[TX-WD] {message}")
+        self.node.get_logger().warning(message)
+
+    def _service_tx_watchdogs(self) -> None:
+        now = time.monotonic()
+        for device_id, ch in self.devices.items():
+            if ch.mode == MODE_TOPIC_CLIENT:
+                continue  # 実機へ書くのは相乗り先のブリッジなので、ここでは見張らない
+            if not ch.topic_passthrough:
+                # GUIのダイレクト送信へ切り替えた後は人が操作しているので0で上書きしない。
+                ch.tx_watchdog.disarm()
+                continue
+            if ch.tx_watchdog.poll(now, self.tx_watchdog_sec):
+                self._log_tx_watchdog(
+                    f"id={device_id} の serial_tx が{self.tx_watchdog_sec:.3f}秒途絶えたため"
+                    "ゼロ指令を送信しました")
+                self.zero_and_send(device_id)
+
     # ---------------- lifecycle ----------------
 
     def spin_once(self) -> None:
-        rclpy.spin_once(self.node, timeout_sec=0)
+        """受信済みのROSコールバックを処理し、そのあとで途絶を判定する。"""
+        for _ in range(SPIN_MAX_CALLBACKS_PER_TICK):
+            try:
+                handler, _entity, _node = self._executor.wait_for_ready_callbacks(timeout_sec=0)
+            except (TimeoutException, ShutdownException):
+                break
+            handler()
+            handler.result()  # コールバック内の例外を握りつぶさない
+        else:
+            # まだ受信待ちが残っている。この状態で途絶を判定すると、イベントループが
+            # 詰まっただけなのに届いている指令を見ずに0を送ってしまう。
+            return
+        self._service_tx_watchdogs()
 
     def shutdown(self) -> None:
         self.hardware.stop()
         for device_id in list(self.devices.keys()):
             self.remove_device(device_id)
+        self._executor.shutdown()
         self.node.destroy_node()

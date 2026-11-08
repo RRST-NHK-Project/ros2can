@@ -80,6 +80,34 @@ uint8_t rx_buf[Rx16NUM * 2];
 uint8_t rx_index = 0;
 uint8_t rx_checksum = 0;
 
+// 自機宛ての有効フレームを最後に受信した時刻[ms]。0は「まだ一度も受信していない」。
+// 指令途絶時の自動停止(damiao.cpp/robstride.cpp)が参照する。
+static volatile uint32_t g_last_valid_rx_ms = 0;
+
+uint32_t serialLastValidRxMs() {
+    return g_last_valid_rx_ms;
+}
+
+// Rx_16Data全体をロックしてコピーする。2スロットを組み合わせたint32の値(robstride.cpp)が
+// 受信の途中(上位だけ新しい値)で読まれて壊れないようにするため。
+void serialSnapshotRx(int16_t *out) {
+    portENTER_CRITICAL(&g_frame_lock);
+    std::memcpy(out, (const void *)Rx_16Data, sizeof(int16_t) * Rx16NUM);
+    portEXIT_CRITICAL(&g_frame_lock);
+}
+
+// Tx_16Dataのstart番目からcount個をロックして書き込む(上と同じ理由)。
+void serialWriteTx(int start, const int16_t *values, int count) {
+    if (start < 0 || count <= 0 || start + count > Tx16NUM) {
+        return;
+    }
+    portENTER_CRITICAL(&g_frame_lock);
+    for (int i = 0; i < count; i++) {
+        Tx_16Data[start + i] = values[i];
+    }
+    portEXIT_CRITICAL(&g_frame_lock);
+}
+
 // 入力モードでは送信周期を短くする
 #if defined(MODE_INPUT)
 constexpr uint32_t TX_PERIOD_MS = 20; // 送信周期（ミリ秒）
@@ -244,6 +272,7 @@ void receive_frame() {
                 portENTER_CRITICAL(&g_frame_lock);
                 std::memcpy((void *)Rx_16Data, decoded_values, sizeof(decoded_values));
                 portEXIT_CRITICAL(&g_frame_lock);
+                g_last_valid_rx_ms = millis();
 
 #if ENABLE_LOOPBACK
                 // ===== LOOPBACK =====

@@ -14,9 +14,11 @@ SPDX-License-Identifier: MIT
 #include "can_task.hpp"
 #include "config.hpp"
 #include "cubemars.hpp"
+#include "damiao.hpp"
 #include "defs.hpp"
 #include "pin_ctrl_task.hpp"
 #include "robomas.hpp"
+#include "robstride.hpp"
 #include "serial_task.hpp"
 #include <Arduino.h>
 // ================= SETUP =================
@@ -42,7 +44,7 @@ void setup() {
     // ledcSetup(1, 20000, 8);
     // ledcAttachPin(LED, 1);
 
-#if defined(MODE_CAN_HOST) || defined(MODE_IO) || defined(MODE_DEBUG) || defined(MODE_ROBOMAS) || defined(MODE_CUBEMARS)
+#if defined(MODE_CAN_HOST) || defined(MODE_IO) || defined(MODE_DEBUG) || defined(MODE_ROBOMAS) || defined(MODE_CUBEMARS) || defined(MODE_DAMIAO) || defined(MODE_ROBSTRIDE)
     xTaskCreate(
         serialTask,   // タスク関数
         "serialTask", // タスク名
@@ -178,11 +180,40 @@ void setup() {
         11, // 優先度
         NULL);
 
+#elif defined(MODE_DAMIAO)
+    // Damiao DM2325+DM3520(ESC)専用モード初期化
+    // MODE_CUBEMARS/MODE_ROBOMASと同様、ノード/スロット分配プロトコルとは
+    // 別系統で、Damiao公式CANプロトコル(VEL/POS_VELモード、1Mbps固定)を
+    // 直接喋る独立デバイスとして動作する。canInit()/canTask()は使わず、
+    // damiao.cpp側で独自にCANを初期化する。
+    damiaoInit();
+    xTaskCreate(
+        damiaoTask,   // タスク関数
+        "damiaoTask", // タスク名
+        4096,         // スタックサイズ（words）
+        NULL,
+        11, // 優先度
+        NULL);
+
+#elif defined(MODE_ROBSTRIDE)
+    // RobStride EduLite 05専用モード初期化
+    // MODE_DAMIAOと同様、ノード/スロット分配プロトコルとは別系統で、RobStride独自
+    // プロトコル(29bit拡張ID、1Mbps)を直接喋る独立デバイスとして動作する。
+    // canInit()/canTask()は使わず、robstride.cpp側で独自にCANを初期化する。
+    robstrideInit();
+    xTaskCreate(
+        robstrideTask,   // タスク関数
+        "robstrideTask", // タスク名
+        4096,            // スタックサイズ（words）
+        NULL,
+        11, // 優先度
+        NULL);
+
 #else
 #error "No mode defined. Please define one mode in config.hpp."
 #endif
 
-#if (defined(MODE_IO) + defined(MODE_CAN) + defined(MODE_CAN_HOST) + defined(MODE_DEBUG) + defined(MODE_CAN_MONITOR) + defined(MODE_ROBOMAS) + defined(MODE_CUBEMARS)) != 1
+#if (defined(MODE_IO) + defined(MODE_CAN) + defined(MODE_CAN_HOST) + defined(MODE_DEBUG) + defined(MODE_CAN_MONITOR) + defined(MODE_ROBOMAS) + defined(MODE_CUBEMARS) + defined(MODE_DAMIAO) + defined(MODE_ROBSTRIDE)) != 1
 #error "Invalid mode configuration. Please define exactly *one mode* in config.hpp."
 #endif
 
