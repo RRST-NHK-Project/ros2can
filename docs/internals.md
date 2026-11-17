@@ -490,6 +490,7 @@ rxUpdated シグナル → DevicePanel.refresh_from_rx()（Monitor/Rawタブ更�
    | PCからの指令の途絶 | `DAMIAO_CMD_TIMEOUT_MS`（300ms） | `ROBSTRIDE_CMD_TIMEOUT_MS`（300ms） |
    | モータの故障・運転モード外れ | 状態が0/1以外 | モード≠運転 または 故障ビット |
    | 有効中に帰還が来ない | 200ms（`FEEDBACK_LOST_MS`） | 200ms（`FEEDBACK_LOST_MS`） |
+   | 暴走（指令と逆向きに速く回ったまま減速しない／上限+5rad/sより速い） | 200ms（`src/runaway_guard.hpp`、状態7。2026-11-17） | なし |
    | ESP32⇔モータ間の途絶 | モータ自身が停止（レジスタ9、`DAMIAO_MOTOR_TIMEOUT_MS`） | モータ自身が停止（0x7028、`ROBSTRIDE_MOTOR_TIMEOUT_MS`） |
    | PCへの印 | 状態 = 15 | flags の 0x100 |
 

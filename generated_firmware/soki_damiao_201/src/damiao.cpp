@@ -20,8 +20,12 @@
         指令で勝手に動き出し、故障も勝手に消していた
     ・モータが故障を返した(状態が0/1以外。13=通信喪失など)
     ・有効中のモータから FEEDBACK_LOST_MS 返事が来ない(ESCの電源断・CAN線抜けなど)
-  ラッチ中は、PCへ送る状態を 15(STATE_LATCHED)にする(モータ自身の故障コードがある時は
-  そちらを優先)。故障の解除(ClearError)も、PCが0を送ってラッチが外れてから行う。
+    ・暴走を見つけた(runaway_guard.hpp。速度制御で指令と逆向きに速く回ったまま減速しない、
+      または上限より速い、が0.2秒続いた。2026-11-17追加: DM3519が逆向きに全速で回り続けて
+      モータから煙が出たため。暴走中は指令に従わないので、速度の上限では止められない)
+  ラッチ中は、PCへ送る状態を 15(STATE_LATCHED)にする。暴走で止めた時は 7(STATE_RUNAWAY)。
+  モータ自身の故障コードがある時はそちらを優先。故障の解除(ClearError)も、PCが0を送って
+  ラッチが外れてから行う。
 
 ■ CAN IDの制約(Damiao専用のバスにすること)
   Damiaoの指令は 0x100+ESC_ID(角度)・0x200+ESC_ID(速度)を使う。ESC_ID=1,2では
@@ -38,6 +42,7 @@
   damiao_ctrl/include/damiao_ctrl/slot_layout.hpp と必ず一致させること)
        PC → ESP32(指令)                    ESP32 → PC(返事)
   +0   モード 0=脱力 1=速度 2=角度          状態 0=脱力 1=有効 15=ESP32が止めている(ラッチ)
+                                            7=ESP32が暴走を見つけて止めている(ラッチ)
                                             それ以外=モータの故障(13=通信喪失など)
   +1   目標 速度:0.01rad/s 角度:0.001rad   返事を受け取った回数(増えていれば通信OK)
   +2   角度制御の速さ上限 0.01rad/s         モータ内部の位置 0.1rad(不明なら-32768)
@@ -68,6 +73,7 @@
 #include "frame_data.hpp"
 #include "serial_task.hpp"
 #include "twai_util.hpp"
+#include "runaway_guard.hpp"
 #include <Arduino.h>
 #include <algorithm>
 #include <cmath>
@@ -127,6 +133,10 @@ constexpr int32_t CMODE_VEL = 3; // 2026-10-14 実機確認済み(0x200+id, floa
 constexpr uint32_t FEEDBACK_LOST_MS = 200;
 // ラッチ中にPCへ送る状態の値(モータ自身の状態コード0〜14とは重ならない)。
 constexpr int16_t STATE_LATCHED = 15;
+// 暴走を見つけて止めた時にPCへ送る状態の値(モータ自身の状態コードは0,1,5,6,8〜14で、7は使われない)。
+constexpr int16_t STATE_RUNAWAY = 7;
+// 暴走の見張りに使う返事が、これより古ければ見ない[ms](有効中は5msごとに返事が来る)。
+constexpr uint32_t RUNAWAY_FB_FRESH_MS = 50;
 // 送信キューが空かない時に待つ最大時間[ms]。ESCの電源が切れてACKが返らない時に、
 // 制御ループが長く止まらないよう短くする(以前は20msで、1台あたり何回も待っていた)。
 constexpr uint32_t SEND_TIMEOUT_MS = 2;
@@ -198,6 +208,9 @@ bool g_have_fb_pos[kMotorCount] = {false};
 bool g_latched[kMotorCount];
 uint32_t g_last_fb_ms[kMotorCount] = {0}; // 最後に返事(状態フレーム)を受け取った時刻
 uint32_t g_enabled_at_ms[kMotorCount] = {0}; // 有効化が終わった時刻
+float g_fb_vel[kMotorCount] = {0};          // 最後に受け取った速度[rad/s](暴走の見張り用)
+RunawayGuard g_guard[kMotorCount];          // 暴走の見張り(runaway_guard.hpp)
+bool g_latch_runaway[kMotorCount] = {false}; // ラッチの理由が暴走か(状態7で知らせる)
 
 // POS_VELを有効にしてよいか(内部の位置が分かっていて、小さいこと)。
 bool posVelAllowed(int m) {
@@ -339,6 +352,7 @@ void sendCommands() {
             g_latched[m] = true;
         } else if (pc_mode == MODE_DISABLED) {
             g_latched[m] = false; // PCが脱力を送った = 人が止まったことを確認した
+            g_latch_runaway[m] = false;
         }
 
         int16_t mode = g_latched[m] ? MODE_DISABLED : pc_mode;
@@ -370,6 +384,20 @@ void sendCommands() {
             target = std::min(std::max(target, -POS_VEL_MAX_INTERNAL_RAD), POS_VEL_MAX_INTERNAL_RAD);
         }
         const uint16_t motor_can_id = kMotors[m].esc_id;
+
+        // ---- 暴走の見張り(runaway_guard.hpp) ----
+        // 有効化が終わって制御中で、返事が新しい時だけ見る。暴走なら脱力させて止めたまま(状態7)。
+        if (g_enabled[m] && g_enabled_mode[m] == mode && (mode == MODE_VEL || mode == MODE_POS_VEL) &&
+            (int32_t)(now_ms - g_last_fb_ms[m]) <= (int32_t)RUNAWAY_FB_FRESH_MS) {
+            const float limit = (mode == MODE_VEL) ? max_vel : vel_limit;
+            if (g_guard[m].update(mode == MODE_VEL, target, limit, g_fb_vel[m], now_ms)) {
+                g_latched[m] = true;
+                g_latch_runaway[m] = true;
+                mode = MODE_DISABLED;
+            }
+        } else {
+            g_guard[m].reset();
+        }
 
         if (mode != MODE_VEL && mode != MODE_POS_VEL) {
             // 未知の値も含め、DISABLE以外の全てを安全側(無効化)として扱う。
@@ -542,13 +570,15 @@ void receiveFeedback() {
         // 1台分の6スロットはロックしてまとめて書く(PCへ途中の値が混ざって出ないように)。
         g_last_state[m] = d[0] >> 4;
         g_last_fb_ms[m] = millis();
+        g_fb_vel[m] = velocity;
         static int16_t fb_counter[kMotorCount] = {0};
         fb_counter[m]++;
-        // ラッチ中は15を送る(モータ自身の故障コードがある時はそちらを優先)
+        // ラッチ中は15(暴走で止めた時は7)を送る(モータ自身の故障コードがある時はそちらを優先)
         const bool motor_ok = g_last_state[m] == 0 || g_last_state[m] == 1;
-        const int16_t state_to_pc = (g_latched[m] && motor_ok) ? STATE_LATCHED : (int16_t)g_last_state[m];
+        const int16_t latched_state = g_latch_runaway[m] ? STATE_RUNAWAY : STATE_LATCHED;
+        const int16_t state_to_pc = (g_latched[m] && motor_ok) ? latched_state : (int16_t)g_last_state[m];
         const int16_t slots[SLOTS_PER_MOTOR] = {
-            state_to_pc,              // 状態: 0=Disable 1=Enable 15=ESP32が止めている それ以外=故障
+            state_to_pc,              // 状態: 0=Disable 1=Enable 15=ESP32が止めている 7=暴走で止めた それ以外=故障
             fb_counter[m],            // 帰還の受信回数
             g_pm_valid[m] ? physicalToSlot(g_pm[m], INTERNAL_POS_SCALE) : (int16_t)INT16_MIN, // 内部の位置
             physicalToSlot(position, POS_SCALE),
