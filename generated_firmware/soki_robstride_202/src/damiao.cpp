@@ -31,6 +31,7 @@
 
 ■ よく変える場所(このファイルではなく config.hpp)
   ・モータの台数・ID       → DAMIAO_MOTORS(表の1行=1台)
+  ・速度の上限             → DAMIAO_MOTORS の3列目(モータごと)。書かなければ DAMIAO_MAX_VEL_RADPS
   ・タイムアウトの時間     → DAMIAO_CMD_TIMEOUT_MS / DAMIAO_MOTOR_TIMEOUT_MS
 
 ■ PCとのデータ枠(1台6個。モータnは (n-1)*6 番から。PC側の
@@ -132,11 +133,32 @@ constexpr uint32_t SEND_TIMEOUT_MS = 2;
 
 // 各モータのCAN ID。config.hppの DAMIAO_MOTORS(表の1行=1台)から作る。
 struct MotorIds {
-    uint16_t esc_id;    // 指令を受け取るCAN ID(ESC_ID)
-    uint16_t master_id; // 返事を送ってくるCAN ID(MST_ID)
+    uint16_t esc_id;     // 指令を受け取るCAN ID(ESC_ID)
+    uint16_t master_id;  // 返事を送ってくるCAN ID(MST_ID)
+    float max_vel_radps; // 速度の上限[rad/s]。表で省略すると0になり、DAMIAO_MAX_VEL_RADPSを使う
+                         // (モータの種類で最高速度が違うため。2026-11-17、DM3519用に追加)
 };
-const MotorIds kMotors[] = DAMIAO_MOTORS;
+constexpr MotorIds kMotors[] = DAMIAO_MOTORS;
 constexpr int kMotorCount = sizeof(kMotors) / sizeof(kMotors[0]); // 表の行数=台数
+
+// ESC_IDは1〜15にすること。返事の1バイト目は「上4bit=状態、下4bit=ESC_ID」で、ESCは
+// ESC_IDを4bitに切り詰めずに入れるため、16以上だと脱力中でも状態を「有効(1)」と読み違える
+// (2026-11-09実機で確認: ESC_ID 0x11で起きた)。間違えた表はビルドで止める。
+constexpr bool escIdsOk(int i = 0) {
+    return i >= kMotorCount ||
+           (kMotors[i].esc_id >= 1 && kMotors[i].esc_id <= 0x0F && escIdsOk(i + 1));
+}
+constexpr bool maxVelsOk(int i = 0) {
+    return i >= kMotorCount || (kMotors[i].max_vel_radps >= 0.0f &&
+                                kMotors[i].max_vel_radps <= DAMIAO_V_MAX && maxVelsOk(i + 1));
+}
+static_assert(escIdsOk(), "DAMIAO_MOTORSのESC_IDは1〜15(0x01〜0x0F)にすること");
+static_assert(maxVelsOk(), "DAMIAO_MOTORSの速度の上限は0(=DAMIAO_MAX_VEL_RADPSを使う)〜DAMIAO_V_MAXにすること");
+
+// モータmの速度の上限[rad/s]
+constexpr float maxVelRadps(int m) {
+    return kMotors[m].max_vel_radps > 0.0f ? kMotors[m].max_vel_radps : DAMIAO_MAX_VEL_RADPS;
+}
 static_assert(kMotorCount >= 1 && kMotorCount * SLOTS_PER_MOTOR <= Rx16NUM,
               "DAMIAO_MOTORSは1〜4行(PCとのデータ枠24個 ÷ 1台6個)");
 
@@ -332,18 +354,19 @@ void sendCommands() {
         }
 
         // ---- 指令値の範囲チェック(serial_tx_201へ直接送られた場合も守る) ----
-        // 速度は±DAMIAO_MAX_VEL_RADPSに丸める。角度制御の速さ上限が0以下なら有効にしない
+        // 速度はモータごとの上限(maxVelRadps)に丸める。角度制御の速さ上限が0以下なら有効にしない
         // (0だとESCの動きが決まらないため。RobStrideと同じ扱い)。角度は±12radに丸める
         // (内部の位置の上限POS_VEL_MAX_INTERNAL_RADの外へは行かせない)。
         float target = (float)(rx[off + 1] * (mode == MODE_VEL ? VEL_SCALE : POS_SCALE));
         float vel_limit = (float)(rx[off + 2] * VEL_SCALE);
+        const float max_vel = maxVelRadps(m);
         if (mode == MODE_VEL) {
-            target = std::min(std::max(target, -DAMIAO_MAX_VEL_RADPS), DAMIAO_MAX_VEL_RADPS);
+            target = std::min(std::max(target, -max_vel), max_vel);
         } else if (mode == MODE_POS_VEL) {
             if (vel_limit <= 0.0f) {
                 mode = MODE_DISABLED;
             }
-            vel_limit = std::min(vel_limit, DAMIAO_MAX_VEL_RADPS);
+            vel_limit = std::min(vel_limit, max_vel);
             target = std::min(std::max(target, -POS_VEL_MAX_INTERNAL_RAD), POS_VEL_MAX_INTERNAL_RAD);
         }
         const uint16_t motor_can_id = kMotors[m].esc_id;

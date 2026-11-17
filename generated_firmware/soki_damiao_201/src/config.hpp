@@ -388,15 +388,22 @@ SPDX-License-Identifier: MIT
 //   MST_ID: そのESCが返事(帰還)を送るCAN ID(ESCごとに別の番号)
 //   ※新しいESCは工場出荷時どれも ESC_ID=1, MST_ID=0x000。そのままだと2台目以降と
 //     ぶつかるので、つなぐ前に damiao_ctrl/scripts/dm_usbcan_param.py で書き換える。
-//   ※番号の決め方(推奨): ESC_ID=n, MST_ID=0x010+n(例: 3台目は 0x03 と 0x013)。
-//     モータ1は工場出荷のMST_ID=0x000のまま使っている(2026-10-14〜)。
+//   ※番号の決め方(独ステ用、2026-11-09〜): モータn → ESC_ID=n, MST_ID=0x20+n。
+//     奇数=操舵(DM2325)、偶数=駆動(DM3519)。k号機=モータ2k-1と2k。1〜2号機はこのESP32(201)、
+//     3〜4号機は2枚目のESP32(204)。表は damiao_ctrl/docs/開発ガイド.md 5.1。
+//   ※ESC_IDは15(0x0F)以下にすること。ESCの返事の1バイト目は「上4bit=状態、下4bit=ESC_ID」で、
+//     16以上にするとESC_IDの上の桁が状態に混ざり、脱力中でも「有効(1)」と読み違える
+//     (2026-11-09実機で確認: ESC_ID 0x11で起きた)。MST_IDにはこの制約は無い。
+//   ※3列目(省略可): そのモータの速度の上限[rad/s]。省略するとDAMIAO_MAX_VEL_RADPS。
+//     DM2325は実測の最高速度48rad/sの95%=45.6、DM3519は計算上の最高速度
+//     (ESCのMAX_SPD 1200 ÷ 減速比19.2 = 62.5rad/s)の95%=59.4(2026-11-17)。
+//     PC側 damiao_ctrl.yaml の max_vel_per_motor と同じ値にする。
 //   ※1枚のESP32で最大4台(PCとのデータ枠24個 ÷ 1台6個)。5台以上はESP32を増やす。
 //   ※PC側 damiao_ctrl/config/damiao_ctrl.yaml の motor_count も同じ台数にする。
-//                ESC_ID  MST_ID
+//                ESC_ID  MST_ID  速度の上限
 #define DAMIAO_MOTORS {                                                    \
-    {0x01, 0x000}, /* モータ1: 元からのESC(MST_IDは工場出荷のまま)     */ \
-    {0x02, 0x012}, /* モータ2: 2026-11-02に追加したESC                  */ \
-    {0x03, 0x013}, /* モータ3: DM3519(減速比19.2)。2026-11-07に追加      */ \
+    {0x01, 0x021, 45.6f}, /* モータ1: 1号機 操舵(DM2325, 減速比25)     */ \
+    {0x02, 0x022, 59.4f}, /* モータ2: 1号機 駆動(DM3519, 減速比19.2)   */ \
 }
 
 // PCからの指令がこの時間途絶えたら、全モータを脱力させる[ms]。
@@ -409,9 +416,10 @@ SPDX-License-Identifier: MIT
 // PCから一度0(脱力)を送ってから改めて指令すると復帰する。
 #define DAMIAO_MOTOR_TIMEOUT_MS 100
 
-// 速度の上限[rad/s]。速度制御の目標と、角度制御の速さの上限をこの範囲に丸める
-// (PCのdamiao_driver_nodeのmax_vel_radpsと同じ値。serial_txへ直接送られた場合もここで守る)。
-// 実機の最高速度は約48rad/s(ESCの最高速度の設定による、2026-10-15実測)で、その95%。
+// 速度の上限[rad/s]の既定値。DAMIAO_MOTORSの3列目を省略したモータに使う。速度制御の目標と、
+// 角度制御の速さの上限をこの範囲に丸める(PCのdamiao_driver_nodeの上限と同じ値にする。
+// serial_txへ直接送られた場合もここで守る)。
+// DM2325の実機の最高速度は約48rad/s(ESCの最高速度の設定による、2026-10-15実測)で、その95%。
 #define DAMIAO_MAX_VEL_RADPS 45.6f
 
 // 返事の数値を戻すための範囲(位置±P_MAX[rad]、速度±V_MAX[rad/s]、トルク±T_MAX[N・m])。
