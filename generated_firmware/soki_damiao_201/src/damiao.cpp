@@ -79,6 +79,28 @@
 #include <cmath>
 #include <cstring>
 
+// ---------------------------------------------------------------------
+// 操舵の原点センサー(MISUMI C-MSX951N-2M-R、NPN出力)  2026-11-17追加
+// 配線(SOKI基板 ENC2ポート): 茶=+5V 青=GND 黒(出力1・遮光時ON)=ENC2_A(GPIO5)
+//   白(出力2・入光時ON)は使わない(先端を絶縁しておく)。
+//   内部プルアップ(3.3V)で読む。外付けのプルアップは付けない(5Vに引くとESP32が壊れる)。
+// PCへは serial_rx の DAMIAO_ORIGIN_SENSOR_SLOT 番に次の値で送る(br_drive/origin_sensor_node が読む):
+//   1=スリットは空(黒がOFF)  2=スリットに物がある = 原点(黒がON)
+//   (0 のままなら、このファームはセンサーを読んでいない)
+//   ※黒が断線・センサーの電源が切れた時も 1(空)になる(区別できない)。
+// 使わない時は config.hpp に #define DAMIAO_ORIGIN_SENSOR_DISABLE を書く。
+// ピンやスロットを変える時は、config.hpp に同じ名前で #define すればそちらが優先される。
+// ---------------------------------------------------------------------
+#ifndef DAMIAO_ORIGIN_SENSOR_DISABLE
+#ifndef DAMIAO_ORIGIN_SENSOR_PIN
+#define DAMIAO_ORIGIN_SENSOR_PIN ENC2_A // 黒線
+#endif
+#ifndef DAMIAO_ORIGIN_SENSOR_SLOT
+#define DAMIAO_ORIGIN_SENSOR_SLOT 23
+#endif
+#define DAMIAO_ORIGIN_SENSOR_ENABLED 1
+#endif
+
 namespace {
 
 constexpr int SLOTS_PER_MOTOR = 6;
@@ -589,6 +611,41 @@ void receiveFeedback() {
     }
 }
 
+#ifdef DAMIAO_ORIGIN_SENSOR_ENABLED
+static_assert(DAMIAO_ORIGIN_SENSOR_SLOT >= kMotorCount * SLOTS_PER_MOTOR && DAMIAO_ORIGIN_SENSOR_SLOT < Rx16NUM,
+              "DAMIAO_ORIGIN_SENSOR_SLOTがモータの帰還と重なっている(モータ4台の時は使えない)");
+
+// 原点センサーの値: 1=空 2=原点
+constexpr int16_t ORIGIN_EMPTY = 1;
+constexpr int16_t ORIGIN_DETECTED = 2;
+// 同じ読み取りがこの回数(×5ms)続いたら値を変える(ノイズ・チャタリング対策)
+constexpr int ORIGIN_STABLE_COUNT = 3;
+
+void readOriginSensor() {
+    // NPN出力: ON = GNDに落ちる = LOW
+    const bool dark_on = digitalRead(DAMIAO_ORIGIN_SENSOR_PIN) == LOW;
+    const int16_t now = dark_on ? ORIGIN_DETECTED : ORIGIN_EMPTY;
+
+    static int16_t candidate = 0;
+    static int count = 0;
+    static int16_t stable = 0; // 0 = まだ決まっていない(PCへは送らない)
+    if (now == candidate) {
+        if (count < ORIGIN_STABLE_COUNT) {
+            count++;
+        }
+    } else {
+        candidate = now;
+        count = 1;
+    }
+    if (count >= ORIGIN_STABLE_COUNT) {
+        stable = candidate;
+    }
+    if (stable != 0) {
+        serialWriteTx(DAMIAO_ORIGIN_SENSOR_SLOT, &stable, 1);
+    }
+}
+#endif
+
 } // namespace
 
 void damiaoInit() {
@@ -596,6 +653,9 @@ void damiaoInit() {
         g_init_step[m] = INIT_IDLE;
         g_latched[m] = true; // PCが0を送るまで動かさない
     }
+#ifdef DAMIAO_ORIGIN_SENSOR_ENABLED
+    pinMode(DAMIAO_ORIGIN_SENSOR_PIN, INPUT_PULLUP);
+#endif
     // 受信キューは返事が数台分まとめて届いても溢れないよう少し長めにする
     if (!twaiInstall(16)) {
         Serial.println("[ERR] damiao: TWAI install failed");
@@ -610,6 +670,9 @@ void damiaoTask(void *pvParameters) {
         receiveFeedback();
         sendCommands();
         requestFeedbackWhileDisabled();
+#ifdef DAMIAO_ORIGIN_SENSOR_ENABLED
+        readOriginSensor();
+#endif
         vTaskDelay(5); // 200Hz (ros2canのcubemars.cpp/robomas.cppと同じ周期)
     }
 }
