@@ -444,6 +444,7 @@ ros2 topic pub --once /zero_channel_request std_msgs/msg/Int32MultiArray \
 | `xiao_can2io_with_foc` | xiao-esp32-s3_can2io + b-g431-esc1_can2io (FOCモータ, robomas互換) | 2ノード構成のうち1ノードをFOCモータ(SimpleFOC、速度制御のみ)用チャンネルに置き換え |
 | `xiao_mes_can_host` | XIAO ESP32S3 MES (CAN Host) | BOARD_MES用。各ノードMD1-2(指令)/SW1+ENC1-2+SW3(帰還)。ENC2とSW2/SW3はピン共有(ファーム側config.hppで排他固定) |
 | `xiao_ss_can_host` | XIAO ESP32S3 SS (CAN Host) | BOARD_SS用。SERVO1-5+TR1-4(ソレノイドバルブ)の9指令チャンネルのため1ノード9スロットに拡張、24スロットの制約でノード数は既定2まで |
+| `xiao_var_can_host` | XIAO ESP32S3 VAR (CAN Host) | BOARD_VAR用。4ノード x 5スロット、スロット位置はSOKIと同じ。各ノードMD1(指令スロット3)/SW1-3+ENC1-2(帰還)。ENC2とMD1はピン共有(ファーム側config.hppのENC2_MDで排他固定) |
 | `robomas_driver` | xiao-esp32-s3_can2io (MODE_ROBOMAS, DJIロボマス x4) | ノード分配なし。独立デバイスとしてDJIロボマス最大4台を直接制御。詳細は[10章](#10-djiロボマスmode_robomas) |
 | `cubemars_ak_driver` | xiao-esp32-s3_can2io (MODE_CUBEMARS, CubeMars AKシリーズ x4) | ノード分配なし。独立デバイスとしてCubeMars AKシリーズ最大4台を直接制御。詳細は[9章](#9-cubemars-akシリーズmode_cubemars) |
 | `damiao_driver` | xiao-esp32-s3_can2io (MODE_DAMIAO, Damiao DM3520 x4) | ノード分配なし。1台6スロットで最大4台。詳細は[10a章](#10a-damiaorobstridemode_damiao--mode_robstride) |
@@ -758,15 +759,15 @@ Damiaoの位置（帰還+3）は±12.5rad、つまり幅25000で折り返しま�
 | DEVICE_ID | serial_bridge互換フレームの `serial_tx_[ID]`/`serial_rx_[ID]` に対応するID |
 | CAN_ID（下2桁=ノード番号） | ノードのCAN ID。101〜104のように下2桁がノード番号になるよう設定 |
 | MODE | `CAN`(通常のCANノード) / `CAN_HOST`(CANホスト) / `IO`(CAN無し) / `DEBUG` / `CAN_MONITOR` / `ROBOMAS`(DJI RoboMaster) / `CUBEMARS`(CubeMars AK) / `DAMIAO`(Damiao DM、専用CAN線) / `ROBSTRIDE`(RobStride EL05、専用CAN線) |
-| BOARD_VARIANT | 書き込み先の物理基板。`BOARD_SOKI`(既存のピン配置) / `BOARD_MES`(ENC1/ENC2/MD1/MD2+SW1) / `BOARD_SS`(SERVO1-5+TR1-4) |
+| BOARD_VARIANT | 書き込み先の物理基板。`BOARD_SOKI`(既存のピン配置) / `BOARD_MES`(ENC1/ENC2/MD1/MD2+SW1) / `BOARD_SS`(SERVO1-5+TR1-4) / `BOARD_VAR`(ENC1+ENC2/MD1切替+SW1-3) |
 | MULTI1〜3 | ピン共有の入出力切替（0=スイッチ入力 / 1=サーボ出力）。BOARD_SOKI系のみ意味を持つ |
-| ENC1_MD / ENC2_MD | ピン共有の入出力切替（0=エンコーダ / 1=MD(PWM+DIR)出力） |
+| ENC1_MD / ENC2_MD | ピン共有の入出力切替（0=エンコーダ / 1=MD(PWM+DIR)出力）。BOARD_VARはENC2_MDのみ使い、1にするとENC2のピンがMD1になる |
 | ENC2_SW | BOARD_MES専用。ENC2とSW2/SW3はピン共有のため、どちらで使うかを選択 |
-| サーボ設定（SERVO1〜5） | `MIN_US`/`MAX_US`(パルス幅)、`MIN_DEG`/`MAX_DEG`/`INIT_DEG`(角度)をサーボごとに設定。BOARD_SOKIはMULTIn=1(サーボ出力)のチャンネルのみSERVO1-3が有効、BOARD_SSはSERVO1-5が常時有効（SERVO4/5はBOARD_SOKI/BOARD_MESでは未配線） |
+| サーボ設定（SERVO1〜5） | `MIN_US`/`MAX_US`(パルス幅)、`MIN_DEG`/`MAX_DEG`/`INIT_DEG`(角度)をサーボごとに設定。BOARD_SOKIはMULTIn=1(サーボ出力)のチャンネルのみSERVO1-3が有効、BOARD_SSはSERVO1-5が常時有効（SERVO4/5はBOARD_SOKI/BOARD_MESでは未配線、BOARD_VARはサーボ無し） |
 | 高度な設定（既定で折りたたみ） | `SERVO_PWM_FREQ`/`SERVO_PWM_RESOLUTION`、`MD_PWM_FREQ`/`MD_PWM_RESOLUTION`、`ENABLE_LED`、`CAN_HOST_DIAG_ENABLE` |
 
 `CAN_NODE_COUNT`/`CAN_SLOTS_PER_NODE` はBOARD_VARIANTごとに `config.hpp` 内で
-コンパイル時分岐しているため、このGUIからは編集できません（BOARD_SOKI/BOARD_MES:
+コンパイル時分岐しているため、このGUIからは編集できません（BOARD_SOKI/BOARD_MES/BOARD_VAR:
 4ノード x 5スロット、BOARD_SS: 2ノード x 9スロット）。実際の接続台数に合わせて
 変更したい場合は、生成後のプロジェクトの `src/config.hpp` を直接編集してください。
 同様に、ROBOMASの速度PIDゲイン等、実測でチューニングされた値もこのGUIの対象外です

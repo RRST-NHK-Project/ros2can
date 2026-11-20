@@ -64,6 +64,7 @@ _BOARD_LABELS = {
     "BOARD_SOKI": "SOKI (soki本体基板、既存のピン配置)",
     "BOARD_MES": "MES (ENC1/ENC2/MD1/MD2 + SW1)",
     "BOARD_SS": "SS (SERVO1-5 + TR1-4 ソレノイドバルブ)",
+    "BOARD_VAR": "VAR (ENC1 + ENC2/MD1切替 + SW1-3)",
 }
 
 
@@ -219,7 +220,8 @@ class FirmwareDialog(QDialog):
         self.board_combo = QComboBox()
         self.board_combo.setToolTip(
             "書き込み先の物理基板を選択してください。ピン配置(defs.hpp)と入出力"
-            "ロジックが基板ごとに切り替わります(BOARD_MES/BOARD_SSはMODE_IO非対応)。")
+            "ロジックが基板ごとに切り替わります(BOARD_MES/BOARD_SSはMODE_IO非対応)。"
+            "BOARD_VARではENC2_MDがENC2とMD1の切替になり、ENC1_MD/MULTI1-3は無視されます。")
         form.addRow("BOARD_VARIANT:", self.board_combo)
 
         self.multi_combos = []
@@ -259,7 +261,7 @@ class FirmwareDialog(QDialog):
             "SERVOn_MIN_US/MAX_US(パルス幅) と MIN_DEG/MAX_DEG/INIT_DEG(角度) を"
             "サーボごとに設定します。BOARD_SOKIではMULTIn=1(サーボ出力)のチャンネルの"
             "みSERVO1-3が有効、BOARD_SSではSERVO1-5が常時有効です(SERVO4/5は"
-            "BOARD_SOKI/BOARD_MESでは未配線・未使用)。MULTIn=2(デジタル出力)の"
+            "BOARD_SOKI/BOARD_MESでは未配線・未使用、BOARD_VARはサーボ無し)。MULTIn=2(デジタル出力)の"
             "チャンネルはこの設定を無視します。")
         servo_note.setWordWrap(True)
         servo_note.setStyleSheet("color: #5f6368;")
@@ -337,7 +339,7 @@ class FirmwareDialog(QDialog):
 
         can_node_count_note = QLabel(
             "CAN_NODE_COUNT / CAN_SLOTS_PER_NODE はBOARD_VARIANTごとにconfig.hpp内で"
-            "#if分岐しているため、このGUIからは編集できません(BOARD_SOKI/BOARD_MES: "
+            "#if分岐しているため、このGUIからは編集できません(BOARD_SOKI/BOARD_MES/BOARD_VAR: "
             "4ノード×5スロット、BOARD_SS: 2ノード×9スロット)。実際の接続台数に合わせて"
             "変更したい場合は生成後のプロジェクトのsrc/config.hppを直接編集してください。")
         can_node_count_note.setWordWrap(True)

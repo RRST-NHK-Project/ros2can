@@ -104,6 +104,31 @@ SPDX-License-Identifier: MIT
 #define CAN_RX 44
 #define CAN_TX 43
 
+#elif BOARD_VARIANT == BOARD_VAR
+// SOKIからサーボとMD2を除いた構成(2026-11-21追加)。サーボ・MD2は無い。
+
+// 状態表示LED
+#define LED 21
+
+// エンコーダ (ENC1は常時エンコーダ。ENC2はMD1とピン共有)
+#define ENC1_A 3
+#define ENC1_B 4
+#define ENC2_A 5 // MD1Pのピンと共有
+#define ENC2_B 6 // MD1Dのピンと共有
+
+// MD (ENC2とピン共有。config.hppのENC2_MDで切替)
+#define MD1P ENC2_A // MD1 PWM
+#define MD1D ENC2_B // MD1 DIR
+
+// スイッチ (専用ピン、常時スイッチ入力)
+#define SW1 7
+#define SW2 8
+#define SW3 9
+
+// CAN (MCP2561 + TWAI)。SOKI(RX=2/TX=1)とはRX/TXが逆
+#define CAN_RX 1
+#define CAN_TX 2
+
 #else
 #error "BOARD_VARIANT: unknown board"
 #endif

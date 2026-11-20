@@ -284,6 +284,81 @@ def _append_ss_node_channels(
     # 帰還チャンネルは無い(ENC/MD/SWを搭載しない)
 
 
+def _append_var_node_channels(
+    tx: List[ChannelDef], rx: List[ChannelDef],
+    node: int, slots_per_node: int,
+    md_pwm_max: int = DEFAULT_MD_PWM_MAX,
+) -> None:
+    """BOARD_VAR (xiao-esp32-s3_can2io) の1ノード分のチャンネルを tx/rx に追加する。
+
+    SOKIからサーボとMD2を除いた構成(2026-11-21追加)。スロット位置はSOKIと同じ
+    (指令3=MD1 / 帰還0-2=SW1-3, 3=ENC1, 4=ENC2)で、指令0-2・4は未使用。
+    ENC2とMD1はピン共有で、ファームウェアconfig.hppのENC2_MD(0=ENC2エンコーダ/
+    1=MD1)でどちらを使うかコンパイル時に固定する。ENC1とSW1-3は常時有効。
+    [firmware/xiao-esp32-s3_can2io/src/pin_ctrl_task.cpp のIO_MD_Output/IO_ENC_Input/
+    IO_SW_Input(BOARD_VAR節)のスロット割当と一致させること]
+    """
+    base = node * slots_per_node
+    node_no = node + 1
+    can_id = 100 + node_no
+    group_cmd = f"ノード{node_no} (CAN_ID={can_id}, VAR) 指令"
+    group_fb = f"ノード{node_no} (CAN_ID={can_id}, VAR) 帰還"
+
+    tx.append(ChannelDef(base + 3, f"N{node_no} MD1", MOTOR, group=group_cmd,
+                          min=-md_pwm_max, max=md_pwm_max,
+                          note="ENC2 とピン共有。ENC2_MD=1(MD)のときのみ有効。"
+                               "符号=方向、絶対値=PWMデューティ"))
+
+    for s in range(3):
+        rx.append(ChannelDef(base + s, f"N{node_no} SW{s + 1}", DIGITAL_IN, group=group_fb,
+                              note="専用ピン、常時有効"))
+    rx.append(ChannelDef(base + 3, f"N{node_no} ENC1", COUNTER, group=group_fb, unit="count",
+                          zeroable=True, note="常時エンコーダ"))
+    rx.append(ChannelDef(base + 4, f"N{node_no} ENC2", COUNTER, group=group_fb, unit="count",
+                          zeroable=True,
+                          note="MD1 とピン共有。ENC2_MD=0(エンコーダ)のときのみ有効"
+                               "(ENC2_MD=1の間は常に0)"))
+
+
+def make_var_host_profile(
+    key: str = "xiao_var_can_host",
+    name: str = "XIAO ESP32S3 VAR (CAN Host)",
+    node_count: int = DEFAULT_CAN_NODE_COUNT,
+    slots_per_node: int = DEFAULT_CAN_SLOTS_PER_NODE,
+    md_pwm_max: int = DEFAULT_MD_PWM_MAX,
+) -> DeviceProfile:
+    """xiao-esp32-s3_can2io BOARD_VAR / MODE_CAN_HOST 用プロファイル。
+
+    24スロットを CAN バス上の最大 node_count ノードへ slots_per_node ずつ分配する
+    (BOARD_SOKIと同じ5スロット/ノード固定)。
+    各ノード: 指令 MD1(スロット3) / 帰還 SW1-3, ENC1, ENC2。
+    """
+    tx: List[ChannelDef] = []
+    rx: List[ChannelDef] = []
+
+    for node in range(node_count):
+        _append_var_node_channels(tx, rx, node, slots_per_node, md_pwm_max)
+
+    tx = _fill_remaining(tx, _raw_out)
+    rx = _fill_remaining(rx, _raw_in)
+
+    return DeviceProfile(
+        key=key,
+        name=name,
+        description=(
+            f"BOARD_VAR / MODE_CAN_HOST 用。24スロットを CAN バス上の最大"
+            f"{node_count}ノードへ{slots_per_node}スロットずつ分配する。各ノードは "
+            "MD1(指令) / SW1-3+ENC1-2(帰還)を担当し、スロット位置はSOKIと同じ。"
+            "ENC2とMD1はピン共有でconfig.hppのENC2_MDにより排他切替(コンパイル時固定)。"
+            "ノード数・スロット数はプロファイル編集で変更可能。"
+        ),
+        tx=tx,
+        rx=rx,
+        node_count=node_count,
+        slots_per_node=slots_per_node,
+    )
+
+
 def make_mes_host_profile(
     key: str = "xiao_mes_can_host",
     name: str = "XIAO ESP32S3 MES (CAN Host)",
@@ -864,6 +939,7 @@ def _build_builtin_profiles() -> "dict[str, DeviceProfile]":
         make_can_host_with_foc_node_profile(),
         make_mes_host_profile(),
         make_ss_host_profile(),
+        make_var_host_profile(),
         make_robomas_profile(),
         make_cubemars_profile(),
         make_damiao_profile(),

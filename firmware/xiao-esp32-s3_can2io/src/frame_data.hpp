@@ -21,9 +21,9 @@ MODE_CAN_HOST/MODE_CAN時は下記のMD/SERVO/TR直接マッピングは使用�
 24スロットを CAN バス上の各ノードへ 5スロットずつ分配する
 (詳細は README.md の CAN Slot Mapping、CanIoRxData/CanIoTxData を参照)。
 
-MODE_IO (非CAN, スタンドアロン) 時のみ以下のマッピングを使用:
+MODE_IO (非CAN, スタンドアロン) 時のみ以下のマッピングを使用 (BOARD_SOKI/BOARD_VAR):
 0: デバッグ用
-1: ENC1 raw pulse (ENC1_MD == 1 の場合は常に0)
+1: ENC1 raw pulse (ENC1_MD == 1 の場合は常に0。BOARD_VARは常時エンコーダ)
 2: ENC2 raw pulse (ENC2_MD == 1 の場合は常に0)
 3~8: 予備
 9~16: SW1~8
@@ -36,10 +36,11 @@ MODE_CAN_HOST/MODE_CAN時は下記のMD/SERVO/TR直接マッピングは使用�
 24スロットを CAN バス上の各ノードへ 5スロットずつ分配する
 (詳細は README.md の CAN Slot Mapping、CanIoRxData/CanIoTxData を参照)。
 
-MODE_IO (非CAN, スタンドアロン) 時のみ以下のマッピングを使用:
+MODE_IO (非CAN, スタンドアロン) 時のみ以下のマッピングを使用 (BOARD_SOKI/BOARD_VAR):
 0: デバッグ用
-1: MD1 PWM指令 (ENC1_MD == 1 の場合のみ有効。符号=方向、絶対値=デューティ)
-2: MD2 PWM指令 (ENC2_MD == 1 の場合のみ有効。符号=方向、絶対値=デューティ)
+1: MD1 PWM指令 (ENC1_MD == 1 の場合のみ有効。符号=方向、絶対値=デューティ。
+   BOARD_VARはENC2_MD == 1 の場合のみ有効)
+2: MD2 PWM指令 (ENC2_MD == 1 の場合のみ有効。符号=方向、絶対値=デューティ。BOARD_VARは未使用)
 3~8: 予備(未使用)
 9~16: SERVO1~8
 17~23: TR1~7 (実機は非搭載のため未使用)
@@ -67,6 +68,11 @@ BOARD_MES (5スロット、0-1のみ使用):
 BOARD_SS (9スロット):
   0-4: SERVO1-5
   5-8: TR1-4 (ソレノイドバルブ、0以外でON)
+
+BOARD_VAR (5スロット、3のみ使用。位置はBOARD_SOKIと同じ):
+  0-2: 未使用 (サーボ無し)
+  3: MD1 PWM指令 (ENC2_MD == 1 の場合のみ有効。MD1はENC2のピンを使う。符号=方向、絶対値=デューティ)
+  4: 未使用 (MD2無し)
 */
 
 extern volatile int16_t CanIoTxData[CAN_IO_SLOT_COUNT];
@@ -87,4 +93,9 @@ BOARD_MES (5スロット):
   4: 未使用
 
 BOARD_SS (9スロット): 帰還なし、全スロット常に0
+
+BOARD_VAR (5スロット、位置はBOARD_SOKIと同じ):
+  0-2: SW1-3 (専用ピン、常時有効)
+  3: ENC1 raw pulse (常時エンコーダ)
+  4: ENC2 raw pulse (ENC2_MD == 1 の場合は常に0)
 */

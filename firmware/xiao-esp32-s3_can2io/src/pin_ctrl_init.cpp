@@ -274,4 +274,103 @@ void IO_init() {
     digitalWrite(TR4, LOW);
 }
 
+#elif BOARD_VARIANT == BOARD_VAR
+
+void IO_init() {
+    // SOKIからサーボとMD2を除いた構成。ENC1は常時エンコーダ、ENC2とMD1はピン共有
+    // (config.hppのENC2_MDで選択)、SW1-3は専用ピンで常時スイッチ入力。
+
+    // ENC1: 常時エンコーダとして使用
+    gpio_set_pull_mode((gpio_num_t)ENC1_A, GPIO_PULLUP_ONLY);
+    gpio_set_pull_mode((gpio_num_t)ENC1_B, GPIO_PULLUP_ONLY);
+
+    pcnt_config_t pcnt_config1 = {};
+    pcnt_config1.pulse_gpio_num = ENC1_A;
+    pcnt_config1.ctrl_gpio_num = ENC1_B;
+    pcnt_config1.lctrl_mode = PCNT_MODE_KEEP;
+    pcnt_config1.hctrl_mode = PCNT_MODE_REVERSE;
+    pcnt_config1.pos_mode = PCNT_COUNT_INC;
+    pcnt_config1.neg_mode = PCNT_COUNT_DEC;
+    pcnt_config1.counter_h_lim = COUNTER_H_LIM;
+    pcnt_config1.counter_l_lim = COUNTER_L_LIM;
+    pcnt_config1.unit = PCNT_UNIT_0;
+    pcnt_config1.channel = PCNT_CHANNEL_0;
+
+    pcnt_config_t pcnt_config2 = {};
+    pcnt_config2.pulse_gpio_num = ENC1_B;
+    pcnt_config2.ctrl_gpio_num = ENC1_A;
+    pcnt_config2.lctrl_mode = PCNT_MODE_REVERSE;
+    pcnt_config2.hctrl_mode = PCNT_MODE_KEEP;
+    pcnt_config2.pos_mode = PCNT_COUNT_INC;
+    pcnt_config2.neg_mode = PCNT_COUNT_DEC;
+    pcnt_config2.counter_h_lim = COUNTER_H_LIM;
+    pcnt_config2.counter_l_lim = COUNTER_L_LIM;
+    pcnt_config2.unit = PCNT_UNIT_0;
+    pcnt_config2.channel = PCNT_CHANNEL_1;
+
+    pcnt_unit_config(&pcnt_config1);
+    pcnt_unit_config(&pcnt_config2);
+
+    pcnt_counter_pause(PCNT_UNIT_0);
+    pcnt_counter_clear(PCNT_UNIT_0);
+    pcnt_counter_resume(PCNT_UNIT_0);
+
+    // チャタリング防止のフィルターを有効化
+    pcnt_filter_enable(PCNT_UNIT_0);
+    pcnt_set_filter_value(PCNT_UNIT_0, PCNT_FILTER_VALUE);
+
+#if ENC2_MD == 1
+    // MD1の初期化 (ENC2_A/ENC2_BをPWM/DIRとして使用)。起動時はモータ停止(デューティ0、DIR=LOW)
+    pinMode(MD1D, OUTPUT);
+    digitalWrite(MD1D, LOW);
+    ledcSetup(0, MD_PWM_FREQ, MD_PWM_RESOLUTION);
+    ledcAttachPin(MD1P, 0);
+    ledcWrite(0, 0);
+#else
+    // ENC2: エンコーダとして使用
+    gpio_set_pull_mode((gpio_num_t)ENC2_A, GPIO_PULLUP_ONLY);
+    gpio_set_pull_mode((gpio_num_t)ENC2_B, GPIO_PULLUP_ONLY);
+
+    pcnt_config_t pcnt_config3 = {};
+    pcnt_config3.pulse_gpio_num = ENC2_A;
+    pcnt_config3.ctrl_gpio_num = ENC2_B;
+    pcnt_config3.lctrl_mode = PCNT_MODE_KEEP;
+    pcnt_config3.hctrl_mode = PCNT_MODE_REVERSE;
+    pcnt_config3.pos_mode = PCNT_COUNT_INC;
+    pcnt_config3.neg_mode = PCNT_COUNT_DEC;
+    pcnt_config3.counter_h_lim = COUNTER_H_LIM;
+    pcnt_config3.counter_l_lim = COUNTER_L_LIM;
+    pcnt_config3.unit = PCNT_UNIT_1;
+    pcnt_config3.channel = PCNT_CHANNEL_0;
+
+    pcnt_config_t pcnt_config4 = {};
+    pcnt_config4.pulse_gpio_num = ENC2_B;
+    pcnt_config4.ctrl_gpio_num = ENC2_A;
+    pcnt_config4.lctrl_mode = PCNT_MODE_REVERSE;
+    pcnt_config4.hctrl_mode = PCNT_MODE_KEEP;
+    pcnt_config4.pos_mode = PCNT_COUNT_INC;
+    pcnt_config4.neg_mode = PCNT_COUNT_DEC;
+    pcnt_config4.counter_h_lim = COUNTER_H_LIM;
+    pcnt_config4.counter_l_lim = COUNTER_L_LIM;
+    pcnt_config4.unit = PCNT_UNIT_1;
+    pcnt_config4.channel = PCNT_CHANNEL_1;
+
+    pcnt_unit_config(&pcnt_config3);
+    pcnt_unit_config(&pcnt_config4);
+
+    pcnt_counter_pause(PCNT_UNIT_1);
+    pcnt_counter_clear(PCNT_UNIT_1);
+    pcnt_counter_resume(PCNT_UNIT_1);
+
+    // チャタリング防止のフィルターを有効化
+    pcnt_filter_enable(PCNT_UNIT_1);
+    pcnt_set_filter_value(PCNT_UNIT_1, PCNT_FILTER_VALUE);
+#endif
+
+    // SW1-3: 専用ピン、常時スイッチ
+    pinMode(SW1, INPUT_PULLUP);
+    pinMode(SW2, INPUT_PULLUP);
+    pinMode(SW3, INPUT_PULLUP);
+}
+
 #endif

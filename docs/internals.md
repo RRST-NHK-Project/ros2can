@@ -185,6 +185,7 @@ GUIスレッド側の `HardwareManager.service()`（10ms周期）が中心ルー
 | `xiao_can2io_with_foc` | 上記のうち1ノードをFOCモータ（b-g431-esc1）チャンネルに置換 |
 | `xiao_mes_can_host` | BOARD_MES用。MD1-2固定 + ENC1/SW1固定 + ENC2⇔SW2/SW3切替 |
 | `xiao_ss_can_host` | BOARD_SS用。9スロット/ノード（SERVO1-5+TR1-4）、ノード数既定2 |
+| `xiao_var_can_host` | BOARD_VAR用。5スロット/ノード、SOKIと同じ位置（指令3=MD1 / 帰還0-2=SW1-3, 3=ENC1, 4=ENC2） |
 | `robomas_driver` | MODE_ROBOMAS、独立デバイス、DJI RoboMaster x4 |
 | `cubemars_ak_driver` | MODE_CUBEMARS、独立デバイス、CubeMars AKシリーズ x4 |
 | `damiao_driver` | MODE_DAMIAO、独立デバイス、Damiao DM3520 x4（6スロット/台） |
@@ -268,10 +269,11 @@ GUIスレッド側の `HardwareManager.service()`（10ms周期）が中心ルー
 
 - `DEVICE_ID`: シリアルフレームのIDバイト。
 - `CAN_ID`（3桁）: `CAN_NODE_INDEX = (CAN_ID % 100) - 1` で自動導出（101→0, 102→1, 103→2, 104→3）。
-- `BOARD_VARIANT`: `BOARD_SOKI` / `BOARD_MES` / `BOARD_SS` の3種。ピン配置は `defs.hpp` 側で `#if BOARD_VARIANT == ...` により**コンパイル時**に切り替わります（実行時分岐ではありません）。
+- `BOARD_VARIANT`: `BOARD_SOKI` / `BOARD_MES` / `BOARD_SS` / `BOARD_VAR` の4種（BOARD_VARは2026-11-21追加。SOKIからサーボとMD2を除いた構成で、CANはRX=1/TX=2）。ピン配置は `defs.hpp` 側で `#if BOARD_VARIANT == ...` により**コンパイル時**に切り替わります（実行時分岐ではありません）。
 - ピン共有マクロもすべてコンパイル時の `#if`:
   - `MULTI1〜3`（BOARD_SOKI専用）: 0=スイッチ入力 / 1=サーボ出力。
   - `ENC1_MD`/`ENC2_MD`（BOARD_SOKI専用）: 0=エンコーダ入力 / 1=MD(PWM+DIR)出力。
+  - `ENC2_MD`（BOARD_VAR）: 0=ENC2 / 1=MD1（ENC2のピンをMD1のPWM/DIRに使う）。BOARD_VARはENC1_MD・MULTI1〜3を参照しない。
   - `ENC2_SW`（BOARD_MES専用）: 0=ENC2 / 1=SW2+SW3。
 - `CAN_NODE_COUNT`/`CAN_SLOTS_PER_NODE`: `BOARD_SS` は `2ノード x 9スロット`、それ以外は `4ノード x 5スロット`。`CAN_NODE_COUNT * CAN_SLOTS_PER_NODE > 24` は `#error` で強制的に弾かれます。
   - **実機で確認された既知の障害モード**（config.hppコメントに明記）: ホストは `[0, CAN_NODE_COUNT)` の全ノードへ毎周期送信するため、**`CAN_NODE_COUNT` を実接続数より大きく設定すると、存在しないノード宛のACKエラーが蓄積し、実測で起動後約40msでBus-Offに陥る**。実接続数と必ず一致させる必要があります。
@@ -329,7 +331,7 @@ slot_offset = node_index * CAN_SLOTS_PER_NODE;
 - サーボ: `angle → clamp(MIN_DEG,MAX_DEG) → map(MIN_US,MAX_US) → duty` の順で変換し `ledcWrite()`。
 - MD: 符号でDIRピンをHIGH/LOW、絶対値を `ledcWrite()` のデューティとして出力。
 - エンコーダ: ESP32のPCNT（ハードウェアパルスカウンタ）を使用し、**raw pulse countをそのまま送信**（角度換算は行わない。deg換算はPC側 `device_profiles.py` の `scale` の責務）。
-- BOARD_SOKIでは `MULTIn`/`ENCn_MD` の値に応じて、該当しない側のチャンネルは 0 固定で送出されます。
+- BOARD_SOKIでは `MULTIn`/`ENCn_MD` の値に応じて、該当しない側のチャンネルは 0 固定で送出されます。BOARD_VARでも `ENC2_MD=1` の間はENC2の帰還が 0 固定になります。
 
 ### 3.6 CubeMars AKシリーズの実装 (`cubemars.cpp`)
 
@@ -481,7 +483,7 @@ rxUpdated シグナル → DevicePanel.refresh_from_rx()（Monitor/Rawタブ更�
 3. **PC側 (`RosBackend.emergency_stop_all()`) がE-STOPの実体**: 全デバイスへゼロ指令を送りつつ `direct_tx`/`topic_passthrough` を両方OFFにして自動送信経路自体を止める。ファームウェア側に対応する専用処理は無い。
 4. **CAN Bus-Off自動復帰**は通信健全性の維持機構であり、モータ出力を安全側に倒すものではない。
 5. `CAN_NODE_COUNT` の過大設定によるBus-Off（3.2節）は設定ミスへの安全機構ではなく単なる既知の障害モード。
-6. BOARD_SS（ソレノイドバルブ）の `TR1-4` は起動時に明示的に `LOW`（OFF）へ初期化される。
+6. BOARD_SS（ソレノイドバルブ）の `TR1-4` は起動時に明示的に `LOW`（OFF）へ初期化される。BOARD_VARの `MD1`（`ENC2_MD=1` のとき）も起動時にデューティ0・DIR=`LOW` へ初期化される。
 7. **`MODE_DAMIAO` / `MODE_ROBSTRIDE` は止めてラッチする**（2026-11-06 PRレビュー指摘で整理）。
 
    | 止める原因 | Damiao | RobStride |

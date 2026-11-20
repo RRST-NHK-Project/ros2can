@@ -42,10 +42,12 @@ SPDX-License-Identifier: MIT
 #define BOARD_SOKI 1 // soki本体基板(root_theta/tip_theta用CubeMars、z/r用ロボマス。既存のピン配置)
 #define BOARD_MES 2  // 新規基板(2026-09-03追加、ENC1/ENC2/MD1/MD2 + SW1、CAN=D6/D7)
 #define BOARD_SS 3   // 新規基板(2026-09-03追加、SERVO1-5 + TR1-4(ソレノイドバルブ)、CAN=D6/D7)
+#define BOARD_VAR 4  // 新規基板(2026-11-21追加、ENC1 + ENC2(MD1とピン共有) + SW1-3、CAN=RX1/TX2)
 
 // MES/SSはMODE_CAN/MODE_CAN_HOST(ノード/スロット方式のIO)専用に入出力ロジックを
 // 実装済み(pin_ctrl_init.cpp/pin_ctrl_task.cpp)。MODE_IO(非CAN単体)はBOARD_SOKI
-// のみ対応(Rx_16Data/Tx_16Dataの直接インデックスがSOKIのSERVO/SW配置前提のため)。
+// とBOARD_VARのみ対応(Rx_16Data/Tx_16Dataの直接インデックスがSOKIのSERVO/SW配置前提
+// のため。BOARD_VARはSOKIからサーボとMD2を除いた構成で、スロット位置はSOKIと同じ)。
 // BOARD_SOKIは既存動作のまま変更なし。
 #define BOARD_VARIANT BOARD_SOKI
 
@@ -110,6 +112,8 @@ SPDX-License-Identifier: MIT
 // ENC1(ENC1_A/ENC1_B)をMD1のPWM/DIRへ、ENC2(ENC2_A/ENC2_B)をMD2のPWM/DIRへ転用する。
 // MDに切替えたチャンネルはエンコーダとして読めなくなる(帰還スロットは0固定になる)。
 // BOARD_MESはMD1/MD2がENCと別ピン(常時専用)のため、この2つはBOARD_SOKI専用。
+// 例外としてBOARD_VARはENC2_MDだけを参照し、ENC2(ENC2_A/ENC2_B)をMD1のPWM/DIRへ転用する
+// (BOARD_VARにはMD2が無く、ENC1は常時エンコーダのためENC1_MDは参照しない)。
 #define ENC1_MD 1
 #define ENC2_MD 1
 

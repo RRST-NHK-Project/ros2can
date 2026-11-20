@@ -287,4 +287,61 @@ void IO_SW_Input() {
     // BOARD_SSにSWポートは無い
 }
 
+#elif BOARD_VARIANT == BOARD_VAR
+// SOKIからサーボとMD2を除いた構成。スロット位置はSOKIと同じにしてある
+// (GUIのプロファイルやROS側でSOKIと同じ位置で読み書きできるようにするため)。
+// CanIoRxData: 3=MD1(ENC2_MD==1のみ)、0-2/4は未使用。
+// CanIoTxData: 0-2=SW1-3, 3=ENC1, 4=ENC2(ENC2_MD==1の間は0)。frame_data.hppのコメントも参照。
+
+void IO_MD_Output() {
+    // MD出力処理 (ENC2_MDでMDに切替えた場合のみ。MD1はENC2のピンを使う)
+#if ENC2_MD == 1
+#if defined(MODE_CAN) || defined(MODE_CAN_HOST)
+    int md1 = constrain((int)CanIoRxData[3], -MD_PWM_MAX, MD_PWM_MAX);
+#else
+    int md1 = constrain((int)Rx_16Data[1], -MD_PWM_MAX, MD_PWM_MAX);
+#endif
+    digitalWrite(MD1D, md1 > 0 ? HIGH : LOW);
+    ledcWrite(0, abs(md1));
+#endif
+}
+
+void IO_Servo_Outout() {
+    // BOARD_VARにサーボポートは無い
+}
+
+void IO_TR_Output() {
+    // BOARD_VARにTRポートは無い
+}
+
+void IO_ENC_Input() {
+    // ENC入力処理 (ENC2_MDでMDに切替えた場合、ENC2は0のまま送る)
+    int16_t enc1 = 0;
+    int16_t enc2 = 0;
+    pcnt_get_counter_value(PCNT_UNIT_0, &enc1);
+#if ENC2_MD == 0
+    pcnt_get_counter_value(PCNT_UNIT_1, &enc2);
+#endif
+#if defined(MODE_CAN) || defined(MODE_CAN_HOST)
+    CanIoTxData[3] = enc1;
+    CanIoTxData[4] = enc2;
+#else
+    Tx_16Data[1] = enc1;
+    Tx_16Data[2] = enc2;
+#endif
+}
+
+void IO_SW_Input() {
+    // SW入力処理 (SW1-3は専用ピンで常時有効)
+#if defined(MODE_CAN) || defined(MODE_CAN_HOST)
+    CanIoTxData[0] = !digitalRead(SW1);
+    CanIoTxData[1] = !digitalRead(SW2);
+    CanIoTxData[2] = !digitalRead(SW3);
+#else
+    Tx_16Data[9] = !digitalRead(SW1);
+    Tx_16Data[10] = !digitalRead(SW2);
+    Tx_16Data[11] = !digitalRead(SW3);
+#endif
+}
+
 #endif

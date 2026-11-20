@@ -5,7 +5,7 @@ config.hpp にはROBOMASのPIDゲインやCubeMarsのMITレンジ等、実測で
 マクロ行だけを正規表現で置換し、それ以外の行(コメント・チューニング値)には一切
 触れない方式にする。対象は以下の3グループ:
 
-- BOARD_VARIANT:  基板バリアント(BOARD_SOKI/BOARD_MES/BOARD_SS)の選択 (単一行、専用に処理)
+- BOARD_VARIANT:  基板バリアント(BOARD_SOKI/BOARD_MES/BOARD_SS/BOARD_VAR)の選択 (単一行、専用に処理)
 - _SIMPLE_MACROS: DEVICE_ID/CAN_ID/MODE_*/MULTIn/ENCn_MD/ENC2_SW (基本設定)
 - SERVO_MACROS:   SERVOn_MIN_US/MAX_US/MIN_DEG/MAX_DEG/INIT_DEG (サーボ設定、n=1-5)
 - ADVANCED_MACROS: SERVO/MD PWM周波数・分解能、ENABLE_LED等 (高度な設定)
