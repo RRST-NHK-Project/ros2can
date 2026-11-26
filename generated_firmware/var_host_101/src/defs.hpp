@@ -125,9 +125,10 @@ SPDX-License-Identifier: MIT
 #define SW2 8
 #define SW3 9
 
-// CAN (MCP2561 + TWAI)。SOKI(RX=2/TX=1)とはRX/TXが逆
-#define CAN_RX 1
-#define CAN_TX 2
+// CAN (MCP2561 + TWAI)。SOKIと同じ(RX=2/TX=1)。
+// 2026-11-26: 最初はRX=1/TX=2で作っていたが逆で、SOKIホストとCAN通信できなかった(実機の配線はTX=1/RX=2)。
+#define CAN_RX 2
+#define CAN_TX 1
 
 #else
 #error "BOARD_VARIANT: unknown board"

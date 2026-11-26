@@ -269,7 +269,7 @@ GUIスレッド側の `HardwareManager.service()`（10ms周期）が中心ルー
 
 - `DEVICE_ID`: シリアルフレームのIDバイト。
 - `CAN_ID`（3桁）: `CAN_NODE_INDEX = (CAN_ID % 100) - 1` で自動導出（101→0, 102→1, 103→2, 104→3）。
-- `BOARD_VARIANT`: `BOARD_SOKI` / `BOARD_MES` / `BOARD_SS` / `BOARD_VAR` の4種（BOARD_VARは2026-11-21追加。SOKIからサーボとMD2を除いた構成で、CANはRX=1/TX=2）。ピン配置は `defs.hpp` 側で `#if BOARD_VARIANT == ...` により**コンパイル時**に切り替わります（実行時分岐ではありません）。
+- `BOARD_VARIANT`: `BOARD_SOKI` / `BOARD_MES` / `BOARD_SS` / `BOARD_VAR` の4種（BOARD_VARは2026-11-21追加。SOKIからサーボとMD2を除いた構成で、CANはSOKIと同じRX=2/TX=1）。ピン配置は `defs.hpp` 側で `#if BOARD_VARIANT == ...` により**コンパイル時**に切り替わります（実行時分岐ではありません）。
 - ピン共有マクロもすべてコンパイル時の `#if`:
   - `MULTI1〜3`（BOARD_SOKI専用）: 0=スイッチ入力 / 1=サーボ出力。
   - `ENC1_MD`/`ENC2_MD`（BOARD_SOKI専用）: 0=エンコーダ入力 / 1=MD(PWM+DIR)出力。
